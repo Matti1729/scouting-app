@@ -660,6 +660,7 @@ export function MatchListScreen({ navigation }: any) {
         age_group: newMatchData.mannschaft,
         match_type: newMatchData.matchType,
         location: newMatchData.location || undefined,
+        fussball_de_url: fussballDeUrl || undefined,
       });
 
       if (result.success) {
@@ -667,6 +668,7 @@ export function MatchListScreen({ navigation }: any) {
       }
     } else {
       // Neues Spiel erstellen
+      console.log('Creating match with fussball_de_url:', fussballDeUrl);
       const result = await createMatch({
         home_team: newMatchData.homeTeam,
         away_team: newMatchData.awayTeam,
@@ -677,6 +679,7 @@ export function MatchListScreen({ navigation }: any) {
         location: newMatchData.location || undefined,
         fussball_de_url: fussballDeUrl || undefined,
       });
+      console.log('Create match result:', result.success, result.data?.fussball_de_url);
 
       if (result.success) {
         await fetchMatches(); // Neu laden
@@ -1309,6 +1312,14 @@ export function MatchListScreen({ navigation }: any) {
   // Aufstellungen von fussball.de importieren und in Supabase speichern
   const handleImportLineups = async () => {
     if (!selectedMatch?.fussballDeUrl) {
+      console.log('handleImportLineups: Keine fussballDeUrl vorhanden', {
+        selectedMatch: selectedMatch?.id,
+        fussballDeUrl: selectedMatch?.fussballDeUrl
+      });
+      Alert.alert(
+        'Keine URL hinterlegt',
+        'Für dieses Spiel ist keine fussball.de URL hinterlegt. Bitte Spiel bearbeiten und URL hinzufügen, oder Screenshot importieren.'
+      );
       setLineupStatus('unavailable');
       return;
     }
@@ -2883,7 +2894,7 @@ export function MatchListScreen({ navigation }: any) {
               Aufstellungen laden
             </Text>
 
-            {selectedMatch?.fussballDeUrl && (
+            {selectedMatch?.fussballDeUrl ? (
               <TouchableOpacity
                 style={[styles.sourceOption, { borderColor: colors.border }]}
                 onPress={() => {
@@ -2898,6 +2909,15 @@ export function MatchListScreen({ navigation }: any) {
                   Automatisch aus fussball.de extrahieren
                 </Text>
               </TouchableOpacity>
+            ) : (
+              <View style={[styles.sourceOption, { borderColor: colors.border, opacity: 0.6 }]}>
+                <Text style={[styles.sourceOptionText, { color: colors.textSecondary }]}>
+                  Keine fussball.de URL hinterlegt
+                </Text>
+                <Text style={[styles.sourceOptionSubtext, { color: colors.textSecondary }]}>
+                  Beim Erstellen des Spiels die URL eingeben, oder Screenshot nutzen
+                </Text>
+              </View>
             )}
 
             <TouchableOpacity

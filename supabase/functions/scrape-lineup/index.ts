@@ -352,29 +352,26 @@ serve(async (req) => {
                        (ajaxHtml.includes('spielerprofil') || ajaxHtml.includes('player-wrapper'))
 
         if (hasData) {
-          // Parse Spieler (Nummern + Profil-URLs)
-          const players = extractPlayersFromAjax(ajaxHtml)
-          console.log('Found', players.length, 'players with profile URLs')
-          debugInfo.playersFound = players.length
+          // Parse Spieler mit Team-Zuordnung aus HTML-Struktur
+          const { home, away } = extractPlayersWithTeams(ajaxHtml)
+          console.log('Found', home.length, 'home +', away.length, 'away players')
+          debugInfo.playersFound = home.length + away.length
 
           // ========================================
           // NAMEN VON SPIELERPROFILEN HOLEN
           // ========================================
           console.log('Fetching player names from profiles...')
-          const playersWithNames = await fetchPlayerNamesFromProfiles(players)
-          debugInfo.namesFound = playersWithNames.filter(p => p.name || p.vorname).length
-
-          const midpoint = Math.ceil(playersWithNames.length / 2)
-          const homePlayers = playersWithNames.slice(0, midpoint)
-          const awayPlayers = playersWithNames.slice(midpoint)
+          const homeWithNames = await fetchPlayerNamesFromProfiles(home)
+          const awayWithNames = await fetchPlayerNamesFromProfiles(away)
+          debugInfo.namesFound = [...homeWithNames, ...awayWithNames].filter(p => p.name || p.vorname).length
 
           const result: ScrapedLineups = {
             homeTeam,
             awayTeam,
-            homeStarters: homePlayers.slice(0, 11),
-            homeSubs: homePlayers.slice(11),
-            awayStarters: awayPlayers.slice(0, 11),
-            awaySubs: awayPlayers.slice(11),
+            homeStarters: homeWithNames.slice(0, 11),
+            homeSubs: homeWithNames.slice(11),
+            awayStarters: awayWithNames.slice(0, 11),
+            awaySubs: awayWithNames.slice(11),
             available: true,
           }
 
@@ -423,13 +420,92 @@ serve(async (req) => {
 })
 
 /**
- * Extrahiert Spieler aus AJAX HTML (nur Nummern, Namen sind obfuskiert)
+ * Extrahiert Spieler aus AJAX HTML mit Team-Zuordnung.
+ * fussball.de nutzt typischerweise column-left (Heim) und column-right (Gast),
+ * oder zwei aufeinanderfolgende Team-Sektionen.
  */
-function extractPlayersFromAjax(html: string): ScrapedPlayer[] {
+function extractPlayersWithTeams(html: string): { home: ScrapedPlayer[]; away: ScrapedPlayer[] } {
+  // Versuche HTML anhand bekannter fussball.de-Klassen zu splitten
+  const splitPatterns = [
+    // column-left / column-right
+    { home: /class="[^"]*column-left[^"]*"[\s\S]*?(?=class="[^"]*column-right)/i,
+      away: /class="[^"]*column-right[^"]*"[\s\S]*/i },
+    // aufstellung-heim / aufstellung-gast
+    { home: /class="[^"]*aufstellung[_-]?heim[^"]*"[\s\S]*?(?=class="[^"]*aufstellung[_-]?gast)/i,
+      away: /class="[^"]*aufstellung[_-]?gast[^"]*"[\s\S]*/i },
+    // row-team0 / row-team1
+    { home: /class="[^"]*row-team0[^"]*"[\s\S]*?(?=class="[^"]*row-team1)/i,
+      away: /class="[^"]*row-team1[^"]*"[\s\S]*/i },
+  ]
+
+  for (const pattern of splitPatterns) {
+    const homeMatch = html.match(pattern.home)
+    const awayMatch = html.match(pattern.away)
+    if (homeMatch && awayMatch) {
+      console.log('Split HTML by team sections successfully')
+      return {
+        home: extractPlayersFromHtml(homeMatch[0]),
+        away: extractPlayersFromHtml(awayMatch[0]),
+      }
+    }
+  }
+
+  // Fallback: Suche nach zwei großen Sektionen mit Spielerprofilen
+  // fussball.de hat oft die Heim-Spieler in der ersten Hälfte des HTML
+  // und Gast-Spieler in der zweiten. Finde den Trennpunkt.
+  const allMatches: { index: number; url: string; nummer: string }[] = []
+  const playerPattern = /<a[^>]*href="([^"]*spielerprofil[^"]*)"[^>]*>[\s\S]*?<span[^>]*>(\d+)<\/span>[\s\S]*?<\/a>/gi
+  const seenUrls = new Set<string>()
+
+  for (const match of html.matchAll(playerPattern)) {
+    const profileUrl = match[1]
+    const nummer = match[2]
+    if (seenUrls.has(profileUrl) || parseInt(nummer) > 99) continue
+    seenUrls.add(profileUrl)
+    allMatches.push({ index: match.index!, url: profileUrl, nummer })
+  }
+
+  if (allMatches.length === 0) {
+    return { home: [], away: [] }
+  }
+
+  // Suche nach der größten Lücke zwischen aufeinanderfolgenden Spielern im HTML
+  // Die größte Lücke markiert typischerweise die Grenze zwischen Heim und Gast
+  let maxGap = 0
+  let splitIndex = Math.ceil(allMatches.length / 2)
+
+  for (let i = 1; i < allMatches.length; i++) {
+    const gap = allMatches[i].index - allMatches[i - 1].index
+    if (gap > maxGap) {
+      maxGap = gap
+      splitIndex = i
+    }
+  }
+
+  console.log(`Split players at index ${splitIndex} (gap: ${maxGap} chars) of ${allMatches.length} total`)
+
+  const toPlayer = (m: { url: string; nummer: string }): ScrapedPlayer => ({
+    nummer: m.nummer,
+    name: '',
+    vorname: '',
+    position: '',
+    jahrgang: '',
+    profileUrl: m.url.startsWith('http') ? m.url : `https://www.fussball.de${m.url}`,
+  })
+
+  return {
+    home: allMatches.slice(0, splitIndex).map(toPlayer),
+    away: allMatches.slice(splitIndex).map(toPlayer),
+  }
+}
+
+/**
+ * Extrahiert Spieler aus einem HTML-Fragment
+ */
+function extractPlayersFromHtml(html: string): ScrapedPlayer[] {
   const players: ScrapedPlayer[] = []
   const seenUrls = new Set<string>()
 
-  // Pattern: Spieler-Link mit Nummer
   const playerPattern = /<a[^>]*href="([^"]*spielerprofil[^"]*)"[^>]*>[\s\S]*?<span[^>]*>(\d+)<\/span>[\s\S]*?<\/a>/gi
 
   for (const match of html.matchAll(playerPattern)) {
@@ -443,7 +519,7 @@ function extractPlayersFromAjax(html: string): ScrapedPlayer[] {
 
     players.push({
       nummer,
-      name: '',  // Namen werden später von Profil geholt
+      name: '',
       vorname: '',
       position: '',
       jahrgang: '',
