@@ -28,6 +28,7 @@ import {
   BeraterStats,
   AgentFilter,
   AgeFilter,
+  PlayerStat,
   loadAllPlayers,
   loadAgentChanges,
   loadWatchlist,
@@ -38,9 +39,13 @@ import {
   removeFromWatchlist,
   isOnWatchlist,
   getYouthYears,
+  loadSuggestedPlayers,
+  loadRankingsStats,
+  refreshPlayerRankings,
+  addStatPlayerToWatchlist,
 } from '../../services/beraterService';
 
-type TabKey = 'alle_spieler' | 'beraterwechsel' | 'watchlist';
+type TabKey = 'alle_spieler' | 'beraterwechsel' | 'watchlist' | 'vorschlaege';
 type PlayerListItem =
   | { type: 'club_header'; clubName: string; count: number }
   | { type: 'player'; player: BeraterPlayer };
@@ -82,6 +87,13 @@ export function BeraterstatusScreen() {
   const [changes, setChanges] = useState<BeraterChange[]>([]);
   const [changesTotal, setChangesTotal] = useState(0);
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
+
+  // Vorschläge (Spieler mit Top-Statistiken)
+  const [suggestedPlayers, setSuggestedPlayers] = useState<PlayerStat[]>([]);
+  const [suggestionsStatType, setSuggestionsStatType] = useState<'goals' | 'assists'>('goals');
+  const [suggestionsLoading, setSuggestionsLoading] = useState(false);
+  const [rankingsRefreshing, setRankingsRefreshing] = useState(false);
+  const [rankingsLastUpdate, setRankingsLastUpdate] = useState<string | null>(null);
 
   // Beraterwechsel sort
   type ChangeSortKey = 'default' | 'name' | 'mv' | 'club' | 'prev_agent' | 'new_agent' | 'date';
@@ -195,6 +207,49 @@ export function BeraterstatusScreen() {
     }
   }, []);
 
+  const loadSuggestionsTab = useCallback(async () => {
+    setSuggestionsLoading(true);
+    try {
+      const [result, stats] = await Promise.all([
+        loadSuggestedPlayers(suggestionsStatType, { limit: 100 }),
+        loadRankingsStats(),
+      ]);
+      setSuggestedPlayers(result);
+      setRankingsLastUpdate(stats.lastUpdate);
+    } catch (e) {
+      console.error('Error loading suggestions:', e);
+    } finally {
+      setSuggestionsLoading(false);
+    }
+  }, [suggestionsStatType]);
+
+  const handleRefreshRankings = useCallback(async () => {
+    setRankingsRefreshing(true);
+    try {
+      const result = await refreshPlayerRankings();
+      if (result.success) {
+        // Nach erfolgreichem Refresh die Daten neu laden
+        await loadSuggestionsTab();
+      } else {
+        console.error('Rankings refresh failed:', result.errors);
+      }
+    } catch (e) {
+      console.error('Error refreshing rankings:', e);
+    } finally {
+      setRankingsRefreshing(false);
+    }
+  }, [loadSuggestionsTab]);
+
+  const handleAddSuggestionToWatchlist = useCallback(async (stat: PlayerStat) => {
+    const success = await addStatPlayerToWatchlist(stat);
+    if (success) {
+      // Aus der Liste entfernen (da jetzt auf Watchlist)
+      setSuggestedPlayers(prev => prev.filter(p => p.tm_player_id !== stat.tm_player_id));
+      // Watchlist neu laden
+      await loadWatchlistTab();
+    }
+  }, [loadWatchlistTab]);
+
   const loadTabData = useCallback(async () => {
     switch (activeTab) {
       case 'alle_spieler':
@@ -206,14 +261,17 @@ export function BeraterstatusScreen() {
       case 'watchlist':
         await loadWatchlistTab();
         break;
+      case 'vorschlaege':
+        await loadSuggestionsTab();
+        break;
     }
-  }, [activeTab, loadPlayersTab, loadChangesTab, loadWatchlistTab]);
+  }, [activeTab, loadPlayersTab, loadChangesTab, loadWatchlistTab, loadSuggestionsTab]);
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([loadStatus(), loadPlayersTab(), loadChangesTab(), loadWatchlistTab()]);
+    await Promise.all([loadStatus(), loadPlayersTab(), loadChangesTab(), loadWatchlistTab(), loadSuggestionsTab()]);
     setRefreshing(false);
-  }, [loadStatus, loadPlayersTab, loadChangesTab, loadWatchlistTab]);
+  }, [loadStatus, loadPlayersTab, loadChangesTab, loadWatchlistTab, loadSuggestionsTab]);
 
   useEffect(() => {
     loadStatus();
@@ -222,6 +280,7 @@ export function BeraterstatusScreen() {
     loadPlayersTab();
     loadChangesTab();
     loadWatchlistTab();
+    loadSuggestionsTab();
     // Auto-Refresh Scan-Status alle 30 Sek.
     const interval = setInterval(loadStatus, 30_000);
     return () => clearInterval(interval);
@@ -231,6 +290,13 @@ export function BeraterstatusScreen() {
   useEffect(() => {
     loadTabData();
   }, [activeTab]);
+
+  // Vorschläge neu laden wenn Statistik-Typ wechselt
+  useEffect(() => {
+    if (activeTab === 'vorschlaege') {
+      loadSuggestionsTab();
+    }
+  }, [suggestionsStatType]);
 
   // Beim ersten Laden: alle Sections zugeklappt
   useEffect(() => {
@@ -486,6 +552,7 @@ export function BeraterstatusScreen() {
         { key: 'alle_spieler' as TabKey, label: 'Alle Spieler', count: playersTotal },
         { key: 'beraterwechsel' as TabKey, label: 'Beraterwechsel', count: filteredChanges.length },
         { key: 'watchlist' as TabKey, label: 'Watchlist', count: watchlist.length },
+        { key: 'vorschlaege' as TabKey, label: 'Vorschläge', count: suggestedPlayers.length },
       ]).map((tab) => (
         <TouchableOpacity
           key={tab.key}
@@ -1495,7 +1562,7 @@ export function BeraterstatusScreen() {
   // ========== EMPTY STATES ==========
 
   const renderEmptyState = () => {
-    const messages = {
+    const messages: Record<TabKey, { icon: string; title: string; hint: string }> = {
       alle_spieler: {
         icon: '👥',
         title: 'Noch keine Daten',
@@ -1510,6 +1577,11 @@ export function BeraterstatusScreen() {
         icon: '⭐',
         title: 'Watchlist ist leer',
         hint: 'Tippe auf einen Spieler um ihn zur Watchlist hinzuzufügen.',
+      },
+      vorschlaege: {
+        icon: '📊',
+        title: 'Keine Vorschläge',
+        hint: 'Klicke auf "Rankings aktualisieren" um die neuesten Top-Spieler zu laden.',
       },
     };
     const msg = messages[activeTab];
@@ -1686,6 +1758,136 @@ export function BeraterstatusScreen() {
             />
           </View>
         )
+      )}
+
+      {/* Vorschläge Tab */}
+      {activeTab === 'vorschlaege' && (
+        <View style={{ flex: 1 }}>
+          {/* Statistik-Typ Auswahl + Refresh Button */}
+          <View style={[styles.suggestionsHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
+            <View style={styles.statTypeToggle}>
+              <TouchableOpacity
+                style={[
+                  styles.statTypeButton,
+                  suggestionsStatType === 'goals' && { backgroundColor: colors.primary },
+                ]}
+                onPress={() => setSuggestionsStatType('goals')}
+              >
+                <Text style={[
+                  styles.statTypeButtonText,
+                  { color: suggestionsStatType === 'goals' ? colors.primaryText : colors.text }
+                ]}>
+                  Torschützen
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.statTypeButton,
+                  suggestionsStatType === 'assists' && { backgroundColor: colors.primary },
+                ]}
+                onPress={() => setSuggestionsStatType('assists')}
+              >
+                <Text style={[
+                  styles.statTypeButtonText,
+                  { color: suggestionsStatType === 'assists' ? colors.primaryText : colors.text }
+                ]}>
+                  Vorlagengeber
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={[styles.refreshButton, { borderColor: colors.border }]}
+              onPress={handleRefreshRankings}
+              disabled={rankingsRefreshing}
+            >
+              {rankingsRefreshing ? (
+                <ActivityIndicator size="small" color={colors.primary} />
+              ) : (
+                <Ionicons name="refresh" size={18} color={colors.primary} />
+              )}
+              <Text style={[styles.refreshButtonText, { color: colors.primary }]}>
+                Rankings aktualisieren
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Last Update Info */}
+          {rankingsLastUpdate && (
+            <Text style={[styles.lastUpdateText, { color: colors.textSecondary }]}>
+              Zuletzt aktualisiert: {new Date(rankingsLastUpdate).toLocaleDateString('de-DE', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+              })}
+            </Text>
+          )}
+
+          {/* Loading State */}
+          {suggestionsLoading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color={colors.primary} />
+              <Text style={[styles.loadingText, { color: colors.textSecondary }]}>
+                Lade Vorschläge...
+              </Text>
+            </View>
+          ) : (
+            <FlatList
+              data={suggestedPlayers}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item, index }) => (
+                <View style={[
+                  styles.suggestionRow,
+                  { borderBottomColor: colors.border, backgroundColor: colors.surface }
+                ]}>
+                  <View style={styles.suggestionRank}>
+                    <Text style={[styles.suggestionRankText, { color: colors.textSecondary }]}>
+                      {index + 1}
+                    </Text>
+                  </View>
+                  <View style={styles.suggestionInfo}>
+                    <Text style={[styles.suggestionName, { color: colors.text }]}>
+                      {item.player_name}
+                    </Text>
+                    <Text style={[styles.suggestionClub, { color: colors.textSecondary }]}>
+                      {item.club_name || 'Unbekannt'} · {item.league_name || item.league_id}
+                    </Text>
+                  </View>
+                  <View style={styles.suggestionStat}>
+                    <Text style={[styles.suggestionStatValue, { color: colors.primary }]}>
+                      {item.stat_value}
+                    </Text>
+                    <Text style={[styles.suggestionStatLabel, { color: colors.textSecondary }]}>
+                      {suggestionsStatType === 'goals' ? 'Tore' : 'Assists'}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.addToWatchlistButton, { backgroundColor: colors.primary }]}
+                    onPress={() => handleAddSuggestionToWatchlist(item)}
+                  >
+                    <Ionicons name="add" size={20} color={colors.primaryText} />
+                  </TouchableOpacity>
+                </View>
+              )}
+              ListEmptyComponent={
+                <View style={styles.emptyState}>
+                  <Ionicons name="analytics-outline" size={48} color={colors.textSecondary} style={{ marginBottom: 12 }} />
+                  <Text style={[styles.emptyText, { color: colors.text }]}>
+                    Keine Vorschläge
+                  </Text>
+                  <Text style={[styles.emptyHint, { color: colors.textSecondary }]}>
+                    Klicke auf "Rankings aktualisieren" um die neuesten Top-Spieler zu laden
+                  </Text>
+                </View>
+              }
+              contentContainerStyle={suggestedPlayers.length === 0 ? styles.emptyContainer : undefined}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={colors.primary} />
+              }
+            />
+          )}
+        </View>
       )}
 
       {/* Detail Sheet */}
@@ -2305,5 +2507,101 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     flex: 1,
     textAlign: 'right' as const,
+  },
+
+  // Vorschläge Tab
+  suggestionsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  statTypeToggle: {
+    flexDirection: 'row',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  statTypeButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  statTypeButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  refreshButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    gap: 6,
+  },
+  refreshButtonText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  lastUpdateText: {
+    fontSize: 11,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 40,
+  },
+  suggestionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    gap: 10,
+  },
+  suggestionRank: {
+    width: 30,
+    alignItems: 'center',
+  },
+  suggestionRankText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  suggestionInfo: {
+    flex: 1,
+  },
+  suggestionName: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  suggestionClub: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  suggestionStat: {
+    alignItems: 'center',
+    minWidth: 50,
+  },
+  suggestionStatValue: {
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  suggestionStatLabel: {
+    fontSize: 10,
+  },
+  addToWatchlistButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });

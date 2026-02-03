@@ -126,6 +126,7 @@ interface Player {
   has_agent?: boolean;
   birth_date?: string;  // Vollständiges Geburtsdatum (DD.MM.YYYY) von Transfermarkt
   fussball_de_url?: string;
+  isGoalkeeper?: boolean;  // Torwart-Flag aus Scraper
 }
 
 // Leere Aufstellungen - werden erst durch Import oder manuelle Eingabe gefüllt

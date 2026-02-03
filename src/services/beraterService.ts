@@ -439,3 +439,266 @@ export async function loadLeagues(): Promise<Array<{ id: string; name: string; i
 
   return data || [];
 }
+
+// ============================================================================
+// SPIELER-STATISTIKEN / VORSCHLÄGE
+// ============================================================================
+
+export interface PlayerStat {
+  id: string;
+  player_id: string | null;
+  tm_player_id: string;
+  player_name: string;
+  league_id: string;
+  club_name: string | null;
+  stat_type: 'goals' | 'assists';
+  stat_value: number;
+  games_played: number | null;
+  rank_in_league: number | null;
+  season: string | null;
+  tm_profile_url: string | null;
+  birth_date: string | null;
+  position: string | null;
+  updated_at: string;
+  // Joined data
+  league_name?: string;
+  // Watchlist status
+  is_on_watchlist?: boolean;
+}
+
+const RANKINGS_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/fetch-player-rankings`;
+
+/**
+ * Lädt vorgeschlagene Spieler (Top-Torschützen oder Vorlagengeber)
+ * Filtert bereits auf Watchlist befindliche Spieler aus
+ */
+export async function loadSuggestedPlayers(
+  statType: 'goals' | 'assists',
+  options?: {
+    leagueIds?: string[];
+    limit?: number;
+    includeOnWatchlist?: boolean;
+  }
+): Promise<PlayerStat[]> {
+  const limit = options?.limit || 100;
+
+  let query = supabase
+    .from('berater_player_stats')
+    .select(`
+      *,
+      berater_leagues!inner(name)
+    `)
+    .eq('stat_type', statType)
+    .order('stat_value', { ascending: false })
+    .order('rank_in_league', { ascending: true })
+    .limit(limit);
+
+  if (options?.leagueIds && options.leagueIds.length > 0) {
+    query = query.in('league_id', options.leagueIds);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error('Error loading suggested players:', error);
+    return [];
+  }
+
+  if (!data) return [];
+
+  // Watchlist-Status hinzufügen
+  const { data: watchlist } = await supabase
+    .from('berater_watchlist')
+    .select('player_id');
+
+  const watchlistPlayerIds = new Set(
+    (watchlist || []).map(w => w.player_id)
+  );
+
+  // Auch tm_player_ids von Watchlist-Spielern sammeln
+  const { data: watchlistPlayers } = await supabase
+    .from('berater_players')
+    .select('tm_player_id')
+    .in('id', Array.from(watchlistPlayerIds));
+
+  const watchlistTmIds = new Set(
+    (watchlistPlayers || []).map(p => p.tm_player_id)
+  );
+
+  const players: PlayerStat[] = data.map(row => ({
+    id: row.id,
+    player_id: row.player_id,
+    tm_player_id: row.tm_player_id,
+    player_name: row.player_name,
+    league_id: row.league_id,
+    club_name: row.club_name,
+    stat_type: row.stat_type,
+    stat_value: row.stat_value,
+    games_played: row.games_played,
+    rank_in_league: row.rank_in_league,
+    season: row.season,
+    tm_profile_url: row.tm_profile_url,
+    birth_date: row.birth_date,
+    position: row.position,
+    updated_at: row.updated_at,
+    league_name: row.berater_leagues?.name,
+    is_on_watchlist: watchlistTmIds.has(row.tm_player_id) ||
+                     (row.player_id && watchlistPlayerIds.has(row.player_id)),
+  }));
+
+  // Standardmäßig bereits auf Watchlist befindliche ausfiltern
+  if (!options?.includeOnWatchlist) {
+    return players.filter(p => !p.is_on_watchlist);
+  }
+
+  return players;
+}
+
+/**
+ * Lädt Statistiken für einen bestimmten Spieler
+ */
+export async function loadPlayerStats(tmPlayerId: string): Promise<PlayerStat[]> {
+  const { data, error } = await supabase
+    .from('berater_player_stats')
+    .select(`
+      *,
+      berater_leagues!inner(name)
+    `)
+    .eq('tm_player_id', tmPlayerId)
+    .order('stat_value', { ascending: false });
+
+  if (error) {
+    console.error('Error loading player stats:', error);
+    return [];
+  }
+
+  return (data || []).map(row => ({
+    ...row,
+    league_name: row.berater_leagues?.name,
+  }));
+}
+
+/**
+ * Startet das Abrufen der Rankings von Transfermarkt
+ */
+export async function refreshPlayerRankings(): Promise<{
+  success: boolean;
+  message: string;
+  stats?: {
+    leaguesProcessed: number;
+    goalsEntries: number;
+    assistsEntries: number;
+  };
+  errors?: string[];
+}> {
+  try {
+    const response = await fetch(`${RANKINGS_FUNCTION_URL}?action=fetch_all`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error refreshing rankings:', error);
+    return {
+      success: false,
+      message: `Fehler: ${error}`,
+    };
+  }
+}
+
+/**
+ * Lädt Statistik-Übersicht (Anzahl Einträge, letztes Update)
+ */
+export async function loadRankingsStats(): Promise<{
+  goalsCount: number;
+  assistsCount: number;
+  lastUpdate: string | null;
+}> {
+  const { count: goalsCount } = await supabase
+    .from('berater_player_stats')
+    .select('*', { count: 'exact', head: true })
+    .eq('stat_type', 'goals');
+
+  const { count: assistsCount } = await supabase
+    .from('berater_player_stats')
+    .select('*', { count: 'exact', head: true })
+    .eq('stat_type', 'assists');
+
+  const { data: latestUpdate } = await supabase
+    .from('berater_player_stats')
+    .select('updated_at')
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return {
+    goalsCount: goalsCount || 0,
+    assistsCount: assistsCount || 0,
+    lastUpdate: latestUpdate?.updated_at || null,
+  };
+}
+
+/**
+ * Fügt einen Spieler aus den Statistiken zur Watchlist hinzu
+ * Erstellt den Spieler in berater_players falls noch nicht vorhanden
+ */
+export async function addStatPlayerToWatchlist(stat: PlayerStat, notes?: string): Promise<boolean> {
+  try {
+    let playerId = stat.player_id;
+
+    // Wenn Spieler noch nicht in berater_players, zuerst anlegen
+    if (!playerId) {
+      const { data: newPlayer, error: insertError } = await supabase
+        .from('berater_players')
+        .insert({
+          tm_player_id: stat.tm_player_id,
+          player_name: stat.player_name,
+          tm_profile_url: stat.tm_profile_url || '',
+          birth_date: stat.birth_date,
+          position: stat.position,
+          is_active: true,
+          has_agent: false,
+        })
+        .select('id')
+        .single();
+
+      if (insertError) {
+        // Vielleicht existiert der Spieler schon (race condition)
+        const { data: existing } = await supabase
+          .from('berater_players')
+          .select('id')
+          .eq('tm_player_id', stat.tm_player_id)
+          .maybeSingle();
+
+        if (existing) {
+          playerId = existing.id;
+        } else {
+          console.error('Error creating player:', insertError);
+          return false;
+        }
+      } else {
+        playerId = newPlayer.id;
+      }
+
+      // Auch berater_player_stats aktualisieren mit der neuen player_id
+      await supabase
+        .from('berater_player_stats')
+        .update({ player_id: playerId })
+        .eq('tm_player_id', stat.tm_player_id);
+    }
+
+    // Zur Watchlist hinzufügen
+    return addToWatchlist(playerId!, notes);
+  } catch (error) {
+    console.error('Error adding stat player to watchlist:', error);
+    return false;
+  }
+}
