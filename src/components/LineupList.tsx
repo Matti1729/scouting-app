@@ -9,9 +9,13 @@ import {
 import { useTheme } from '../contexts/ThemeContext';
 import { PlayerRow, Player } from './PlayerRow';
 
-// Hilfsfunktion: Spieler nach Trikotnummer sortieren
+// Hilfsfunktion: Spieler sortieren - Torwart zuerst, dann nach Trikotnummer
 const sortByNumber = (players: Player[]): Player[] => {
   return [...players].sort((a, b) => {
+    // Torwart immer zuerst
+    if (a.isGoalkeeper && !b.isGoalkeeper) return -1;
+    if (!a.isGoalkeeper && b.isGoalkeeper) return 1;
+    // Dann nach Trikotnummer
     const numA = parseInt(a.nummer, 10) || 999;
     const numB = parseInt(b.nummer, 10) || 999;
     return numA - numB;

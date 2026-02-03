@@ -62,6 +62,7 @@ export interface Player {
   has_agent?: boolean;
   birth_date?: string;
   fussball_de_url?: string;
+  isGoalkeeper?: boolean;
 }
 
 export interface PlayerRowProps {
@@ -190,9 +191,6 @@ export const PlayerRow = memo<PlayerRowProps>(({
         )}
       </View>
 
-      {!isEditMode && (
-        <Text style={[styles.playerArrow, { color: colors.textSecondary }]}>›</Text>
-      )}
     </TouchableOpacity>
   );
 });
@@ -266,11 +264,6 @@ const styles = StyleSheet.create({
   playerPosition: {
     fontSize: 11,
     marginTop: 1,
-  },
-  playerArrow: {
-    fontSize: 16,
-    fontWeight: '300',
-    marginLeft: 6,
   },
 });
 

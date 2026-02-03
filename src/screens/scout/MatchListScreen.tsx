@@ -318,6 +318,7 @@ const dbLineupToPlayer = (dbLineup: DbLineup): Player => ({
   has_agent: dbLineup.has_agent,
   birth_date: dbLineup.birth_date || undefined,
   fussball_de_url: dbLineup.fussball_de_url || undefined,
+  isGoalkeeper: dbLineup.is_goalkeeper ?? false,
 });
 
 export function MatchListScreen({ navigation }: any) {
@@ -372,6 +373,9 @@ export function MatchListScreen({ navigation }: any) {
   // Bearbeitungsmodus für Auswechselspieler
   const [editedHomeSubs, setEditedHomeSubs] = useState<Player[]>([]);
   const [editedAwaySubs, setEditedAwaySubs] = useState<Player[]>([]);
+
+  // Mobile Team-Tab State
+  const [activeTeam, setActiveTeam] = useState<'home' | 'away'>('home');
 
   // Neue Spiel-Formularfelder
   const [newMatchData, setNewMatchData] = useState({
@@ -1330,7 +1334,7 @@ export function MatchListScreen({ navigation }: any) {
     try {
       // Hilfsfunktion: Spieler für Supabase vorbereiten
       const preparePlayersForDb = (
-        players: { nummer: string; vorname: string; name: string; jahrgang: string; position: string }[],
+        players: { nummer: string; vorname: string; name: string; jahrgang: string; position: string; isGoalkeeper?: boolean }[],
         team: 'home' | 'away',
         isStarter: boolean
       ) => players.map(p => ({
@@ -1341,6 +1345,7 @@ export function MatchListScreen({ navigation }: any) {
         name: p.name,
         jahrgang: p.jahrgang,
         position: p.position,
+        is_goalkeeper: p.isGoalkeeper ?? false,
       }));
 
       // 1. Versuche zuerst den Puppeteer-Scraper (wenn Backend konfiguriert)
@@ -1462,7 +1467,7 @@ export function MatchListScreen({ navigation }: any) {
 
       // Spieler für DB vorbereiten (wie bei handleImportLineups)
       const preparePlayersForDb = (
-        players: { nummer: string; vorname: string; name: string; jahrgang: string; position: string }[],
+        players: { nummer: string; vorname: string; name: string; jahrgang: string; position: string; isGoalkeeper?: boolean }[],
         team: 'home' | 'away',
         isStarter: boolean
       ) => players.map(p => ({
@@ -1473,6 +1478,7 @@ export function MatchListScreen({ navigation }: any) {
         name: p.name,
         jahrgang: p.jahrgang,
         position: p.position,
+        is_goalkeeper: p.isGoalkeeper ?? false,
       }));
 
       const data = result.data;
@@ -2178,59 +2184,103 @@ export function MatchListScreen({ navigation }: any) {
                     </View>
                   )}
 
-                  <View style={styles.lineupsContainer}>
-                    {/* Heimmannschaft */}
-                    <View style={styles.lineupColumn}>
-                      {isEditMode ? (
-                        <TextInput
-                          style={[styles.lineupTitleInput, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
-                          value={editedMatchData.homeTeam}
-                          onChangeText={(text) => setEditedMatchData(prev => ({ ...prev, homeTeam: text }))}
-                          placeholder="Heimmannschaft"
-                          placeholderTextColor={colors.textSecondary}
-                        />
-                      ) : (
-                        <Text style={[styles.lineupTitle, { color: colors.text }]}>
+                  {/* Mobile: Team-Tabs */}
+                  {isMobile && (
+                    <View style={styles.teamTabsContainer}>
+                      <TouchableOpacity
+                        style={[
+                          styles.teamTab,
+                          activeTeam === 'home' && styles.teamTabActive,
+                          activeTeam === 'home' && { borderBottomColor: colors.primary }
+                        ]}
+                        onPress={() => setActiveTeam('home')}
+                      >
+                        <Text style={[
+                          styles.teamTabText,
+                          { color: activeTeam === 'home' ? colors.primary : colors.textSecondary }
+                        ]}>
                           {selectedMatch.spiel.split(' - ')[0]}
                         </Text>
-                      )}
-                      <LineupList
-                        players={isEditMode ? editedHomeLineup : homeLineup}
-                        subs={isEditMode ? editedHomeSubs : homeSubs}
-                        onPlayerPress={handlePlayerSelect}
-                        onFieldChange={isEditMode ? handleHomeFieldChange : undefined}
-                        isEditMode={isEditMode}
-                        emptyMessage="Keine Spieler vorhanden"
-                      />
-                    </View>
-
-                    {/* Trennlinie */}
-                    <View style={[styles.lineupDivider, { backgroundColor: colors.border }]} />
-
-                    {/* Auswärtsmannschaft */}
-                    <View style={styles.lineupColumn}>
-                      {isEditMode ? (
-                        <TextInput
-                          style={[styles.lineupTitleInput, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
-                          value={editedMatchData.awayTeam}
-                          onChangeText={(text) => setEditedMatchData(prev => ({ ...prev, awayTeam: text }))}
-                          placeholder="Auswärtsmannschaft"
-                          placeholderTextColor={colors.textSecondary}
-                        />
-                      ) : (
-                        <Text style={[styles.lineupTitle, { color: colors.text }]}>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[
+                          styles.teamTab,
+                          activeTeam === 'away' && styles.teamTabActive,
+                          activeTeam === 'away' && { borderBottomColor: colors.primary }
+                        ]}
+                        onPress={() => setActiveTeam('away')}
+                      >
+                        <Text style={[
+                          styles.teamTabText,
+                          { color: activeTeam === 'away' ? colors.primary : colors.textSecondary }
+                        ]}>
                           {selectedMatch.spiel.split(' - ')[1]}
                         </Text>
-                      )}
-                      <LineupList
-                        players={isEditMode ? editedAwayLineup : awayLineup}
-                        subs={isEditMode ? editedAwaySubs : awaySubs}
-                        onPlayerPress={handlePlayerSelect}
-                        onFieldChange={isEditMode ? handleAwayFieldChange : undefined}
-                        isEditMode={isEditMode}
-                        emptyMessage="Keine Spieler vorhanden"
-                      />
+                      </TouchableOpacity>
                     </View>
+                  )}
+
+                  <View style={[styles.lineupsContainer, isMobile && styles.lineupsContainerMobile]}>
+                    {/* Heimmannschaft - Desktop oder wenn auf Mobile activeTeam === 'home' */}
+                    {(!isMobile || activeTeam === 'home') && (
+                      <View style={[styles.lineupColumn, isMobile && styles.lineupColumnMobile]}>
+                        {!isMobile && (
+                          isEditMode ? (
+                            <TextInput
+                              style={[styles.lineupTitleInput, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
+                              value={editedMatchData.homeTeam}
+                              onChangeText={(text) => setEditedMatchData(prev => ({ ...prev, homeTeam: text }))}
+                              placeholder="Heimmannschaft"
+                              placeholderTextColor={colors.textSecondary}
+                            />
+                          ) : (
+                            <Text style={[styles.lineupTitle, { color: colors.text }]}>
+                              {selectedMatch.spiel.split(' - ')[0]}
+                            </Text>
+                          )
+                        )}
+                        <LineupList
+                          players={isEditMode ? editedHomeLineup : homeLineup}
+                          subs={isEditMode ? editedHomeSubs : homeSubs}
+                          onPlayerPress={handlePlayerSelect}
+                          onFieldChange={isEditMode ? handleHomeFieldChange : undefined}
+                          isEditMode={isEditMode}
+                          emptyMessage="Keine Spieler vorhanden"
+                        />
+                      </View>
+                    )}
+
+                    {/* Trennlinie - nur auf Desktop */}
+                    {!isMobile && <View style={[styles.lineupDivider, { backgroundColor: colors.border }]} />}
+
+                    {/* Auswärtsmannschaft - Desktop oder wenn auf Mobile activeTeam === 'away' */}
+                    {(!isMobile || activeTeam === 'away') && (
+                      <View style={[styles.lineupColumn, isMobile && styles.lineupColumnMobile]}>
+                        {!isMobile && (
+                          isEditMode ? (
+                            <TextInput
+                              style={[styles.lineupTitleInput, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
+                              value={editedMatchData.awayTeam}
+                              onChangeText={(text) => setEditedMatchData(prev => ({ ...prev, awayTeam: text }))}
+                              placeholder="Auswärtsmannschaft"
+                              placeholderTextColor={colors.textSecondary}
+                            />
+                          ) : (
+                            <Text style={[styles.lineupTitle, { color: colors.text }]}>
+                              {selectedMatch.spiel.split(' - ')[1]}
+                            </Text>
+                          )
+                        )}
+                        <LineupList
+                          players={isEditMode ? editedAwayLineup : awayLineup}
+                          subs={isEditMode ? editedAwaySubs : awaySubs}
+                          onPlayerPress={handlePlayerSelect}
+                          onFieldChange={isEditMode ? handleAwayFieldChange : undefined}
+                          isEditMode={isEditMode}
+                          emptyMessage="Keine Spieler vorhanden"
+                        />
+                      </View>
+                    )}
                   </View>
                 </View>
 
@@ -3603,9 +3653,35 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     flex: 1,
   },
+  lineupsContainerMobile: {
+    flexDirection: 'column',
+  },
+  teamTabsContainer: {
+    flexDirection: 'row',
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+    marginBottom: 12,
+  },
+  teamTab: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  teamTabActive: {
+    borderBottomWidth: 2,
+  },
+  teamTabText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
   lineupColumn: {
     flex: 1,
     paddingHorizontal: 8,
+  },
+  lineupColumnMobile: {
+    paddingHorizontal: 0,
   },
   lineupDivider: {
     width: 1,
