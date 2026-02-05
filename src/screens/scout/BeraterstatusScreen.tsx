@@ -94,6 +94,7 @@ export function BeraterstatusScreen() {
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [rankingsRefreshing, setRankingsRefreshing] = useState(false);
   const [rankingsLastUpdate, setRankingsLastUpdate] = useState<string | null>(null);
+  const [collapsedSuggestionSections, setCollapsedSuggestionSections] = useState<Set<string>>(new Set());
 
   // Beraterwechsel sort
   type ChangeSortKey = 'default' | 'name' | 'mv' | 'club' | 'prev_agent' | 'new_agent' | 'date';
@@ -211,7 +212,7 @@ export function BeraterstatusScreen() {
     setSuggestionsLoading(true);
     try {
       const [result, stats] = await Promise.all([
-        loadSuggestedPlayers(suggestionsStatType, { limit: 100 }),
+        loadSuggestedPlayers(suggestionsStatType, { limit: 600 }),
         loadRankingsStats(),
       ]);
       setSuggestedPlayers(result);
@@ -414,6 +415,16 @@ export function BeraterstatusScreen() {
       return { text: 'Familienangehörige', color: colors.warning };
     }
     return { text: player.current_agent_name, color: colors.textSecondary };
+  };
+
+  const getStatAgentLabel = (stat: PlayerStat): { text: string; color: string } => {
+    if (!stat.current_agent_name || stat.current_agent_name === 'kein Beratereintrag') {
+      return { text: 'kein Beratereintrag', color: colors.success };
+    }
+    if (stat.current_agent_name === 'Familienangehörige') {
+      return { text: 'Familienangehörige', color: colors.warning };
+    }
+    return { text: stat.current_agent_name, color: colors.textSecondary };
   };
 
   const calculateAge = (birthDate: string | null): string | null => {
@@ -1379,6 +1390,65 @@ export function BeraterstatusScreen() {
     });
   }, [playerSections, collapsedSections, collapsedClubs]);
 
+  // ========== SUGGESTION SECTIONS (Vorschläge Tab) ==========
+
+  const suggestionSections = useMemo(() => {
+    if (suggestedPlayers.length === 0) return [];
+
+    // Nach Liga gruppieren
+    const grouped = new Map<string, PlayerStat[]>();
+    for (const player of suggestedPlayers) {
+      const league = player.league_name || player.league_id || 'Sonstige';
+      if (!grouped.has(league)) grouped.set(league, []);
+      grouped.get(league)!.push(player);
+    }
+
+    // Sortier-Reihenfolge aus leagues (tier-basiert)
+    const leagueOrder = new Map<string, number>();
+    const seenNames = new Set<string>();
+    for (const l of leagues) {
+      if (!seenNames.has(l.name)) {
+        seenNames.add(l.name);
+        leagueOrder.set(l.name, leagueOrder.size);
+      }
+    }
+
+    // Sections erstellen und nach Tier sortieren
+    // Top 20 pro Liga, bei Gleichstand mehr anzeigen
+    const MAX_PER_LEAGUE = 20;
+
+    return Array.from(grouped.entries())
+      .sort(([a], [b]) => (leagueOrder.get(a) ?? 999) - (leagueOrder.get(b) ?? 999))
+      .map(([title, data]) => {
+        // Nach Statistik sortieren
+        const sorted = data.sort((a, b) => b.stat_value - a.stat_value);
+
+        // Cutoff-Wert ermitteln (Wert des 20. Spielers)
+        const cutoffValue = sorted[Math.min(MAX_PER_LEAGUE - 1, sorted.length - 1)]?.stat_value || 0;
+
+        // Alle Spieler mit stat_value >= cutoffValue behalten (Gleichstand-Regel)
+        const filtered = sorted.filter(p => p.stat_value >= cutoffValue);
+
+        return {
+          title,
+          data: filtered,
+          count: filtered.length,
+        };
+      });
+  }, [suggestedPlayers, leagues]);
+
+  const toggleSuggestionSection = useCallback((title: string) => {
+    setCollapsedSuggestionSections(prev => {
+      const next = new Set(prev);
+      if (next.has(title)) {
+        next.delete(title);
+      } else {
+        next.add(title);
+      }
+      return next;
+    });
+  }, []);
+
   // ========== FILTERED CHANGES (Beraterwechsel Tab) ==========
 
   const selectedLeagueIds = useMemo(() => {
@@ -1679,46 +1749,47 @@ export function BeraterstatusScreen() {
           />
         ) : (
           <View style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-            {filteredChanges.length > 0 && (
-              <View style={[styles.playerRow, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
-                <View style={styles.playerRowColumns}>
-                  <TouchableOpacity style={styles.playerColNameWrap} onPress={() => toggleChangeSort('name')}>
-                    <Text style={[styles.changeHeaderText, { color: changeSortKey === 'name' ? colors.primary : colors.text }]}>
-                      Name{changeSortKey === 'name' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.playerColMV} onPress={() => toggleChangeSort('mv')}>
-                    <Text style={[styles.changeHeaderText, { color: changeSortKey === 'mv' ? colors.primary : colors.text }]}>
-                      MW{changeSortKey === 'mv' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.playerColClub} onPress={() => toggleChangeSort('club')}>
-                    <Text style={[styles.changeHeaderText, { color: changeSortKey === 'club' ? colors.primary : colors.text }]}>
-                      Verein{changeSortKey === 'club' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.playerColClub} onPress={() => toggleChangeSort('prev_agent')}>
-                    <Text style={[styles.changeHeaderText, { color: changeSortKey === 'prev_agent' ? colors.primary : colors.text }]}>
-                      Ehem. Berater{changeSortKey === 'prev_agent' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.playerColAgent} onPress={() => toggleChangeSort('new_agent')}>
-                    <Text style={[styles.changeHeaderText, { color: changeSortKey === 'new_agent' ? colors.primary : colors.text }]}>
-                      Neuer Berater{changeSortKey === 'new_agent' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
-                    </Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.changeDate} onPress={() => toggleChangeSort('date')}>
-                    <Text style={[styles.changeHeaderText, { color: changeSortKey === 'date' ? colors.primary : colors.text }]}>
-                      Datum{changeSortKey === 'date' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
-                    </Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            )}
-            <FlatList
-              data={filteredChanges}
-              renderItem={renderChangeRow}
+            <SectionList
+              sections={[{ title: 'changes', data: filteredChanges }]}
               keyExtractor={(item) => item.id}
+              stickySectionHeadersEnabled={true}
+              renderSectionHeader={() => (
+                <View style={[styles.playerRow, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
+                  <View style={styles.playerRowColumns}>
+                    <TouchableOpacity style={styles.playerColNameWrap} onPress={() => toggleChangeSort('name')}>
+                      <Text style={[styles.changeHeaderText, { color: changeSortKey === 'name' ? colors.primary : colors.text }]}>
+                        Name{changeSortKey === 'name' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.playerColMV} onPress={() => toggleChangeSort('mv')}>
+                      <Text style={[styles.changeHeaderText, { color: changeSortKey === 'mv' ? colors.primary : colors.text }]}>
+                        MW{changeSortKey === 'mv' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.playerColClub} onPress={() => toggleChangeSort('club')}>
+                      <Text style={[styles.changeHeaderText, { color: changeSortKey === 'club' ? colors.primary : colors.text }]}>
+                        Verein{changeSortKey === 'club' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.playerColClub} onPress={() => toggleChangeSort('prev_agent')}>
+                      <Text style={[styles.changeHeaderText, { color: changeSortKey === 'prev_agent' ? colors.primary : colors.text }]}>
+                        Ehem. Berater{changeSortKey === 'prev_agent' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.playerColAgent} onPress={() => toggleChangeSort('new_agent')}>
+                      <Text style={[styles.changeHeaderText, { color: changeSortKey === 'new_agent' ? colors.primary : colors.text }]}>
+                        Neuer Berater{changeSortKey === 'new_agent' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.changeDate} onPress={() => toggleChangeSort('date')}>
+                      <Text style={[styles.changeHeaderText, { color: changeSortKey === 'date' ? colors.primary : colors.text }]}>
+                        Datum{changeSortKey === 'date' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              )}
+              renderItem={renderChangeRow}
               ListEmptyComponent={renderEmptyState}
               contentContainerStyle={filteredChanges.length === 0 ? styles.emptyContainer : undefined}
               refreshControl={
@@ -1746,10 +1817,21 @@ export function BeraterstatusScreen() {
           />
         ) : (
           <View style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-            <FlatList
-              data={filteredWatchlist}
-              renderItem={renderWatchlistRow}
+            <SectionList
+              sections={[{ title: 'watchlist', data: filteredWatchlist }]}
               keyExtractor={(item) => item.id}
+              stickySectionHeadersEnabled={true}
+              renderSectionHeader={() => (
+                <View style={[styles.playerRow, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
+                  <View style={styles.playerRowColumns}>
+                    <Text style={[styles.playerColNameWrap, styles.columnHeader, { color: colors.textSecondary }]}>Spieler</Text>
+                    <Text style={[styles.playerColMV, styles.columnHeader, { color: colors.textSecondary }]}>MW</Text>
+                    <Text style={[styles.playerColClub, styles.columnHeader, { color: colors.textSecondary }]}>Verein</Text>
+                    <Text style={[styles.playerColAgent, styles.columnHeader, { color: colors.textSecondary }]}>Berater</Text>
+                  </View>
+                </View>
+              )}
+              renderItem={renderWatchlistRow}
               ListEmptyComponent={renderEmptyState}
               contentContainerStyle={filteredWatchlist.length === 0 ? styles.emptyContainer : undefined}
               refreshControl={
@@ -1832,59 +1914,112 @@ export function BeraterstatusScreen() {
                 Lade Vorschläge...
               </Text>
             </View>
-          ) : (
-            <FlatList
-              data={suggestedPlayers}
-              keyExtractor={(item) => item.id}
-              renderItem={({ item, index }) => (
-                <View style={[
-                  styles.suggestionRow,
-                  { borderBottomColor: colors.border, backgroundColor: colors.surface }
-                ]}>
-                  <View style={styles.suggestionRank}>
-                    <Text style={[styles.suggestionRankText, { color: colors.textSecondary }]}>
-                      {index + 1}
-                    </Text>
-                  </View>
-                  <View style={styles.suggestionInfo}>
-                    <Text style={[styles.suggestionName, { color: colors.text }]}>
-                      {item.player_name}
-                    </Text>
-                    <Text style={[styles.suggestionClub, { color: colors.textSecondary }]}>
-                      {item.club_name || 'Unbekannt'} · {item.league_name || item.league_id}
-                    </Text>
-                  </View>
-                  <View style={styles.suggestionStat}>
-                    <Text style={[styles.suggestionStatValue, { color: colors.primary }]}>
-                      {item.stat_value}
-                    </Text>
-                    <Text style={[styles.suggestionStatLabel, { color: colors.textSecondary }]}>
-                      {suggestionsStatType === 'goals' ? 'Tore' : 'Assists'}
-                    </Text>
-                  </View>
-                  <TouchableOpacity
-                    style={[styles.addToWatchlistButton, { backgroundColor: colors.primary }]}
-                    onPress={() => handleAddSuggestionToWatchlist(item)}
-                  >
-                    <Ionicons name="add" size={20} color={colors.primaryText} />
-                  </TouchableOpacity>
-                </View>
-              )}
-              ListEmptyComponent={
-                <View style={styles.emptyState}>
-                  <Ionicons name="analytics-outline" size={48} color={colors.textSecondary} style={{ marginBottom: 12 }} />
-                  <Text style={[styles.emptyText, { color: colors.text }]}>
-                    Keine Vorschläge
-                  </Text>
-                  <Text style={[styles.emptyHint, { color: colors.textSecondary }]}>
-                    Klicke auf "Rankings aktualisieren" um die neuesten Top-Spieler zu laden
-                  </Text>
-                </View>
-              }
-              contentContainerStyle={suggestedPlayers.length === 0 ? styles.emptyContainer : undefined}
+          ) : suggestionSections.length === 0 ? (
+            <ScrollView
+              contentContainerStyle={styles.emptyContainer}
               refreshControl={
                 <RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={colors.primary} />
               }
+            >
+              <View style={styles.emptyState}>
+                <Ionicons name="analytics-outline" size={48} color={colors.textSecondary} style={{ marginBottom: 12 }} />
+                <Text style={[styles.emptyText, { color: colors.text }]}>
+                  Keine Vorschläge
+                </Text>
+                <Text style={[styles.emptyHint, { color: colors.textSecondary }]}>
+                  Klicke auf "Rankings aktualisieren" um die neuesten Top-Spieler zu laden
+                </Text>
+              </View>
+            </ScrollView>
+          ) : (
+            <SectionList
+              sections={suggestionSections.map(section => ({
+                ...section,
+                data: collapsedSuggestionSections.has(section.title) ? [] : section.data,
+              }))}
+              keyExtractor={(item) => item.id}
+              stickySectionHeadersEnabled={true}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={colors.primary} />
+              }
+              renderSectionHeader={({ section }) => {
+                const isCollapsed = collapsedSuggestionSections.has(section.title);
+                return (
+                  <View style={{ backgroundColor: colors.surfaceSecondary }}>
+                    {/* Section Header */}
+                    <TouchableOpacity
+                      style={[styles.sectionHeader, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+                      onPress={() => toggleSuggestionSection(section.title)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.sectionHeaderLeft}>
+                        <Text style={[styles.sectionHeaderArrow, { color: colors.textSecondary }]}>
+                          {isCollapsed ? '\u25B6' : '\u25BC'}
+                        </Text>
+                        <Text style={[styles.sectionHeaderText, { color: colors.text }]}>
+                          {section.title}
+                        </Text>
+                      </View>
+                      <Text style={[styles.sectionHeaderCount, { color: colors.textSecondary }]}>
+                        {section.count}
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* Column Headers (inside section) */}
+                    {!isCollapsed && (
+                      <View style={[styles.playerRow, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
+                        <View style={styles.playerRowColumns}>
+                          <Text style={[styles.playerColNameWrap, styles.columnHeader, { color: colors.textSecondary }]}>Spieler</Text>
+                          <Text style={[styles.playerColClub, styles.columnHeader, { color: colors.textSecondary }]}>Verein</Text>
+                          <Text style={[styles.playerColAgent, styles.columnHeader, { color: colors.textSecondary }]}>Berater</Text>
+                          <Text style={[styles.suggestionColGames, styles.columnHeader, { color: colors.textSecondary }]}>Spiele</Text>
+                          <Text style={[styles.suggestionColStat, styles.columnHeader, { color: colors.textSecondary }]}>
+                            {suggestionsStatType === 'goals' ? 'Tore' : 'Vorlagen'}
+                          </Text>
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                );
+              }}
+              renderItem={({ item }) => {
+                const age = calculateAge(item.birth_date);
+                const agentLabel = getStatAgentLabel(item);
+                return (
+                  <View
+                    style={[
+                      styles.playerRow,
+                      { borderBottomColor: colors.border, backgroundColor: colors.surface }
+                    ]}
+                  >
+                    <View style={styles.playerRowColumns}>
+                      {/* Name + Alter */}
+                      <View style={styles.playerColNameWrap}>
+                        <Text style={[styles.playerColName, { color: colors.text }]} numberOfLines={1}>
+                          {formatNameLastFirst(item.player_name)}
+                        </Text>
+                        {age ? <Text style={[styles.playerColAge, { color: colors.textSecondary }]}>{age}</Text> : null}
+                      </View>
+                      {/* Verein */}
+                      <Text style={[styles.playerColClub, { color: colors.textSecondary }]} numberOfLines={1}>
+                        {item.club_name || '-'}
+                      </Text>
+                      {/* Berater */}
+                      <Text style={[styles.playerColAgent, { color: agentLabel.color }]} numberOfLines={1}>
+                        {agentLabel.text}
+                      </Text>
+                      {/* Spiele */}
+                      <Text style={[styles.suggestionColGames, { color: colors.textSecondary }]}>
+                        {item.games_played ?? '-'}
+                      </Text>
+                      {/* Tore/Vorlagen */}
+                      <Text style={[styles.suggestionColStat, { color: colors.primary, fontWeight: '600' }]}>
+                        {item.stat_value}
+                      </Text>
+                    </View>
+                  </View>
+                );
+              }}
             />
           )}
         </View>
@@ -2603,5 +2738,21 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  suggestionColGames: {
+    width: 40,
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  suggestionColStat: {
+    width: 50,
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  columnHeader: {
+    fontSize: 10,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
   },
 });

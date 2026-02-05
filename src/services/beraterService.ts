@@ -462,6 +462,10 @@ export interface PlayerStat {
   updated_at: string;
   // Joined data
   league_name?: string;
+  // Agent info (from berater_players)
+  current_agent_name?: string | null;
+  current_agent_company?: string | null;
+  has_agent?: boolean;
   // Watchlist status
   is_on_watchlist?: boolean;
 }
@@ -486,7 +490,8 @@ export async function loadSuggestedPlayers(
     .from('berater_player_stats')
     .select(`
       *,
-      berater_leagues!inner(name)
+      berater_leagues!inner(name),
+      berater_players(current_agent_name, current_agent_company, has_agent, birth_date, berater_clubs(club_name))
     `)
     .eq('stat_type', statType)
     .order('stat_value', { ascending: false })
@@ -525,26 +530,48 @@ export async function loadSuggestedPlayers(
     (watchlistPlayers || []).map(p => p.tm_player_id)
   );
 
-  const players: PlayerStat[] = data.map(row => ({
+  const rawPlayers: PlayerStat[] = data.map(row => ({
     id: row.id,
     player_id: row.player_id,
     tm_player_id: row.tm_player_id,
     player_name: row.player_name,
     league_id: row.league_id,
-    club_name: row.club_name,
+    // Präferiere club_name aus berater_players -> berater_clubs (aktueller), dann aus stats
+    club_name: row.berater_players?.berater_clubs?.club_name || row.club_name,
     stat_type: row.stat_type,
     stat_value: row.stat_value,
     games_played: row.games_played,
     rank_in_league: row.rank_in_league,
     season: row.season,
     tm_profile_url: row.tm_profile_url,
-    birth_date: row.birth_date,
+    // Präferiere birth_date aus berater_players (verifiziert), dann aus stats
+    birth_date: row.berater_players?.birth_date || row.birth_date,
     position: row.position,
     updated_at: row.updated_at,
     league_name: row.berater_leagues?.name,
+    current_agent_name: row.berater_players?.current_agent_name ?? null,
+    current_agent_company: row.berater_players?.current_agent_company ?? null,
+    has_agent: row.berater_players?.has_agent ?? false,
     is_on_watchlist: watchlistTmIds.has(row.tm_player_id) ||
                      (row.player_id && watchlistPlayerIds.has(row.player_id)),
   }));
+
+  // Stats aggregieren für Spieler die in mehreren Ligen spielen (z.B. Vorrunde + Hauptrunde)
+  const aggregatedMap = new Map<string, PlayerStat>();
+  for (const player of rawPlayers) {
+    const key = player.tm_player_id;
+    if (aggregatedMap.has(key)) {
+      const existing = aggregatedMap.get(key)!;
+      existing.stat_value += player.stat_value;
+      existing.games_played = (existing.games_played || 0) + (player.games_played || 0);
+    } else {
+      aggregatedMap.set(key, { ...player });
+    }
+  }
+
+  // Nach aggregiertem stat_value sortieren
+  const players = Array.from(aggregatedMap.values())
+    .sort((a, b) => b.stat_value - a.stat_value);
 
   // Standardmäßig bereits auf Watchlist befindliche ausfiltern
   if (!options?.includeOnWatchlist) {
@@ -579,9 +606,12 @@ export async function loadPlayerStats(tmPlayerId: string): Promise<PlayerStat[]>
 }
 
 /**
- * Startet das Abrufen der Rankings von Transfermarkt
+ * Startet das Abrufen der Rankings von Transfermarkt (in Batches)
+ * Ruft mehrere Batches nacheinander auf bis alle Ligen verarbeitet sind
  */
-export async function refreshPlayerRankings(): Promise<{
+export async function refreshPlayerRankings(
+  onProgress?: (current: number, total: number) => void
+): Promise<{
   success: boolean;
   message: string;
   stats?: {
@@ -592,19 +622,61 @@ export async function refreshPlayerRankings(): Promise<{
   errors?: string[];
 }> {
   try {
-    const response = await fetch(`${RANKINGS_FUNCTION_URL}?action=fetch_all`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-        'Content-Type': 'application/json',
-      },
-    });
+    let batchIndex = 0;
+    let hasMore = true;
+    let totalLeaguesProcessed = 0;
+    let totalGoals = 0;
+    let totalAssists = 0;
+    let totalLeagues = 0;
+    const allErrors: string[] = [];
 
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
+    while (hasMore) {
+      console.log(`Fetching batch ${batchIndex}...`);
+
+      const response = await fetch(`${RANKINGS_FUNCTION_URL}?action=fetch_batch&batch=${batchIndex}`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const result = await response.json();
+
+      totalLeaguesProcessed += result.stats?.leaguesProcessed || 0;
+      totalGoals += result.stats?.goalsEntries || 0;
+      totalAssists += result.stats?.assistsEntries || 0;
+      totalLeagues = result.stats?.totalLeagues || totalLeagues;
+
+      if (result.errors) {
+        allErrors.push(...result.errors);
+      }
+
+      hasMore = result.batch?.hasMore || false;
+      batchIndex = result.batch?.next ?? -1;
+
+      // Progress callback
+      if (onProgress && totalLeagues > 0) {
+        onProgress(totalLeaguesProcessed, totalLeagues);
+      }
+
+      console.log(`Batch complete: ${totalLeaguesProcessed}/${totalLeagues} leagues, hasMore: ${hasMore}`);
     }
 
-    return await response.json();
+    return {
+      success: true,
+      message: `${totalLeaguesProcessed} Ligen verarbeitet`,
+      stats: {
+        leaguesProcessed: totalLeaguesProcessed,
+        goalsEntries: totalGoals,
+        assistsEntries: totalAssists,
+      },
+      errors: allErrors.length > 0 ? allErrors : undefined,
+    };
   } catch (error) {
     console.error('Error refreshing rankings:', error);
     return {
