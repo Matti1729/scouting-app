@@ -1395,9 +1395,20 @@ export function BeraterstatusScreen() {
   const suggestionSections = useMemo(() => {
     if (suggestedPlayers.length === 0) return [];
 
+    // Suche anwenden
+    let filtered = suggestedPlayers;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      filtered = suggestedPlayers.filter(p =>
+        p.player_name.toLowerCase().includes(q) ||
+        (p.club_name && p.club_name.toLowerCase().includes(q)) ||
+        (p.league_name && p.league_name.toLowerCase().includes(q))
+      );
+    }
+
     // Nach Liga gruppieren
     const grouped = new Map<string, PlayerStat[]>();
-    for (const player of suggestedPlayers) {
+    for (const player of filtered) {
       const league = player.league_name || player.league_id || 'Sonstige';
       if (!grouped.has(league)) grouped.set(league, []);
       grouped.get(league)!.push(player);
@@ -1435,7 +1446,7 @@ export function BeraterstatusScreen() {
           count: filtered.length,
         };
       });
-  }, [suggestedPlayers, leagues]);
+  }, [suggestedPlayers, leagues, searchQuery]);
 
   const toggleSuggestionSection = useCallback((title: string) => {
     setCollapsedSuggestionSections(prev => {
