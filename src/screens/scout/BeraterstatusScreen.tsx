@@ -1608,8 +1608,8 @@ export function BeraterstatusScreen() {
             {isCollapsed ? '\u25B6' : '\u25BC'}
           </Text>
           <Text style={[styles.sectionHeaderText, { color: colors.text }]}>{section.title}</Text>
+          <Text style={[styles.sectionHeaderCount, { color: colors.textSecondary }]}>{count}</Text>
         </View>
-        <Text style={[styles.sectionHeaderCount, { color: colors.textSecondary }]}>{count}</Text>
       </TouchableOpacity>
     );
   };
@@ -1883,8 +1883,8 @@ export function BeraterstatusScreen() {
                 <Text style={[
                   styles.statTypeButtonText,
                   { color: suggestionsStatType === 'assists' ? colors.primaryText : colors.text }
-                ]}>
-                  Vorlagengeber
+                ]} numberOfLines={1}>
+                  Vorlagen
                 </Text>
               </TouchableOpacity>
             </View>
@@ -1970,10 +1970,10 @@ export function BeraterstatusScreen() {
                         <Text style={[styles.sectionHeaderText, { color: colors.text }]}>
                           {section.title}
                         </Text>
+                        <Text style={[styles.sectionHeaderCount, { color: colors.textSecondary }]}>
+                          {section.count}
+                        </Text>
                       </View>
-                      <Text style={[styles.sectionHeaderCount, { color: colors.textSecondary }]}>
-                        {section.count}
-                      </Text>
                     </TouchableOpacity>
 
                     {/* Column Headers (inside section) */}
@@ -1993,7 +1993,7 @@ export function BeraterstatusScreen() {
                   </View>
                 );
               }}
-              renderItem={({ item }) => {
+              renderItem={({ item, index }) => {
                 const age = calculateAge(item.birth_date);
                 const agentLabel = getStatAgentLabel(item);
                 return (
@@ -2007,6 +2007,7 @@ export function BeraterstatusScreen() {
                       {/* Name + Alter */}
                       <View style={styles.playerColNameWrap}>
                         <Text style={[styles.playerColName, { color: colors.text }]} numberOfLines={1}>
+                          <Text style={{ color: colors.textSecondary }}>{index + 1}. </Text>
                           {formatNameLastFirst(item.player_name)}
                         </Text>
                         {age ? <Text style={[styles.playerColAge, { color: colors.textSecondary }]}>{age}</Text> : null}
