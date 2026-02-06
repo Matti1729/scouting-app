@@ -557,41 +557,57 @@ export function BeraterstatusScreen() {
     );
   };
 
-  const renderTabs = () => (
-    <View style={[styles.tabContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      {([
-        { key: 'alle_spieler' as TabKey, label: 'Alle Spieler', count: playersTotal },
-        { key: 'beraterwechsel' as TabKey, label: 'Beraterwechsel', count: filteredChanges.length },
-        { key: 'watchlist' as TabKey, label: 'Watchlist', count: watchlist.length },
-        { key: 'vorschlaege' as TabKey, label: 'Vorschläge', count: suggestedPlayers.length },
-      ]).map((tab) => (
-        <TouchableOpacity
-          key={tab.key}
+  const renderTabs = () => {
+    const tabs = ([
+      { key: 'alle_spieler' as TabKey, label: 'Alle Spieler', count: playersTotal },
+      { key: 'beraterwechsel' as TabKey, label: 'Beraterwechsel', count: filteredChanges.length },
+      { key: 'watchlist' as TabKey, label: 'Watchlist', count: watchlist.length },
+      { key: 'vorschlaege' as TabKey, label: 'Vorschläge', count: suggestedPlayers.length },
+    ]).map((tab) => (
+      <TouchableOpacity
+        key={tab.key}
+        style={[
+          styles.tab,
+          isMobile && styles.tabMobile,
+          activeTab === tab.key && { borderBottomColor: colors.primary, borderBottomWidth: 2 },
+        ]}
+        onPress={() => setActiveTab(tab.key)}
+      >
+        <Text
           style={[
-            styles.tab,
-            activeTab === tab.key && { borderBottomColor: colors.primary, borderBottomWidth: 2 },
+            styles.tabText,
+            isMobile && styles.tabTextMobile,
+            { color: activeTab === tab.key ? colors.primary : colors.textSecondary },
           ]}
-          onPress={() => setActiveTab(tab.key)}
         >
-          <Text
-            style={[
-              styles.tabText,
-              { color: activeTab === tab.key ? colors.primary : colors.textSecondary },
-            ]}
-          >
-            {tab.label}
-          </Text>
-          {tab.count > 0 && (
-            <View style={[styles.tabBadge, { backgroundColor: activeTab === tab.key ? colors.primary + '20' : colors.surfaceSecondary }]}>
-              <Text style={[styles.tabBadgeText, { color: activeTab === tab.key ? colors.primary : colors.textSecondary }]}>
-                {tab.count > 999 ? `${Math.floor(tab.count / 1000)}k` : tab.count}
-              </Text>
-            </View>
-          )}
-        </TouchableOpacity>
-      ))}
-    </View>
-  );
+          {tab.label}
+        </Text>
+        {tab.count > 0 && (
+          <View style={[styles.tabBadge, { backgroundColor: activeTab === tab.key ? colors.primary + '20' : colors.surfaceSecondary }]}>
+            <Text style={[styles.tabBadgeText, { color: activeTab === tab.key ? colors.primary : colors.textSecondary }]}>
+              {tab.count > 999 ? `${Math.floor(tab.count / 1000)}k` : tab.count}
+            </Text>
+          </View>
+        )}
+      </TouchableOpacity>
+    ));
+
+    if (isMobile) {
+      return (
+        <View style={[styles.tabContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {tabs}
+          </ScrollView>
+        </View>
+      );
+    }
+
+    return (
+      <View style={[styles.tabContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        {tabs}
+      </View>
+    );
+  };
 
   // ========== DROPDOWN HELPER ==========
 
@@ -2126,9 +2142,16 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     gap: 6,
   },
+  tabMobile: {
+    flex: undefined,
+    paddingHorizontal: 16,
+  },
   tabText: {
     fontSize: 13,
     fontWeight: '600',
+  },
+  tabTextMobile: {
+    fontSize: 12,
   },
   tabBadge: {
     paddingHorizontal: 6,
