@@ -574,6 +574,7 @@ export function BeraterstatusScreen() {
         onPress={() => setActiveTab(tab.key)}
       >
         <Text
+          numberOfLines={1}
           style={[
             styles.tabText,
             isMobile && styles.tabTextMobile,
@@ -2143,7 +2144,8 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   tabMobile: {
-    flex: undefined,
+    flex: 0,
+    flexShrink: 0,
     paddingHorizontal: 16,
   },
   tabText: {

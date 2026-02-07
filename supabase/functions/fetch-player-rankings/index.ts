@@ -242,16 +242,18 @@ function parseRankingTable(html: string): RankedPlayer[] {
       gamesPlayed = parseInt(spieleMatch[1], 10)
     }
 
-    // FIX: Überspringe Spieler mit Statistik aber ohne Spiele
-    // Das deutet auf falsche Daten hin (z.B. aus Marktwertänderungen-Tabelle)
-    if (gamesPlayed === null && statValue > 0) {
-      console.log(`Skipping ${playerName}: has ${statValue} stat but no games (likely from wrong table)`)
+    // Überspringe Spieler ohne Statistik
+    if (statValue === 0) {
       continue
     }
 
-    // Überspringe auch Spieler ohne Statistik
-    if (statValue === 0) {
-      continue
+    // Spiele-Extraktion Fallback: Suche breiter nach Links mit Zahlen in zentrierten Zellen
+    if (gamesPlayed === null) {
+      // Fallback: Suche nach <a> mit href zu leistungsdaten (evtl. mit title-Attribut vor href)
+      const spieleFallback = rowHtml.match(/<td[^>]*class="zentriert"[^>]*>[\s\S]*?<a[^>]*leistungsdaten[^>]*>(\d+)<\/a>/i)
+      if (spieleFallback) {
+        gamesPlayed = parseInt(spieleFallback[1], 10)
+      }
     }
 
     players.push({
@@ -267,39 +269,8 @@ function parseRankingTable(html: string): RankedPlayer[] {
     })
   }
 
-  // Fallback: Versuche alternative Tabellenstruktur
   if (players.length === 0) {
-    console.log('Standard pattern failed, trying alternative parsing...')
-
-    // Alternative: Suche nach Links zu Spielerprofilen in einer Tabelle
-    const altPattern = /<a[^>]*href="([^"]*\/spieler\/(\d+))"[^>]*>([^<]+)<\/a>/gi
-    const matches = [...html.matchAll(altPattern)]
-    let altRank = 0
-
-    for (const match of matches) {
-      altRank++
-      if (altRank > TOP_N) break
-
-      // Versuche Club aus dem umgebenden Kontext zu extrahieren
-      // Hole 500 Zeichen vor und nach dem Match für Context
-      const matchIndex = match.index || 0
-      const contextStart = Math.max(0, matchIndex - 500)
-      const contextEnd = Math.min(html.length, matchIndex + match[0].length + 500)
-      const contextHtml = html.substring(contextStart, contextEnd)
-      const clubName = extractClubName(contextHtml)
-
-      players.push({
-        rank: altRank,
-        playerName: decodeHtmlEntities(match[3].trim()),
-        tmPlayerId: match[2],
-        tmProfileUrl: match[1],
-        clubName,
-        statValue: 0,
-        gamesPlayed: null,
-        birthDate: null,
-        position: null,
-      })
-    }
+    console.log('No players with stats found in ranking table')
   }
 
   return players
