@@ -29,7 +29,6 @@ export interface TransfermarktPlayerFull extends TransfermarktPlayer {
 // Supabase Edge Function URL
 const SUPABASE_URL = 'https://ozggtruvnwozhwjbznsm.supabase.co';
 const EDGE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/transfermarkt-proxy`;
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96Z2d0cnV2bndvemh3amJ6bnNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY5NDI5ODYsImV4cCI6MjA4MjUxODk4Nn0.QCaSqAQPrIl-DXKiT82wbWAJ23KbeOTpRvq8YI46hCY';
 
 // Rate-Limiting: Zufällige Pause zwischen 0.8 und 1.2 Sekunden
 const getRandomDelay = () => 800 + Math.random() * 400;
@@ -60,7 +59,7 @@ export async function searchPlayer(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.access_token || SUPABASE_ANON_KEY}`,
+        'Authorization': `Bearer ${session?.access_token || ''}`,
         'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96Z2d0cnV2bndvemh3amJ6bnNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY5NDI5ODYsImV4cCI6MjA4MjUxODk4Nn0.QCaSqAQPrIl-DXKiT82wbWAJ23KbeOTpRvq8YI46hCY',
       },
       body: JSON.stringify({ playerName, clubHint, searchViaClub }),
@@ -121,7 +120,7 @@ export async function searchPlayerWithFullInfo(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.access_token || SUPABASE_ANON_KEY}`,
+        'Authorization': `Bearer ${session?.access_token || ''}`,
         'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96Z2d0cnV2bndvemh3amJ6bnNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY5NDI5ODYsImV4cCI6MjA4MjUxODk4Nn0.QCaSqAQPrIl-DXKiT82wbWAJ23KbeOTpRvq8YI46hCY',
       },
       body: JSON.stringify({
@@ -188,7 +187,7 @@ export async function fetchAgentInfo(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${session?.access_token || SUPABASE_ANON_KEY}`,
+        'Authorization': `Bearer ${session?.access_token || ''}`,
         'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96Z2d0cnV2bndvemh3amJ6bnNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY5NDI5ODYsImV4cCI6MjA4MjUxODk4Nn0.QCaSqAQPrIl-DXKiT82wbWAJ23KbeOTpRvq8YI46hCY',
       },
       body: JSON.stringify({ fetchAgentInfo: true, profileUrl }),

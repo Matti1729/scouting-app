@@ -5,7 +5,12 @@ import { supabase } from '../config/supabase';
 
 const SUPABASE_URL = 'https://ozggtruvnwozhwjbznsm.supabase.co';
 const EDGE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/berater-scan`;
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96Z2d0cnV2bndvemh3amJ6bnNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY5NDI5ODYsImV4cCI6MjA4MjUxODk4Nn0.QCaSqAQPrIl-DXKiT82wbWAJ23KbeOTpRvq8YI46hCY';
+
+async function getAuthToken(): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Nicht eingeloggt');
+  return session.access_token;
+}
 
 // ============================================================================
 // TYPES
@@ -362,11 +367,12 @@ export async function isOnWatchlist(playerId: string): Promise<boolean> {
 // ============================================================================
 
 async function callEdgeFunction(action: string, params?: Record<string, any>) {
+  const token = await getAuthToken();
   const response = await fetch(EDGE_FUNCTION_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      'Authorization': `Bearer ${token}`,
     },
     body: JSON.stringify({ action, ...params }),
   });
@@ -633,10 +639,11 @@ export async function refreshPlayerRankings(
     while (hasMore) {
       console.log(`Fetching batch ${batchIndex}...`);
 
+      const token = await getAuthToken();
       const response = await fetch(`${RANKINGS_FUNCTION_URL}?action=fetch_batch&batch=${batchIndex}`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       });

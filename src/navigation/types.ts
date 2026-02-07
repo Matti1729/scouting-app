@@ -1,4 +1,5 @@
 export type RootStackParamList = {
+  Login: undefined;
   Dashboard: undefined;
   MatchList: undefined;
   PlayerEvaluation: {
