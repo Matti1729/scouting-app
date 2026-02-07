@@ -596,7 +596,7 @@ export function BeraterstatusScreen() {
     if (isMobile) {
       return (
         <View style={[styles.tabContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ flexDirection: 'row' }}>
             {tabs}
           </ScrollView>
         </View>
@@ -2144,8 +2144,10 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   tabMobile: {
-    flex: 0,
+    flex: undefined,
+    flexGrow: 0,
     flexShrink: 0,
+    flexBasis: 'auto',
     paddingHorizontal: 16,
   },
   tabText: {
