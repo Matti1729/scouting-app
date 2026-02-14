@@ -30,8 +30,8 @@ export interface TransfermarktPlayerFull extends TransfermarktPlayer {
 const SUPABASE_URL = 'https://ozggtruvnwozhwjbznsm.supabase.co';
 const EDGE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/transfermarkt-proxy`;
 
-// Rate-Limiting: Zufällige Pause zwischen 0.8 und 1.2 Sekunden
-const getRandomDelay = () => 800 + Math.random() * 400;
+// Rate-Limiting: Zufällige Pause zwischen 1.5 und 2.5 Sekunden (vorher 0.8-1.2s)
+const getRandomDelay = () => 1500 + Math.random() * 1000;
 
 // Sleep-Funktion für Rate-Limiting
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
@@ -610,16 +610,20 @@ function findBestPlayerMatch(
   players: TransfermarktPlayer[],
   searchName: string,
   clubHint?: string
-): TransfermarktPlayer {
+): TransfermarktPlayer | null {
+  if (players.length === 0) return null;
+
   const normalizedSearchName = normalizeName(searchName);
   const nameParts = normalizedSearchName.split(' ');
 
-  let bestMatch: TransfermarktPlayer = players[0];
+  let bestMatch: TransfermarktPlayer | null = null;
   let bestScore = 0;
+  let bestHasClubMatch = false;
 
   for (const player of players) {
     const normalizedPlayerName = normalizeName(player.name);
     let score = 0;
+    let hasClubMatch = false;
 
     // Exakter Name-Match
     if (normalizedPlayerName === normalizedSearchName) {
@@ -647,13 +651,14 @@ function findBestPlayerMatch(
       // Exakter Verein-Match
       if (normalizedPlayerClub === normalizedClub) {
         score += 200;
+        hasClubMatch = true;
       } else {
-        // Teilweiser Match mit Keywords
-        const clubKeywords = normalizedClub.split(' ').filter(w => w.length > 3);
-        for (const keyword of clubKeywords) {
-          if (normalizedPlayerClub.includes(keyword)) {
-            score += 100; // Erhöht von 50 auf 100
-          }
+        // Keyword-basierter Match: >50% der Keywords (Länge>2) müssen übereinstimmen
+        const clubKeywords = normalizedClub.split(' ').filter(w => w.length > 2);
+        const matchingKeywords = clubKeywords.filter(kw => normalizedPlayerClub.includes(kw));
+        if (clubKeywords.length > 0 && matchingKeywords.length >= Math.ceil(clubKeywords.length * 0.5)) {
+          score += 100;
+          hasClubMatch = true;
         }
       }
     }
@@ -661,7 +666,15 @@ function findBestPlayerMatch(
     if (score > bestScore) {
       bestScore = score;
       bestMatch = player;
+      bestHasClubMatch = hasClubMatch;
     }
+  }
+
+  // STRIKT: Wenn clubHint vorhanden ist, MUSS der beste Match den Club matchen.
+  // Lieber kein Ergebnis als ein falscher Spieler von einem anderen Verein.
+  if (clubHint && bestMatch && !bestHasClubMatch) {
+    console.log(`[TM] Rejecting "${bestMatch.name}" (club: ${bestMatch.currentClub || '?'}) - doesn't match "${clubHint}"`);
+    return null;
   }
 
   return bestMatch;
@@ -732,4 +745,238 @@ export function isValidTransfermarktUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+// ============================================================================
+// BERATER-DB LOOKUP (schneller als TM-Suche, nutzt bereits gescannte Daten)
+// ============================================================================
+
+export interface BeraterDBResult {
+  id: string;
+  transfermarkt_url: string | null;
+  agent_name: string | null;
+  agent_company: string | null;
+  has_agent: boolean;
+  birth_date: string | null;
+  matched: boolean;  // true = aus DB gefunden, false = muss TM-Fallback nutzen
+}
+
+/**
+ * Sucht Spieler-Daten zuerst in der berater_players-Tabelle (sofort, kein Rate-Limiting).
+ * Gibt für jeden Spieler an ob er gefunden wurde (matched=true) oder TM-Fallback nötig ist.
+ *
+ * Flow: clubHint → berater_clubs matchen → berater_players laden → Name matchen
+ */
+export async function enrichFromBeraterDB(
+  players: Array<{
+    id: string;
+    name: string;
+    vorname?: string;
+    clubHint: string;
+    transfermarkt_url?: string | null;
+    agent_name?: string | null;
+    agent_company?: string | null;
+    has_agent?: boolean;
+    birth_date?: string | null;
+  }>,
+): Promise<BeraterDBResult[]> {
+  const results: BeraterDBResult[] = [];
+
+  // Spieler nach Club gruppieren (Heim vs Auswärts)
+  const clubGroups = new Map<string, typeof players>();
+  for (const player of players) {
+    const club = player.clubHint;
+    if (!clubGroups.has(club)) clubGroups.set(club, []);
+    clubGroups.get(club)!.push(player);
+  }
+
+  for (const [clubHint, clubPlayers] of clubGroups) {
+    if (!clubHint) {
+      // Kein Club-Hint → alle unmatched
+      results.push(...clubPlayers.map(p => ({
+        id: p.id,
+        transfermarkt_url: p.transfermarkt_url || null,
+        agent_name: p.agent_name || null,
+        agent_company: p.agent_company || null,
+        has_agent: p.has_agent || false,
+        birth_date: p.birth_date || null,
+        matched: false,
+      })));
+      continue;
+    }
+
+    // 1. Club in berater_clubs suchen (fuzzy: ilike)
+    const normalizedHint = clubHint.replace(/\s+/g, '%');
+    const { data: clubs } = await supabase
+      .from('berater_clubs')
+      .select('id, club_name')
+      .or(`club_name.ilike.%${normalizedHint}%,club_name.ilike.%${clubHint}%`)
+      .eq('is_active', true)
+      .limit(5);
+
+    if (!clubs?.length) {
+      console.log(`[BeraterDB] Club not found: "${clubHint}" → TM-Fallback`);
+      results.push(...clubPlayers.map(p => ({
+        id: p.id,
+        transfermarkt_url: p.transfermarkt_url || null,
+        agent_name: p.agent_name || null,
+        agent_company: p.agent_company || null,
+        has_agent: p.has_agent || false,
+        birth_date: p.birth_date || null,
+        matched: false,
+      })));
+      continue;
+    }
+
+    // Alle passenden Clubs filtern (score > 0)
+    const matchedClubs = clubs
+      .map(club => ({ club, score: clubMatchScore(club.club_name, clubHint) }))
+      .filter(c => c.score > 0)
+      .sort((a, b) => b.score - a.score);
+
+    if (matchedClubs.length === 0) {
+      console.log(`[BeraterDB] No club match for: "${clubHint}"`);
+      results.push(...clubPlayers.map(p => ({
+        id: p.id,
+        transfermarkt_url: p.transfermarkt_url || null,
+        agent_name: p.agent_name || null,
+        agent_company: p.agent_company || null,
+        has_agent: p.has_agent || false,
+        birth_date: p.birth_date || null,
+        matched: false,
+      })));
+      continue;
+    }
+
+    console.log(`[BeraterDB] ${matchedClubs.length} clubs matched for "${clubHint}": ${matchedClubs.map(c => `"${c.club.club_name}" (${c.score})`).join(', ')}`);
+
+    // 2. Spieler aus ALLEN passenden Clubs laden (z.B. Hauptteam + U19 + U17)
+    const allClubIds = matchedClubs.map(c => c.club.id);
+    const { data: beraterPlayers } = await supabase
+      .from('berater_players')
+      .select('player_name, tm_profile_url, birth_date, current_agent_name, current_agent_company, has_agent, club_id')
+      .in('club_id', allClubIds)
+      .eq('is_active', true);
+
+    if (!beraterPlayers?.length) {
+      console.log(`[BeraterDB] No players across ${matchedClubs.length} clubs`);
+      results.push(...clubPlayers.map(p => ({
+        id: p.id,
+        transfermarkt_url: p.transfermarkt_url || null,
+        agent_name: p.agent_name || null,
+        agent_company: p.agent_company || null,
+        has_agent: p.has_agent || false,
+        birth_date: p.birth_date || null,
+        matched: false,
+      })));
+      continue;
+    }
+
+    console.log(`[BeraterDB] Loaded ${beraterPlayers.length} players from ${matchedClubs.length} clubs`);
+
+    // 3. Lineup-Spieler gegen ALLE berater_players matchen
+    for (const player of clubPlayers) {
+      const fullName = player.vorname ? `${player.vorname} ${player.name}` : player.name;
+      const match = findBestBeraterMatch(fullName, beraterPlayers);
+
+      if (match) {
+        console.log(`[BeraterDB] ✓ ${fullName} → ${match.player_name} (TM: ${match.tm_profile_url ? 'ja' : 'nein'})`);
+        results.push({
+          id: player.id,
+          transfermarkt_url: match.tm_profile_url || player.transfermarkt_url || null,
+          agent_name: match.current_agent_name || player.agent_name || null,
+          agent_company: match.current_agent_company || player.agent_company || null,
+          has_agent: match.has_agent || player.has_agent || false,
+          birth_date: match.birth_date || player.birth_date || null,
+          matched: true,
+        });
+      } else {
+        console.log(`[BeraterDB] ✗ ${fullName} → not found across ${matchedClubs.length} clubs`);
+        results.push({
+          id: player.id,
+          transfermarkt_url: player.transfermarkt_url || null,
+          agent_name: player.agent_name || null,
+          agent_company: player.agent_company || null,
+          has_agent: player.has_agent || false,
+          birth_date: player.birth_date || null,
+          matched: false,
+        });
+      }
+    }
+  }
+
+  const matched = results.filter(r => r.matched).length;
+  console.log(`[BeraterDB] Result: ${matched}/${results.length} matched from DB`);
+  return results;
+}
+
+/**
+ * Findet den besten Namens-Match in berater_players.
+ * Nutzt normalizeName() für Umlaute/Akzente.
+ */
+function findBestBeraterMatch(
+  searchName: string,
+  beraterPlayers: Array<{
+    player_name: string;
+    tm_profile_url: string | null;
+    birth_date: string | null;
+    current_agent_name: string | null;
+    current_agent_company: string | null;
+    has_agent: boolean | null;
+  }>,
+): typeof beraterPlayers[0] | null {
+  const normalizedSearch = normalizeName(searchName);
+  const searchParts = normalizedSearch.split(' ').filter(p => p.length > 0);
+
+  let bestMatch: typeof beraterPlayers[0] | null = null;
+  let bestScore = 0;
+
+  for (const bp of beraterPlayers) {
+    const normalizedPlayer = normalizeName(bp.player_name);
+    const playerParts = normalizedPlayer.split(' ').filter(p => p.length > 0);
+
+    let score = 0;
+
+    // Exakter Match
+    if (normalizedSearch === normalizedPlayer) {
+      score = 200;
+    } else {
+      // Nachname-Match (letztes Wort)
+      const searchLast = searchParts[searchParts.length - 1];
+      const playerLast = playerParts[playerParts.length - 1];
+      if (searchLast === playerLast) {
+        score += 60;
+      }
+
+      // Vorname-Match (erstes Wort)
+      if (searchParts.length > 1 && playerParts.length > 1) {
+        const searchFirst = searchParts[0];
+        const playerFirst = playerParts[0];
+        if (searchFirst === playerFirst) {
+          score += 40;
+        } else if (searchFirst.startsWith(playerFirst) || playerFirst.startsWith(searchFirst)) {
+          // Abkürzung: "Mo" vs "Mohamed"
+          score += 20;
+        }
+      }
+
+      // Teil-Wort-Matches für zusammengesetzte Namen
+      for (const sp of searchParts) {
+        for (const pp of playerParts) {
+          if (sp.length >= 3 && pp.length >= 3 && sp !== searchParts[0] && sp !== searchParts[searchParts.length - 1]) {
+            if (sp === pp) score += 15;
+          }
+        }
+      }
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = bp;
+    }
+  }
+
+  // Mindestens Nachname + Vorname müssen matchen (Score >= 80)
+  // Oder exakter Match (200)
+  return bestScore >= 80 ? bestMatch : null;
 }

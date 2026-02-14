@@ -32,7 +32,7 @@ export interface LineupListProps {
   emptyMessage?: string;
 }
 
-const ITEM_HEIGHT = 38;
+const ITEM_HEIGHT = 32;
 
 export const LineupList = memo<LineupListProps>(({
   players,

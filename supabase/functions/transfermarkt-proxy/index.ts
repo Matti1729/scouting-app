@@ -3,11 +3,42 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 
+// User-Agent Rotation (wie in berater-scan)
+const USER_AGENTS = [
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0',
+]
+const getRandomUA = () => USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]
+
 const BROWSER_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'User-Agent': getRandomUA(),
   'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
   'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
   'Cache-Control': 'no-cache',
+}
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+// Fetch with retry and backoff for 429/403
+async function fetchWithRetry(url: string, options: RequestInit = {}, maxRetries = 3): Promise<Response> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const headers = { ...BROWSER_HEADERS, 'User-Agent': getRandomUA(), ...(options.headers || {}) }
+    const response = await fetch(url, { ...options, headers })
+    if (response.ok) return response
+    if (response.status === 429 || response.status === 403) {
+      if (attempt < maxRetries) {
+        const backoff = Math.pow(2, attempt) * 3000 // 3s, 6s, 12s
+        console.log(`TM rate limited (${response.status}), backing off ${backoff}ms...`)
+        await sleep(backoff)
+        continue
+      }
+    }
+    return response // andere Fehler: nicht retrien
+  }
+  throw new Error('fetchWithRetry: exhausted all retries')
 }
 
 const corsHeaders = {
@@ -57,9 +88,8 @@ serve(async (req) => {
       console.log('Club squad search failed, trying normal search for:', playerName)
       const searchUrl = `https://www.transfermarkt.de/schnellsuche/ergebnis/schnellsuche?query=${encodeURIComponent(playerName)}&Spieler_Spieler=Spieler`
 
-      const response = await fetch(searchUrl, {
+      const response = await fetchWithRetry(searchUrl, {
         method: 'GET',
-        headers: BROWSER_HEADERS,
       })
 
       if (response.ok) {
@@ -119,9 +149,8 @@ serve(async (req) => {
 
     console.log('Searching Transfermarkt for:', playerName, clubHint ? `(club hint: ${clubHint})` : '')
 
-    const response = await fetch(searchUrl, {
+    const response = await fetchWithRetry(searchUrl, {
       method: 'GET',
-      headers: BROWSER_HEADERS,
     })
 
     if (!response.ok) {
@@ -199,17 +228,18 @@ function findBestPlayerMatch(
   clubHint?: string
 ): TransfermarktPlayer | null {
   if (players.length === 0) return null
-  if (players.length === 1) return players[0]
 
   const normalizedSearchName = normalizeName(searchName)
   const nameParts = normalizedSearchName.split(' ')
 
-  let bestMatch: TransfermarktPlayer = players[0]
+  let bestMatch: TransfermarktPlayer | null = null
   let bestScore = 0
+  let bestHasClubMatch = false
 
   for (const player of players) {
     const normalizedPlayerName = normalizeName(player.name)
     let score = 0
+    let hasClubMatch = false
 
     // Exakter Name-Match
     if (normalizedPlayerName === normalizedSearchName) {
@@ -237,16 +267,30 @@ function findBestPlayerMatch(
       // Exakter Verein-Match
       if (normalizedPlayerClub === normalizedClub) {
         score += 200
-      } else if (normalizedPlayerClub.includes(normalizedClub) || normalizedClub.includes(normalizedPlayerClub)) {
-        // Teilweise Verein-Match
-        score += 100
+        hasClubMatch = true
+      } else {
+        // Keyword-basierter Match: >50% der Keywords (Länge>2)
+        const clubKeywords = normalizedClub.split(' ').filter(w => w.length > 2)
+        const matchingKeywords = clubKeywords.filter(kw => normalizedPlayerClub.includes(kw))
+        if (clubKeywords.length > 0 && matchingKeywords.length >= Math.ceil(clubKeywords.length * 0.5)) {
+          score += 100
+          hasClubMatch = true
+        }
       }
     }
 
     if (score > bestScore) {
       bestScore = score
       bestMatch = player
+      bestHasClubMatch = hasClubMatch
     }
+  }
+
+  // STRIKT: Wenn clubHint vorhanden, MUSS der Club matchen.
+  // Lieber kein Ergebnis als falscher Spieler von anderem Verein.
+  if (clubHint && bestMatch && !bestHasClubMatch) {
+    console.log(`Rejecting "${bestMatch.name}" (club: ${bestMatch.currentClub || '?'}) - doesn't match "${clubHint}"`)
+    return null
   }
 
   return bestMatch
@@ -266,9 +310,8 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
 
     console.log('Fetching profile:', fullUrl)
 
-    const response = await fetch(fullUrl, {
+    const response = await fetchWithRetry(fullUrl, {
       method: 'GET',
-      headers: BROWSER_HEADERS,
     })
 
     if (!response.ok) {
@@ -444,9 +487,8 @@ async function searchViaClubSquad(playerName: string, clubHint: string): Promise
 
     console.log('Searching for club:', clubHint)
 
-    const clubResponse = await fetch(clubSearchUrl, {
+    const clubResponse = await fetchWithRetry(clubSearchUrl, {
       method: 'GET',
-      headers: BROWSER_HEADERS,
     })
 
     if (!clubResponse.ok) {
@@ -469,9 +511,8 @@ async function searchViaClubSquad(playerName: string, clubHint: string): Promise
     // Schritt 2: Kaderseite holen
     const squadUrl = `https://www.transfermarkt.de/verein/kader/verein/${clubId}`
 
-    const squadResponse = await fetch(squadUrl, {
+    const squadResponse = await fetchWithRetry(squadUrl, {
       method: 'GET',
-      headers: BROWSER_HEADERS,
     })
 
     if (!squadResponse.ok) {
@@ -562,9 +603,8 @@ async function searchViaClubSquadWithFullInfo(playerName: string, clubHint: stri
       const clubSearchUrl = `https://www.transfermarkt.de/schnellsuche/ergebnis/schnellsuche?query=${encodeURIComponent(query)}&Verein_Verein=Verein`
       console.log('Optimized search - Step 1: Searching for club:', query)
 
-      const clubResponse = await fetch(clubSearchUrl, {
+      const clubResponse = await fetchWithRetry(clubSearchUrl, {
         method: 'GET',
-        headers: BROWSER_HEADERS,
       })
 
       if (clubResponse.ok) {
@@ -635,9 +675,8 @@ async function searchViaClubSquadWithFullInfo(playerName: string, clubHint: stri
     const squadUrl = `https://www.transfermarkt.de/verein/kader/verein/${bestClubMatch.id}`
     console.log('Optimized search - Step 2: Fetching squad from:', squadUrl)
 
-    const squadResponse = await fetch(squadUrl, {
+    const squadResponse = await fetchWithRetry(squadUrl, {
       method: 'GET',
-      headers: BROWSER_HEADERS,
     })
 
     if (!squadResponse.ok) {
@@ -655,17 +694,24 @@ async function searchViaClubSquadWithFullInfo(playerName: string, clubHint: stri
       console.log('Player not in squad, trying normal search with club filter...')
 
       const searchUrl = `https://www.transfermarkt.de/schnellsuche/ergebnis/schnellsuche?query=${encodeURIComponent(playerName)}&Spieler_Spieler=Spieler`
-      const searchResponse = await fetch(searchUrl, { headers: BROWSER_HEADERS })
+      const searchResponse = await fetchWithRetry(searchUrl)
       const searchHtml = await searchResponse.text()
       const searchResults = parseSearchResults(searchHtml)
 
       // Finde Spieler dessen Verein zum clubHint passt (inkl. U19, U17, etc.)
       const normalizedHint = normalizeName(clubHint)
+      const hintKeywords = normalizedHint.split(' ').filter(w => w.length > 2)
       const matchingPlayer = searchResults.find(p => {
         if (!p.currentClub) return false
         const normalizedClub = normalizeName(p.currentClub)
-        // Prüfe ob Vereinsname enthalten ist (z.B. "SC Fortuna Köln U19" enthält "Fortuna Köln")
-        return normalizedClub.includes(normalizedHint) || normalizedHint.includes(normalizedClub)
+        // Exakter Substring-Match
+        if (normalizedClub.includes(normalizedHint) || normalizedHint.includes(normalizedClub)) return true
+        // Keyword-Match: >50% der Keywords müssen übereinstimmen
+        if (hintKeywords.length > 0) {
+          const matchingKw = hintKeywords.filter(kw => normalizedClub.includes(kw))
+          return matchingKw.length >= Math.ceil(hintKeywords.length * 0.5)
+        }
+        return false
       })
 
       if (matchingPlayer) {

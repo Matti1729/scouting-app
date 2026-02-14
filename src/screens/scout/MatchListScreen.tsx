@@ -45,6 +45,7 @@ import {
   batchFetchAgentInfo,
   getTransfermarktSearchUrl,
   TransfermarktAgentInfo,
+  enrichFromBeraterDB,
 } from '../../services/transfermarktService';
 import { Dropdown } from '../../components/Dropdown';
 import { LineupList } from '../../components/LineupList';
@@ -469,8 +470,6 @@ export function MatchListScreen({ navigation }: any) {
     const allPlayers = result.data;
 
     // Spieler ohne TM-URL oder ohne vollständige Profildaten suchen
-    // Prüfe auch auf undefined und leere Strings
-    // Wenn TM-URL vorhanden aber kein Geburtsdatum/Berater -> Profildaten nachladen
     const playersToSearch = allPlayers.filter(p =>
       !p.transfermarkt_url || !p.agent_name || !p.birth_date
     );
@@ -480,49 +479,90 @@ export function MatchListScreen({ navigation }: any) {
     }
 
     setIsSearchingTM(true);
-    setTmSearchProgress({ current: 0, total: playersToSearch.length, playerName: '' });
+    setTmSearchProgress({ current: 0, total: playersToSearch.length, playerName: 'DB-Lookup...' });
 
     try {
-      // OPTIMIERTE Batch-Suche: Ein Request pro Spieler für URL + Berater + Geburtsdatum
-      const searchResults = await batchSearchPlayersWithFullInfo(
+      // SCHRITT 1: Zuerst in berater_players DB nachschlagen (sofort, kein Rate-Limiting)
+      const dbResults = await enrichFromBeraterDB(
         playersToSearch.map(p => ({
           id: p.id,
           name: p.name,
           vorname: p.vorname || undefined,
-          clubHint: p.team === 'home' ? homeTeam : awayTeam,  // Korrekter Verein pro Spieler!
+          clubHint: p.team === 'home' ? homeTeam : awayTeam,
           transfermarkt_url: p.transfermarkt_url,
           agent_name: p.agent_name,
           agent_company: p.agent_company,
           has_agent: p.has_agent,
           birth_date: p.birth_date,
         })),
-        (current, total, playerName) => {
-          setTmSearchProgress({ current, total, playerName });
-        }
       );
 
-      // Alle gefundenen Daten (URL + Berater + Geburtsdatum) in Supabase speichern
-      // Speichere auch Teildaten (z.B. nur Agent oder nur Geburtsdatum)
-      for (const result of searchResults) {
-        if (result.transfermarkt_url || result.agent_name || result.birth_date) {
-          await updatePlayer(result.id, {
-            transfermarkt_url: result.transfermarkt_url ?? undefined,
-            agent_name: result.agent_name ?? undefined,
-            agent_company: result.agent_company ?? undefined,
-            has_agent: result.has_agent,
-            birth_date: result.birth_date ?? undefined,
+      // DB-Treffer sofort speichern
+      const dbMatched = dbResults.filter(r => r.matched);
+      for (const dbResult of dbMatched) {
+        if (dbResult.transfermarkt_url || dbResult.agent_name || dbResult.birth_date) {
+          await updatePlayer(dbResult.id, {
+            transfermarkt_url: dbResult.transfermarkt_url ?? undefined,
+            agent_name: dbResult.agent_name ?? undefined,
+            agent_company: dbResult.agent_company ?? undefined,
+            has_agent: dbResult.has_agent,
+            birth_date: dbResult.birth_date ?? undefined,
           });
         }
+      }
+
+      console.log(`[BeraterDB] ${dbMatched.length}/${playersToSearch.length} from DB`);
+
+      // SCHRITT 2: Für nicht-gematchte Spieler → TM-Proxy Fallback
+      const unmatchedPlayers = dbResults
+        .filter(r => !r.matched)
+        .map(r => playersToSearch.find(p => p.id === r.id)!)
+        .filter(Boolean);
+
+      if (unmatchedPlayers.length > 0) {
+        console.log(`[TM-Fallback] ${unmatchedPlayers.length} players need TM search`);
+        setTmSearchProgress({ current: dbMatched.length, total: playersToSearch.length, playerName: 'TM-Suche...' });
+
+        const tmResults = await batchSearchPlayersWithFullInfo(
+          unmatchedPlayers.map(p => ({
+            id: p.id,
+            name: p.name,
+            vorname: p.vorname || undefined,
+            clubHint: p.team === 'home' ? homeTeam : awayTeam,
+            transfermarkt_url: p.transfermarkt_url,
+            agent_name: p.agent_name,
+            agent_company: p.agent_company,
+            has_agent: p.has_agent,
+            birth_date: p.birth_date,
+          })),
+          (current, total, playerName) => {
+            setTmSearchProgress({ current: dbMatched.length + current, total: playersToSearch.length, playerName });
+          }
+        );
+
+        // TM-Treffer speichern
+        for (const tmResult of tmResults) {
+          if (tmResult.transfermarkt_url || tmResult.agent_name || tmResult.birth_date) {
+            await updatePlayer(tmResult.id, {
+              transfermarkt_url: tmResult.transfermarkt_url ?? undefined,
+              agent_name: tmResult.agent_name ?? undefined,
+              agent_company: tmResult.agent_company ?? undefined,
+              has_agent: tmResult.has_agent,
+              birth_date: tmResult.birth_date ?? undefined,
+            });
+          }
+        }
+
+        const tmFound = tmResults.filter(r => r.transfermarkt_url).length;
+        console.log(`[TM-Fallback] ${tmFound}/${unmatchedPlayers.length} found via TM`);
       }
 
       // Aufstellung neu laden um UI zu aktualisieren
       await fetchLineupForMatch(matchId);
 
-      const found = searchResults.filter(r => r.transfermarkt_url).length;
-      const agents = searchResults.filter(r => r.has_agent).length;
-      const withBirthDate = searchResults.filter(r => r.birth_date).length;
-      console.log(`TM search complete: ${found}/${searchResults.length} found, ${agents} with agents, ${withBirthDate} with birth_date`);
-      console.log('Search results:', JSON.stringify(searchResults, null, 2));
+      const allResults = [...dbResults];
+      const found = allResults.filter(r => r.transfermarkt_url).length;
+      console.log(`TM search complete: ${dbMatched.length} from DB, ${unmatchedPlayers.length} via TM-Fallback`);
 
     } catch (err) {
       console.error('TM batch search error:', err);
@@ -1377,13 +1417,24 @@ export function MatchListScreen({ navigation }: any) {
           searchTransfermarktForLineup(selectedMatch.id, homeTeam || '', awayTeam || '');
         }
 
-        // Ergebnis speichern wenn vorhanden
-        if (data.result) {
-          await updateMatch(selectedMatch.id, { result: data.result });
+        // Metadaten (Datum, Uhrzeit, Ort, Ergebnis) speichern wenn vorhanden
+        const metaUpdates: Record<string, string | undefined> = {};
+        if (data.matchDate) metaUpdates.match_date = data.matchDate;
+        if (data.matchTime) metaUpdates.match_time = data.matchTime;
+        if (data.location) metaUpdates.location = data.location;
+        if (data.result) metaUpdates.result = data.result;
+
+        if (Object.keys(metaUpdates).length > 0) {
+          await updateMatch(selectedMatch.id, metaUpdates);
+          const matchUpdates: Partial<Match> = {};
+          if (data.matchDate) matchUpdates.datum = data.matchDate;
+          if (data.matchTime) matchUpdates.zeit = data.matchTime;
+          if (data.location) matchUpdates.ort = data.location;
+          if (data.result) matchUpdates.ergebnis = data.result;
           setMatches(prev => prev.map(m =>
-            m.id === selectedMatch.id ? { ...m, ergebnis: data.result } : m
+            m.id === selectedMatch.id ? { ...m, ...matchUpdates } : m
           ));
-          setSelectedMatch({ ...selectedMatch, ergebnis: data.result });
+          setSelectedMatch(prev => prev ? { ...prev, ...matchUpdates } : prev);
         }
 
         setLineupStatus('available');
@@ -1416,15 +1467,46 @@ export function MatchListScreen({ navigation }: any) {
             searchTransfermarktForLineup(selectedMatch.id, homeTeam || '', awayTeam || '');
           }
 
+          // Metadaten (Datum, Uhrzeit, Ort) speichern wenn vorhanden
+          const ajaxMeta: Record<string, string | undefined> = {};
+          if (result.data.matchDate) ajaxMeta.match_date = result.data.matchDate;
+          if (result.data.matchTime) ajaxMeta.match_time = result.data.matchTime;
+          if (result.data.location) ajaxMeta.location = result.data.location;
+          if (result.data.result) ajaxMeta.result = result.data.result;
+
+          if (Object.keys(ajaxMeta).length > 0) {
+            await updateMatch(selectedMatch.id, ajaxMeta);
+            const matchUpdates: Partial<Match> = {};
+            if (result.data.matchDate) matchUpdates.datum = result.data.matchDate;
+            if (result.data.matchTime) matchUpdates.zeit = result.data.matchTime;
+            if (result.data.location) matchUpdates.ort = result.data.location;
+            if (result.data.result) matchUpdates.ergebnis = result.data.result;
+            setMatches(prev => prev.map(m =>
+              m.id === selectedMatch.id ? { ...m, ...matchUpdates } : m
+            ));
+            setSelectedMatch(prev => prev ? { ...prev, ...matchUpdates } : prev);
+          }
+
           setLineupStatus('available');
         } else {
-          // Ergebnis speichern wenn vorhanden (auch wenn keine Aufstellungen)
-          if (result.data.result) {
-            await updateMatch(selectedMatch.id, { result: result.data.result });
+          // Metadaten auch speichern wenn keine Aufstellungen verfügbar
+          const noLineupMeta: Record<string, string | undefined> = {};
+          if (result.data.matchDate) noLineupMeta.match_date = result.data.matchDate;
+          if (result.data.matchTime) noLineupMeta.match_time = result.data.matchTime;
+          if (result.data.location) noLineupMeta.location = result.data.location;
+          if (result.data.result) noLineupMeta.result = result.data.result;
+
+          if (Object.keys(noLineupMeta).length > 0) {
+            await updateMatch(selectedMatch.id, noLineupMeta);
+            const matchUpdates: Partial<Match> = {};
+            if (result.data.matchDate) matchUpdates.datum = result.data.matchDate;
+            if (result.data.matchTime) matchUpdates.zeit = result.data.matchTime;
+            if (result.data.location) matchUpdates.ort = result.data.location;
+            if (result.data.result) matchUpdates.ergebnis = result.data.result;
             setMatches(prev => prev.map(m =>
-              m.id === selectedMatch.id ? { ...m, ergebnis: result.data!.result } : m
+              m.id === selectedMatch.id ? { ...m, ...matchUpdates } : m
             ));
-            setSelectedMatch({ ...selectedMatch, ergebnis: result.data.result });
+            setSelectedMatch(prev => prev ? { ...prev, ...matchUpdates } : prev);
           }
           setLineupStatus('unavailable');
         }
@@ -2098,9 +2180,18 @@ export function MatchListScreen({ navigation }: any) {
                         />
                       </View>
                     ) : (
-                      <Text style={[styles.modalTitle, { color: colors.text }]}>
-                        {selectedMatch.spiel}
-                      </Text>
+                      <View style={styles.modalTitleContainer}>
+                        <Text style={[styles.modalTitle, { color: colors.text }]}>
+                          {selectedMatch.spiel}
+                        </Text>
+                        {selectedMatch.fussballDeUrl ? (
+                          <TouchableOpacity onPress={() => Linking.openURL(selectedMatch.fussballDeUrl!)}>
+                            <Text style={[styles.fussballDeLink, { color: colors.primary }]}>
+                              fussball.de
+                            </Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
                     )}
 
                     {/* Right: Datum + Zeit + Close */}
@@ -3640,11 +3731,19 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textAlign: 'center',
   },
+  modalTitleContainer: {
+    flex: 2,
+    alignItems: 'center',
+  },
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
     textAlign: 'center',
-    flex: 2,
+  },
+  fussballDeLink: {
+    fontSize: 12,
+    marginTop: 2,
+    textDecorationLine: 'underline',
   },
   modalBody: {
     flex: 1,

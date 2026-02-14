@@ -201,21 +201,21 @@ const styles = StyleSheet.create({
   playerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 5,
+    paddingVertical: 3,
     paddingHorizontal: 8,
     borderBottomWidth: 1,
-    minHeight: 38,
+    minHeight: 32,
   },
   playerNumber: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 10,
+    marginRight: 8,
   },
   playerNumberText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
   playerNumberInput: {
@@ -251,7 +251,7 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   playerName: {
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: '500',
   },
   playerJahrgang: {

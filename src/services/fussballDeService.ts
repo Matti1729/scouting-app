@@ -7,6 +7,9 @@ const SUPABASE_PROXY_URL = 'https://ozggtruvnwozhwjbznsm.supabase.co/functions/v
 // Supabase Edge Function für Aufstellungen (mit Browserless.io)
 const SCRAPE_LINEUP_URL = 'https://ozggtruvnwozhwjbznsm.supabase.co/functions/v1/scrape-lineup';
 
+// Supabase Anon Key für Edge Function Auth
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96Z2d0cnV2bndvemh3amJ6bnNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY5NDI5ODYsImV4cCI6MjA4MjUxODk4Nn0.QCaSqAQPrIl-DXKiT82wbWAJ23KbeOTpRvq8YI46hCY';
+
 // API Token für fussball.de (aus KMH-App Supabase)
 const FUSSBALL_DE_API_TOKEN = 'r1S7u6K7w6s8Y31448X9o5e9S4hF1b83w7G0JWqZnl';
 
@@ -54,6 +57,11 @@ export interface LineupsData {
   awaySubs: PlayerLineupData[];
   available: boolean;
   result?: string;
+  // Match metadata (aus AJAX match.info)
+  matchDate?: string;
+  matchTime?: string;
+  location?: string;
+  league?: string;
 }
 
 // Match-ID aus fussball.de URL extrahieren
@@ -174,7 +182,8 @@ export function formatTeamName(name: string): string {
     .replace(/\s+II$/, '')           // " II" am Ende
     .replace(/\s*\(2\)$/, '')        // "(2)" am Ende
     .replace(/\s*\(II\)$/, '')       // "(II)" am Ende
-    .trim();
+    .trim()
+    .replace(/\.$/, '');            // Trailing Punkt entfernen ("Mainz 05." → "Mainz 05")
 
   return formatted;
 }
@@ -248,57 +257,85 @@ export async function fetchMatchFromUrl(
       };
     }
 
-    // Verwende den gespeicherten Token oder den übergebenen
-    const token = apiToken || FUSSBALL_DE_API_TOKEN;
+    // Strategie: Team-Namen aus Edge Function (URL-Slug, zuverlässig),
+    // dann Datum/Zeit/Ort per Client-AJAX ergänzen (kann vom User-Gerät funktionieren)
 
-    // Versuche zuerst die API für Spieldetails
-    const apiUrl = `https://api-fussball.de/api/match/${matchId}`;
-    const proxyUrl = `${SUPABASE_PROXY_URL}?type=fussball&url=${encodeURIComponent(apiUrl)}`;
+    // ============================
+    // Schritt 1: Edge Function für Team-Namen + Altersklasse
+    // ============================
+    let edgeData: MatchData | null = null;
+    console.log('Trying Edge Function match-info for:', matchId);
+    try {
+      const edgeResponse = await fetch(SCRAPE_LINEUP_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+        body: JSON.stringify({ url: fussballDeUrl, mode: 'match-info' }),
+      });
 
-    console.log('Fetching match data from API:', apiUrl);
+      if (edgeResponse.ok) {
+        const edgeResult = await edgeResponse.json();
+        console.log('Edge Function response:', JSON.stringify(edgeResult).substring(0, 300));
 
-    const response = await fetch(proxyUrl, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-auth-token': token,
-      },
-    });
-
-    if (response.ok) {
-      const result = await response.json();
-
-      if (result.success && result.data) {
-        const game = result.data;
-        const homeTeam = game.homeTeam || game.heimmannschaft || game.home || '';
-        const awayTeam = game.awayTeam || game.gastmannschaft || game.away || '';
-        const league = game.competition || game.league || game.liga || game.wettbewerb || '';
-
-        return {
-          success: true,
-          data: {
-            homeTeam: formatTeamName(homeTeam),
-            awayTeam: formatTeamName(awayTeam),
-            date: extractGermanDate(game.date || game.datum || ''),
-            time: game.time || game.uhrzeit || '',
-            league,
-            matchday: game.matchday || game.spieltag || '',
-            location: game.location || game.ort || game.spielort || '',
-            matchType: determineMatchType(league),
-            ageGroup: extractAgeGroup(league, homeTeam, awayTeam),
-          },
-        };
+        if (edgeResult.success && edgeResult.data) {
+          const d = edgeResult.data;
+          edgeData = {
+            homeTeam: formatTeamName(d.homeTeam || ''),
+            awayTeam: formatTeamName(d.awayTeam || ''),
+            date: d.date || '',
+            time: d.time || '',
+            league: d.league || '',
+            location: d.location || '',
+            matchType: d.matchType || 'Punktspiel',
+            ageGroup: d.ageGroup || extractAgeGroup(d.league || '', d.homeTeam || '', d.awayTeam || ''),
+          };
+        }
       }
+    } catch (edgeErr) {
+      console.log('Edge Function error:', edgeErr);
     }
 
-    // Versuche die fussball.de Seite direkt zu laden und zu parsen
-    console.log('API failed, trying to scrape page directly...');
-    const scrapeResult = await scrapeMatchPage(fussballDeUrl);
-    if (scrapeResult.success && scrapeResult.data) {
-      return scrapeResult;
+    // ============================
+    // Schritt 2: Client-AJAX für Datum/Zeit/Ort (ergänzt Edge-Daten)
+    // ============================
+    console.log('Trying client AJAX for date/time/location...');
+    try {
+      const ajaxResult = await fetchMatchDataViaAjax(matchId, fussballDeUrl);
+      if (ajaxResult.success && ajaxResult.data) {
+        if (edgeData) {
+          // Kombiniere: Teams von Edge, Datum/Ort von AJAX
+          return {
+            success: true,
+            data: {
+              ...edgeData,
+              date: ajaxResult.data.date || edgeData.date,
+              time: ajaxResult.data.time || edgeData.time,
+              location: ajaxResult.data.location || edgeData.location,
+              league: ajaxResult.data.league || edgeData.league,
+              matchType: ajaxResult.data.matchType || edgeData.matchType,
+            },
+          };
+        }
+        // AJAX allein reicht (hat auch Team-Namen)
+        return ajaxResult;
+      }
+    } catch (ajaxErr) {
+      console.log('AJAX method error:', ajaxErr);
     }
 
-    // Fallback: Versuche Daten aus der URL zu parsen
+    // ============================
+    // Schritt 3: Edge-Daten allein zurückgeben (Teams ohne Datum/Ort)
+    // ============================
+    if (edgeData) {
+      return { success: true, data: edgeData };
+    }
+
+    // ============================
+    // Schritt 4: URL Parse (letzter Fallback)
+    // ============================
     return parseMatchFromUrl(fussballDeUrl);
 
   } catch (err) {
@@ -320,6 +357,10 @@ async function scrapeMatchPage(url: string): Promise<ScrapeResult> {
 
     const response = await fetch(proxyUrl, {
       method: 'GET',
+      headers: {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+      },
     });
 
     if (!response.ok) {
@@ -547,6 +588,196 @@ async function scrapeMatchPage(url: string): Promise<ScrapeResult> {
   }
 }
 
+// AJAX-basiertes Match-Info abrufen (zuverlässigste Methode)
+// Gleicher Ansatz wie scrape-lineup Edge Function: Hauptseite laden für Cookies, dann AJAX-Endpoint
+async function fetchMatchDataViaAjax(
+  matchId: string,
+  fussballDeUrl: string
+): Promise<ScrapeResult> {
+  try {
+    const mainPageUrl = fussballDeUrl.split('#')[0];
+    console.log('AJAX method: Loading main page for cookies...', mainPageUrl);
+
+    // Step 1: Hauptseite laden für Cookies + Title-Tag
+    const mainResponse = await fetch(mainPageUrl, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'de-DE,de;q=0.9',
+      },
+    });
+
+    if (!mainResponse.ok) {
+      console.log('AJAX method: Main page failed:', mainResponse.status);
+      return { success: false, error: 'Hauptseite nicht erreichbar' };
+    }
+
+    const mainHtml = await mainResponse.text();
+    console.log('AJAX method: Main page loaded, length:', mainHtml.length);
+
+    // Teams + Liga aus Title-Tag
+    let homeTeam = '';
+    let awayTeam = '';
+    let league = '';
+    const titleMatch = mainHtml.match(/<title>([^<]+)<\/title>/i);
+    if (titleMatch) {
+      const title = titleMatch[1];
+      console.log('AJAX method: Title:', title);
+      const teamsMatch = title.match(/^(.+?)\s+-\s+(.+?)(?:\s+Ergebnis|\s*\|)/);
+      if (teamsMatch) {
+        homeTeam = teamsMatch[1].trim();
+        awayTeam = teamsMatch[2].trim();
+      }
+      const leagueMatch = title.match(/Ergebnis:\s*(.+?)\s+-\s+/);
+      if (leagueMatch) {
+        league = leagueMatch[1].trim();
+      }
+    }
+
+    // Cookies extrahieren
+    const setCookieHeaders = mainResponse.headers.get('set-cookie') || '';
+    const cookies = setCookieHeaders.split(',').map(c => c.split(';')[0].trim()).filter(c => c).join('; ');
+
+    // Step 2: AJAX match.info für Datum/Uhrzeit/Ort
+    const ajaxUrl = `https://www.fussball.de/ajax.match.info/-/mode/PAGE/spiel/${matchId}`;
+    console.log('AJAX method: Fetching match info:', ajaxUrl);
+
+    const ajaxHeaders: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+      'X-Requested-With': 'XMLHttpRequest',
+      'Referer': mainPageUrl,
+      'Accept': '*/*',
+      'Accept-Language': 'de-DE,de;q=0.9',
+    };
+    if (cookies) ajaxHeaders['Cookie'] = cookies;
+
+    const ajaxResponse = await fetch(ajaxUrl, {
+      method: 'GET',
+      headers: ajaxHeaders,
+    });
+
+    let date = '';
+    let time = '';
+    let location = '';
+
+    if (ajaxResponse.ok) {
+      const ajaxHtml = await ajaxResponse.text();
+      console.log('AJAX method: Got match info, length:', ajaxHtml.length);
+
+      // Datum extrahieren aus AJAX-HTML
+      // Formate: "Sa, 08.02.2026", "SONNTAG, 08.02.2026", data-date="2026-02-08"
+      const datePatterns = [
+        /data-date="(\d{4}-\d{2}-\d{2})"/,
+        /"date":\s*"(\d{4}-\d{2}-\d{2})"/,
+        /(\d{1,2}\.\d{1,2}\.\d{4})/,
+      ];
+      for (const pattern of datePatterns) {
+        const match = ajaxHtml.match(pattern);
+        if (match) {
+          date = extractGermanDate(match[1]);
+          if (date) {
+            console.log('AJAX method: Found date:', date);
+            break;
+          }
+        }
+      }
+
+      // Uhrzeit extrahieren
+      // Formate: "17:30 UHR", "Anpfiff: 11:00", ">11:00Uhr<", data-time="11:00"
+      const timePatterns = [
+        /,\s*(\d{1,2}:\d{2})\s*UHR/i,
+        /(\d{1,2}:\d{2})\s+UHR/i,
+        /Anpfiff[:\s]*(\d{1,2}:\d{2})/i,
+        /Anstoß[:\s]*(\d{1,2}:\d{2})/i,
+        /Anstoss[:\s]*(\d{1,2}:\d{2})/i,
+        /data-time="(\d{1,2}:\d{2})"/,
+        /"time":\s*"(\d{1,2}:\d{2})"/,
+        /<span>(\d{1,2}:\d{2})Uhr<\/span>/,
+        />(\d{1,2}:\d{2})Uhr</,
+      ];
+
+      // Zuerst: Datum+Zeit zusammen (DD.MM.YYYY HH:MM ohne Pipe)
+      const dateTimeMatches = ajaxHtml.match(/\d{1,2}\.\d{1,2}\.\d{4}[^|]{0,5}(\d{1,2}:\d{2})/g);
+      if (dateTimeMatches) {
+        for (const m of dateTimeMatches) {
+          if (m.includes('|')) continue;
+          const tm = m.match(/(\d{1,2}:\d{2})$/);
+          if (tm) {
+            time = tm[1];
+            console.log('AJAX method: Found time from date+time:', time);
+            break;
+          }
+        }
+      }
+
+      if (!time) {
+        for (const pattern of timePatterns) {
+          const match = ajaxHtml.match(pattern);
+          if (match) {
+            time = match[1];
+            console.log('AJAX method: Found time:', time);
+            break;
+          }
+        }
+      }
+
+      // Ort extrahieren
+      const locationMatch = ajaxHtml.match(/<a[^>]*class="location"[^>]*>\s*([^<]+?)\s*<span/i);
+      if (locationMatch) {
+        location = locationMatch[1].trim().replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+        console.log('AJAX method: Found location:', location);
+      }
+      if (!location) {
+        const mapsMatch = ajaxHtml.match(/href="https?:\/\/(?:www\.)?google\.[a-z]+\/maps\?q=([^"]+)"/i);
+        if (mapsMatch) {
+          location = decodeURIComponent(mapsMatch[1].replace(/\+/g, ' ')).trim();
+        }
+      }
+    } else {
+      console.log('AJAX method: match.info failed:', ajaxResponse.status);
+    }
+
+    // Auch aus dem Title-Tag der Hauptseite nach Datum suchen (Fallback)
+    // Format: "Team1 - Team2 Ergebnis: Liga - Kategorie - Sa, 08.02.2026"
+    if (!date && titleMatch) {
+      const titleDateMatch = titleMatch[1].match(/(\d{1,2}\.\d{1,2}\.\d{4})/);
+      if (titleDateMatch) {
+        date = extractGermanDate(titleDateMatch[1]);
+        console.log('AJAX method: Found date from title:', date);
+      }
+    }
+
+    const formattedHome = formatTeamName(homeTeam);
+    const formattedAway = formatTeamName(awayTeam);
+
+    if (formattedHome && formattedAway) {
+      const ageGroup = extractAgeGroup(league, homeTeam, awayTeam);
+      console.log('AJAX method successful:', { homeTeam: formattedHome, awayTeam: formattedAway, date, time, league, location, ageGroup });
+
+      return {
+        success: true,
+        data: {
+          homeTeam: formattedHome,
+          awayTeam: formattedAway,
+          date,
+          time,
+          league,
+          location,
+          matchType: determineMatchType(league),
+          ageGroup,
+        },
+      };
+    }
+
+    console.log('AJAX method: Could not extract team names');
+    return { success: false, error: 'Teams nicht erkannt' };
+  } catch (err) {
+    console.error('AJAX method failed:', err);
+    return { success: false, error: `AJAX Fehler: ${err}` };
+  }
+}
+
 // Versuche Spieldaten aus der URL zu parsen (Fallback)
 function parseMatchFromUrl(url: string): { success: boolean; data?: MatchData; error?: string } {
   try {
@@ -580,28 +811,35 @@ function parseMatchFromUrl(url: string): { success: boolean; data?: MatchData; e
 
     // Wenn kein Prioritäts-Pattern gefunden, suche nach normalen Patterns
     if (bestSplitIndex === -1) {
-      // Bekannte Vereinsnamen-Muster die einen neuen Verein einleiten
+      // Nur echte Vereinskürzel und Vereinsnamen-Präfixe (KEINE Städtenamen!)
+      // Städtenamen wie berlin-, hoffenheim-, münchen- etc. sind TEIL von Vereinsnamen,
+      // nicht eigenständige Präfixe. Sie würden falsche Splits verursachen.
       const teamStartPatterns = [
         'fc-', 'sv-', 'tsg-', 'vfb-', 'vfl-', 'sc-', 'fsv-', 'bsc-', 'ssc-',
-        'rb-', 'rw-', 'sw-', 'bv-', 'tsv-', 'spvgg-',
-        'borussia-', 'bayern-', 'hertha-', 'eintracht-', 'fortuna-', 'arminia-',
+        'rb-', 'rw-', 'sw-', 'bv-', 'tsv-', 'spvgg-', 'sg-', 'sf-', 'tv-',
+        'borussia-', 'hertha-', 'eintracht-', 'fortuna-', 'arminia-',
         'tennis-', 'viktoria-', 'alemannia-', 'energie-', 'dynamo-', 'hansa-',
-        'union-', 'werder-', 'schalke-', 'hoffenheim-', 'mainz-',
-        'koeln-', 'köln-', 'leverkusen-', 'dortmund-', 'gladbach-', 'wolfsburg-',
-        'augsburg-', 'bremen-', 'hamburg-', 'hannover-', 'nuernberg-', 'nürnberg-',
-        'kaiserslautern-', 'stuttgart-', 'berlin-', 'muenchen-', 'münchen-',
+        'werder-', 'holstein-', 'greuther-', 'jahn-', 'wehen-', 'preussen-',
+        'kickers-', 'stuttgarter-', 'rot-', 'blau-', 'waldhof-', 'schalke-',
       ];
 
-      let bestPatternLength = 0;
+      // Sammle ALLE Kandidaten-Positionen, dann wähle den ausgewogensten Split
+      const candidates: number[] = [];
 
       for (const pattern of teamStartPatterns) {
-        // Suche nach "-pattern" um sicherzustellen dass es ein Wortanfang ist
         const searchPattern = '-' + pattern;
         const index = matchPart.indexOf(searchPattern);
-        if (index > 3 && pattern.length > bestPatternLength) {
-          bestSplitIndex = index + 1; // +1 um das führende "-" zu überspringen
-          bestPatternLength = pattern.length;
+        if (index > 3) {
+          candidates.push(index + 1);
         }
+      }
+
+      if (candidates.length > 0) {
+        // Wähle den Split der die Team-Namen am gleichmäßigsten teilt
+        const midpoint = matchPart.length / 2;
+        bestSplitIndex = candidates.reduce((best, pos) =>
+          Math.abs(pos - midpoint) < Math.abs(best - midpoint) ? pos : best
+        );
       }
     }
 
@@ -691,7 +929,8 @@ function parseMatchFromUrl(url: string): { success: boolean; data?: MatchData; e
         .replace(/\s+U\d{2}\s*2?$/i, '') // " U16", " U16 2" am Ende
         .replace(/\s+2$/, '')            // " 2" am Ende
         .replace(/\s+II$/, '')           // " II" am Ende
-        .trim();
+        .trim()
+        .replace(/\.$/, '');            // Trailing Punkt entfernen ("Mainz 05." → "Mainz 05")
 
       return result;
     };
@@ -955,6 +1194,8 @@ export async function fetchLineupsFromUrl(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
       },
       body: JSON.stringify({ url: fussballDeUrl }),
     });
@@ -1007,6 +1248,10 @@ export async function fetchLineupsFromUrl(
         awaySubs,
         available: lineupData.available || false,
         result: lineupData.result,
+        matchDate: lineupData.matchDate || '',
+        matchTime: lineupData.matchTime || '',
+        location: lineupData.location || '',
+        league: lineupData.league || '',
       },
     };
 

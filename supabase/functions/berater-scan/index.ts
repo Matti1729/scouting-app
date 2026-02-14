@@ -147,10 +147,7 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
 
     const html = await response.text()
 
-    // ========== KARRIEREENDE / AKTUELLER VEREIN ERKENNEN ==========
-    const isRetired = /Karriereende|class="data-header__label"[^>]*>\s*Karriereende/i.test(html)
-
-    // Aktuellen Verein aus Header extrahieren
+    // ========== AKTUELLER VEREIN ERKENNEN ==========
     let currentClubName: string | null = null
     const clubHeaderMatch = html.match(/Aktueller Verein:[\s\S]*?<a[^>]*>([^<]+)<\/a>/i)
       || html.match(/class="data-header__club"[^>]*>[\s\S]*?<a[^>]*title="([^"]+)"/i)
@@ -161,6 +158,12 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
         currentClubName = club
       }
     }
+
+    // ========== KARRIEREENDE ERKENNEN ==========
+    // Nur das spezifische Header-Label matchen (nicht "Karriereende" irgendwo auf der Seite,
+    // z.B. im Verwandte-Abschnitt oder in der Transferhistorie)
+    // Zusätzlich: Wenn ein aktueller Verein gefunden wurde, kann es kein Karriereende sein
+    const isRetired = !currentClubName && /class="data-header__label"[^>]*>\s*Karriereende\s*seit:/i.test(html)
 
     // ========== MARKTWERT EXTRAHIEREN ==========
     let marketValue: string | null = null

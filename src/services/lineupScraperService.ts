@@ -30,11 +30,19 @@ export interface ScrapedLineups {
   result?: string;
   available: boolean;
   error?: string;
+  // Match metadata (aus AJAX match.info)
+  matchDate?: string;
+  matchTime?: string;
+  location?: string;
+  league?: string;
 }
 
 // Supabase Edge Function für Lineup-Scraping
 // Nutzt dieselbe Supabase-Instanz wie die KMH-App
 const LINEUP_SCRAPER_URL = 'https://ozggtruvnwozhwjbznsm.supabase.co/functions/v1/scrape-lineup';
+
+// Supabase Anon Key für Edge Function Auth
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im96Z2d0cnV2bndvemh3amJ6bnNtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjY5NDI5ODYsImV4cCI6MjA4MjUxODk4Nn0.QCaSqAQPrIl-DXKiT82wbWAJ23KbeOTpRvq8YI46hCY';
 
 /**
  * Holt die Aufstellungen von fussball.de über einen Backend-Service mit Puppeteer.
@@ -67,6 +75,8 @@ export async function scrapeLineupsFromFussballDe(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
       },
       body: JSON.stringify({
         url: fussballDeUrl,

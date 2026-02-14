@@ -45,7 +45,7 @@ import {
   addStatPlayerToWatchlist,
 } from '../../services/beraterService';
 
-type TabKey = 'alle_spieler' | 'beraterwechsel' | 'watchlist' | 'vorschlaege';
+type TabKey = 'alle_spieler' | 'beraterwechsel' | 'vorschlaege';
 type PlayerListItem =
   | { type: 'club_header'; clubName: string; count: number }
   | { type: 'player'; player: BeraterPlayer };
@@ -72,7 +72,7 @@ export function BeraterstatusScreen() {
   const [showAgePicker, setShowAgePicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [collapsedSections, setCollapsedSections] = useState<Set<string> | null>(null);
-  const [collapsedClubs, setCollapsedClubs] = useState<Set<string>>(new Set());
+  const [expandedClubs, setExpandedClubs] = useState<Set<string>>(new Set());
   const [dropdownPos, setDropdownPos] = useState<{ x?: number; right?: number; y: number; width: number } | null>(null);
 
   // Refs für Dropdown-Positionierung
@@ -94,7 +94,7 @@ export function BeraterstatusScreen() {
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [rankingsRefreshing, setRankingsRefreshing] = useState(false);
   const [rankingsLastUpdate, setRankingsLastUpdate] = useState<string | null>(null);
-  const [collapsedSuggestionSections, setCollapsedSuggestionSections] = useState<Set<string>>(new Set());
+  const [collapsedSuggestionSections, setCollapsedSuggestionSections] = useState<Set<string> | null>(null);
 
   // Beraterwechsel sort
   type ChangeSortKey = 'default' | 'name' | 'mv' | 'club' | 'prev_agent' | 'new_agent' | 'date';
@@ -259,20 +259,17 @@ export function BeraterstatusScreen() {
       case 'beraterwechsel':
         await loadChangesTab();
         break;
-      case 'watchlist':
-        await loadWatchlistTab();
-        break;
       case 'vorschlaege':
         await loadSuggestionsTab();
         break;
     }
-  }, [activeTab, loadPlayersTab, loadChangesTab, loadWatchlistTab, loadSuggestionsTab]);
+  }, [activeTab, loadPlayersTab, loadChangesTab, loadSuggestionsTab]);
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
     await Promise.all([loadStatus(), loadPlayersTab(), loadChangesTab(), loadWatchlistTab(), loadSuggestionsTab()]);
     setRefreshing(false);
-  }, [loadStatus, loadPlayersTab, loadChangesTab, loadWatchlistTab, loadSuggestionsTab]);
+  }, [loadStatus, loadPlayersTab, loadChangesTab, loadSuggestionsTab]);
 
   useEffect(() => {
     loadStatus();
@@ -359,6 +356,31 @@ export function BeraterstatusScreen() {
     openPlayerDetail(pseudoPlayer);
   };
 
+  const openStatDetail = (stat: PlayerStat) => {
+    const pseudoPlayer: BeraterPlayer = {
+      id: stat.player_id || '',
+      club_id: '',
+      player_name: stat.player_name,
+      tm_player_id: stat.tm_player_id,
+      tm_profile_url: stat.tm_profile_url || '',
+      birth_date: stat.birth_date,
+      position: stat.position,
+      current_agent_name: stat.current_agent_name || null,
+      current_agent_company: stat.current_agent_company || null,
+      has_agent: stat.has_agent ?? false,
+      agent_updated_at: null,
+      agent_since: null,
+      last_scanned_at: null,
+      is_active: true,
+      is_vereinslos: false,
+      market_value: null,
+      club_name: stat.club_name || undefined,
+      league_id: stat.league_id || undefined,
+      league_name: stat.league_name || undefined,
+    };
+    openPlayerDetail(pseudoPlayer);
+  };
+
   const handleToggleWatchlist = async () => {
     if (!selectedPlayer) return;
 
@@ -366,13 +388,13 @@ export function BeraterstatusScreen() {
       const success = await removeFromWatchlist(selectedPlayer.id);
       if (success) {
         setIsOnWatchlistState(false);
-        if (activeTab === 'watchlist') await loadWatchlistTab();
+        await loadWatchlistTab();
       }
     } else {
       const success = await addToWatchlist(selectedPlayer.id);
       if (success) {
         setIsOnWatchlistState(true);
-        if (activeTab === 'watchlist') await loadWatchlistTab();
+        await loadWatchlistTab();
       }
     }
   };
@@ -561,8 +583,7 @@ export function BeraterstatusScreen() {
     const tabs = ([
       { key: 'alle_spieler' as TabKey, label: 'Alle Spieler', count: playersTotal },
       { key: 'beraterwechsel' as TabKey, label: 'Beraterwechsel', count: filteredChanges.length },
-      { key: 'watchlist' as TabKey, label: 'Watchlist', count: watchlist.length },
-      { key: 'vorschlaege' as TabKey, label: 'Vorschläge', count: suggestedPlayers.length },
+      { key: 'vorschlaege' as TabKey, label: 'Vorschläge', count: suggestionSections.reduce((sum, s) => sum + s.count, 0) },
     ]).map((tab) => (
       <TouchableOpacity
         key={tab.key}
@@ -898,6 +919,43 @@ export function BeraterstatusScreen() {
     );
   };
 
+  const renderMobileSuggestionCard = ({ item, index }: { item: PlayerStat; index: number }) => {
+    const age = calculateAge(item.birth_date);
+    const agentLabel = getStatAgentLabel(item);
+    const statLabel = item.stat_type === 'goals' ? 'Tore' : 'Vorlagen';
+
+    return (
+      <TouchableOpacity
+        style={[styles.mobileCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+        onPress={() => openStatDetail(item)}
+        activeOpacity={0.7}
+      >
+        <View style={styles.mobileCardHeader}>
+          <View style={styles.mobileCardNameRow}>
+            <Text style={[styles.mobileCardAge, { color: colors.textSecondary }]}>{index + 1}.</Text>
+            <Text style={[styles.mobileCardName, { color: colors.text }]} numberOfLines={1}>
+              {formatNameLastFirst(item.player_name)}
+            </Text>
+            {age ? <Text style={[styles.mobileCardAge, { color: colors.textSecondary }]}>{age}</Text> : null}
+          </View>
+          <Text style={[styles.mobileCardMV, { color: colors.primary, fontWeight: '600' }]}>
+            {item.stat_value} {statLabel}{item.games_played ? ` / ${item.games_played} Sp.` : ''}
+          </Text>
+        </View>
+        <View style={styles.mobileCardRow2}>
+          <Text style={[styles.mobileCardClubInline, { color: colors.textSecondary }]} numberOfLines={1}>
+            {item.club_name || ''}
+          </Text>
+          <View style={[styles.mobileCardAgentBadge, { backgroundColor: agentLabel.color + '10', borderColor: agentLabel.color + '30' }]}>
+            <Text style={[styles.mobileCardAgentText, { color: agentLabel.color }]} numberOfLines={1}>
+              {agentLabel.text}
+            </Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  };
+
   const renderMobileChangeCard = ({ item }: { item: BeraterChange }) => {
     const prevLabel = item.previous_agent_name || 'kein Berater';
     const newLabel = item.new_agent_name || 'kein Berater';
@@ -938,44 +996,6 @@ export function BeraterstatusScreen() {
           <Text style={[styles.mobileCardNewAgent, { color: isNowFree ? colors.success : isNowFamily ? colors.warning : colors.text }]} numberOfLines={1}>
             {newLabel}
           </Text>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  const renderMobileWatchlistCard = ({ item }: { item: WatchlistEntry }) => {
-    if (!item.player) return null;
-    const agentLabel = getAgentLabel(item.player);
-    const age = calculateAge(item.player.birth_date);
-    const sinceDate = formatDateDE(item.player.agent_since);
-
-    return (
-      <TouchableOpacity
-        style={[styles.mobileCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
-        onPress={() => openPlayerDetail(item.player!)}
-        activeOpacity={0.7}
-      >
-        <View style={styles.mobileCardHeader}>
-          <View style={styles.mobileCardNameRow}>
-            <Text style={[styles.mobileCardName, { color: colors.text }]} numberOfLines={1}>
-              {formatNameLastFirst(item.player.player_name)}
-            </Text>
-            {age ? <Text style={[styles.mobileCardAge, { color: colors.textSecondary }]}>{age}</Text> : null}
-          </View>
-          {item.player.market_value ? (
-            <Text style={[styles.mobileCardMV, { color: colors.text }]}>{item.player.market_value}</Text>
-          ) : null}
-        </View>
-        <Text style={[styles.mobileCardClub, { color: colors.textSecondary }]} numberOfLines={1}>
-          {item.player.club_name || ''}
-        </Text>
-        <View style={[styles.mobileCardAgentBar, { backgroundColor: agentLabel.color + '10', borderColor: agentLabel.color + '30' }]}>
-          <Text style={[styles.mobileCardAgentText, { color: agentLabel.color }]} numberOfLines={1}>
-            {agentLabel.text}
-          </Text>
-          {sinceDate ? (
-            <Text style={[styles.mobileCardDuration, { color: colors.textSecondary }]}>seit {sinceDate}</Text>
-          ) : null}
         </View>
       </TouchableOpacity>
     );
@@ -1057,40 +1077,6 @@ export function BeraterstatusScreen() {
           </Text>
           <Text style={[styles.changeDate, { color: colors.textSecondary }]} numberOfLines={1}>
             {changeDate}
-          </Text>
-        </View>
-      </TouchableOpacity>
-    );
-  };
-
-  const renderWatchlistRow = ({ item }: { item: WatchlistEntry }) => {
-    if (!item.player) return null;
-    const agentLabel = getAgentLabel(item.player);
-    const age = calculateAge(item.player.birth_date);
-    const sinceDate = formatDateDE(item.player.agent_since);
-    const agentPart = agentLabel.text + (sinceDate ? ` (seit ${sinceDate})` : '');
-
-    return (
-      <TouchableOpacity
-        style={[styles.playerRow, { borderBottomColor: colors.border }]}
-        onPress={() => openPlayerDetail(item.player!)}
-        activeOpacity={0.7}
-      >
-        <View style={styles.playerRowColumns}>
-          <View style={styles.playerColNameWrap}>
-            <Text style={[styles.playerColName, { color: colors.text }]} numberOfLines={1}>
-              {formatNameLastFirst(item.player.player_name)}
-            </Text>
-            {age ? <Text style={[styles.playerColAge, { color: colors.textSecondary }]}>{age}</Text> : null}
-          </View>
-          <Text style={[styles.playerColMV, { color: colors.textSecondary }]} numberOfLines={1}>
-            {item.player.market_value || '-'}
-          </Text>
-          <Text style={[styles.playerColClub, { color: colors.textSecondary }]} numberOfLines={1}>
-            {item.player.club_name || ''}
-          </Text>
-          <Text style={[styles.playerColAgent, { color: agentLabel.color }]} numberOfLines={1}>
-            {agentPart}
           </Text>
         </View>
       </TouchableOpacity>
@@ -1350,7 +1336,7 @@ export function BeraterstatusScreen() {
   }, []);
 
   const toggleClub = useCallback((clubKey: string) => {
-    setCollapsedClubs(prev => {
+    setExpandedClubs(prev => {
       const next = new Set(prev);
       if (next.has(clubKey)) {
         next.delete(clubKey);
@@ -1383,7 +1369,7 @@ export function BeraterstatusScreen() {
           if (currentClub && clubPlayers.length > 0) {
             const clubKey = `${section.title}::${currentClub}`;
             items.push({ type: 'club_header', clubName: currentClub, count: clubPlayers.length });
-            if (!collapsedClubs.has(clubKey)) {
+            if (expandedClubs.has(clubKey)) {
               for (const p of clubPlayers) {
                 items.push({ type: 'player', player: p });
               }
@@ -1405,7 +1391,7 @@ export function BeraterstatusScreen() {
 
       return { ...section, totalCount: section.data.length, data: items };
     });
-  }, [playerSections, collapsedSections, collapsedClubs]);
+  }, [playerSections, collapsedSections, expandedClubs]);
 
   // ========== SUGGESTION SECTIONS (Vorschläge Tab) ==========
 
@@ -1465,9 +1451,16 @@ export function BeraterstatusScreen() {
       });
   }, [suggestedPlayers, leagues, searchQuery]);
 
+  // Vorschläge: alle Sections standardmäßig zugeklappt
+  useEffect(() => {
+    if (collapsedSuggestionSections === null && suggestionSections.length > 0) {
+      setCollapsedSuggestionSections(new Set(suggestionSections.map(s => s.title)));
+    }
+  }, [suggestionSections, collapsedSuggestionSections]);
+
   const toggleSuggestionSection = useCallback((title: string) => {
     setCollapsedSuggestionSections(prev => {
-      const next = new Set(prev);
+      const next = new Set(prev || []);
       if (next.has(title)) {
         next.delete(title);
       } else {
@@ -1561,55 +1554,6 @@ export function BeraterstatusScreen() {
 
   // ========== FILTERED WATCHLIST ==========
 
-  const filteredWatchlist = useMemo(() => {
-    const { years: youthYears, herrenCutoff } = getYouthYears();
-    const youngestShownYear = youthYears[0];
-
-    return watchlist.filter(w => {
-      if (!w.player) return false;
-      const p = w.player;
-
-      // Suche
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matches =
-          p.player_name.toLowerCase().includes(q) ||
-          (p.club_name || '').toLowerCase().includes(q) ||
-          (p.current_agent_name || '').toLowerCase().includes(q);
-        if (!matches) return false;
-      }
-
-      // Liga
-      if (selectedLeagueIds && p.league_id && !selectedLeagueIds.has(p.league_id)) return false;
-
-      // Beraterstatus
-      if (agentFilter === 'without_agent') {
-        if (p.has_agent && p.current_agent_name !== 'Familienangehörige') return false;
-      }
-
-      // Alter (Multi)
-      if (selectedAges.length > 0 && p.birth_date) {
-        const parts = p.birth_date.split('.');
-        if (parts.length === 3) {
-          const birthYear = parseInt(parts[2]);
-          if (!isNaN(birthYear)) {
-            const matchesAge = selectedAges.some(af => {
-              if (af === 'herren') return birthYear <= herrenCutoff;
-              if (af === 'younger') return birthYear > youngestShownYear;
-              const yearNum = parseInt(af);
-              return !isNaN(yearNum) && birthYear === yearNum;
-            });
-            if (!matchesAge) return false;
-          }
-        }
-      } else if (selectedAges.length > 0 && !p.birth_date) {
-        return false;
-      }
-
-      return true;
-    });
-  }, [watchlist, searchQuery, selectedLeagueIds, agentFilter, selectedAges]);
-
   const renderSectionHeader = ({ section }: { section: { title: string; data: PlayerListItem[]; totalCount?: number } }) => {
     const isCollapsed = collapsedSections?.has(section.title) ?? true;
     const count = (section as any).totalCount ?? section.data.length;
@@ -1633,7 +1577,7 @@ export function BeraterstatusScreen() {
 
   const renderClubHeader = (item: { clubName: string; count: number }, sectionTitle: string) => {
     const clubKey = `${sectionTitle}::${item.clubName}`;
-    const isCollapsed = collapsedClubs.has(clubKey);
+    const isCollapsed = !expandedClubs.has(clubKey);
 
     return (
       <TouchableOpacity
@@ -1670,11 +1614,6 @@ export function BeraterstatusScreen() {
         icon: '🔄',
         title: 'Keine Beraterwechsel',
         hint: 'Nach dem zweiten Scan-Zyklus werden Wechsel der letzten 4 Wochen hier angezeigt.',
-      },
-      watchlist: {
-        icon: '⭐',
-        title: 'Watchlist ist leer',
-        hint: 'Tippe auf einen Spieler um ihn zur Watchlist hinzuzufügen.',
       },
       vorschlaege: {
         icon: '📊',
@@ -1828,48 +1767,6 @@ export function BeraterstatusScreen() {
         )
       )}
 
-      {activeTab === 'watchlist' && (
-        isMobile ? (
-          <FlatList
-            data={filteredWatchlist}
-            renderItem={renderMobileWatchlistCard}
-            keyExtractor={(item) => item.id}
-            ListEmptyComponent={renderEmptyState}
-            contentContainerStyle={[
-              styles.cardListContent,
-              filteredWatchlist.length === 0 ? styles.emptyContainer : undefined,
-            ]}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={colors.primary} />
-            }
-          />
-        ) : (
-          <View style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-            <SectionList
-              sections={[{ title: 'watchlist', data: filteredWatchlist }]}
-              keyExtractor={(item) => item.id}
-              stickySectionHeadersEnabled={true}
-              renderSectionHeader={() => (
-                <View style={[styles.playerRow, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
-                  <View style={styles.playerRowColumns}>
-                    <Text style={[styles.playerColNameWrap, styles.columnHeader, { color: colors.textSecondary }]}>Spieler</Text>
-                    <Text style={[styles.playerColMV, styles.columnHeader, { color: colors.textSecondary }]}>MW</Text>
-                    <Text style={[styles.playerColClub, styles.columnHeader, { color: colors.textSecondary }]}>Verein</Text>
-                    <Text style={[styles.playerColAgent, styles.columnHeader, { color: colors.textSecondary }]}>Berater</Text>
-                  </View>
-                </View>
-              )}
-              renderItem={renderWatchlistRow}
-              ListEmptyComponent={renderEmptyState}
-              contentContainerStyle={filteredWatchlist.length === 0 ? styles.emptyContainer : undefined}
-              refreshControl={
-                <RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={colors.primary} />
-              }
-            />
-          </View>
-        )
-      )}
-
       {/* Vorschläge Tab */}
       {activeTab === 'vorschlaege' && (
         <View style={{ flex: 1 }}>
@@ -1959,11 +1856,11 @@ export function BeraterstatusScreen() {
                 </Text>
               </View>
             </ScrollView>
-          ) : (
+          ) : isMobile ? (
             <SectionList
               sections={suggestionSections.map(section => ({
                 ...section,
-                data: collapsedSuggestionSections.has(section.title) ? [] : section.data,
+                data: (collapsedSuggestionSections?.has(section.title) ?? true) ? [] : section.data,
               }))}
               keyExtractor={(item) => item.id}
               stickySectionHeadersEnabled={true}
@@ -1971,10 +1868,45 @@ export function BeraterstatusScreen() {
                 <RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={colors.primary} />
               }
               renderSectionHeader={({ section }) => {
-                const isCollapsed = collapsedSuggestionSections.has(section.title);
+                const isCollapsed = collapsedSuggestionSections?.has(section.title) ?? true;
+                return (
+                  <TouchableOpacity
+                    style={[styles.sectionHeader, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+                    onPress={() => toggleSuggestionSection(section.title)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.sectionHeaderLeft}>
+                      <Text style={[styles.sectionHeaderArrow, { color: colors.textSecondary }]}>
+                        {isCollapsed ? '\u25B6' : '\u25BC'}
+                      </Text>
+                      <Text style={[styles.sectionHeaderText, { color: colors.text }]}>
+                        {section.title}
+                      </Text>
+                      <Text style={[styles.sectionHeaderCount, { color: colors.textSecondary }]}>
+                        {section.count}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              }}
+              renderItem={({ item, index }) => renderMobileSuggestionCard({ item, index })}
+              contentContainerStyle={styles.cardListContent}
+            />
+          ) : (
+            <SectionList
+              sections={suggestionSections.map(section => ({
+                ...section,
+                data: (collapsedSuggestionSections?.has(section.title) ?? true) ? [] : section.data,
+              }))}
+              keyExtractor={(item) => item.id}
+              stickySectionHeadersEnabled={true}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={colors.primary} />
+              }
+              renderSectionHeader={({ section }) => {
+                const isCollapsed = collapsedSuggestionSections?.has(section.title) ?? true;
                 return (
                   <View style={{ backgroundColor: colors.surfaceSecondary }}>
-                    {/* Section Header */}
                     <TouchableOpacity
                       style={[styles.sectionHeader, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
                       onPress={() => toggleSuggestionSection(section.title)}
@@ -1993,7 +1925,6 @@ export function BeraterstatusScreen() {
                       </View>
                     </TouchableOpacity>
 
-                    {/* Column Headers (inside section) */}
                     {!isCollapsed && (
                       <View style={[styles.playerRow, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
                         <View style={styles.playerRowColumns}>
@@ -2014,14 +1945,15 @@ export function BeraterstatusScreen() {
                 const age = calculateAge(item.birth_date);
                 const agentLabel = getStatAgentLabel(item);
                 return (
-                  <View
+                  <TouchableOpacity
                     style={[
                       styles.playerRow,
                       { borderBottomColor: colors.border, backgroundColor: colors.surface }
                     ]}
+                    onPress={() => openStatDetail(item)}
+                    activeOpacity={0.7}
                   >
                     <View style={styles.playerRowColumns}>
-                      {/* Name + Alter */}
                       <View style={styles.playerColNameWrap}>
                         <Text style={[styles.playerColName, { color: colors.text }]} numberOfLines={1}>
                           <Text style={{ color: colors.textSecondary }}>{index + 1}. </Text>
@@ -2029,24 +1961,20 @@ export function BeraterstatusScreen() {
                         </Text>
                         {age ? <Text style={[styles.playerColAge, { color: colors.textSecondary }]}>{age}</Text> : null}
                       </View>
-                      {/* Verein */}
                       <Text style={[styles.playerColClub, { color: colors.textSecondary }]} numberOfLines={1}>
                         {item.club_name || '-'}
                       </Text>
-                      {/* Berater */}
                       <Text style={[styles.playerColAgent, { color: agentLabel.color }]} numberOfLines={1}>
                         {agentLabel.text}
                       </Text>
-                      {/* Spiele */}
                       <Text style={[styles.suggestionColGames, { color: colors.textSecondary }]}>
                         {item.games_played ?? '-'}
                       </Text>
-                      {/* Tore/Vorlagen */}
                       <Text style={[styles.suggestionColStat, { color: colors.primary, fontWeight: '600' }]}>
                         {item.stat_value}
                       </Text>
                     </View>
-                  </View>
+                  </TouchableOpacity>
                 );
               }}
             />

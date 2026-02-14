@@ -28,11 +28,11 @@ const CONFIG = {
   // Timeouts
   screenshotTimeoutMs: 60000,
   claudeTimeoutMs: 30000,
-  profileFetchTimeoutMs: 10000,
+  profileFetchTimeoutMs: 15000,
 
   // Rate limiting
   profileBatchSize: 10,
-  profileBatchDelayMs: 200,
+  profileBatchDelayMs: 500,
 
   // Validation
   minPlayersPerTeam: 7,
@@ -71,6 +71,11 @@ interface ScrapedLineups {
   awaySubs: ScrapedPlayer[]
   result?: string
   available: boolean
+  // Match metadata (aus AJAX match.info)
+  matchDate?: string
+  matchTime?: string
+  location?: string
+  league?: string
 }
 
 // Explicit error states for better debugging
@@ -190,6 +195,267 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+// ===========================================
+// FONT DEOBFUSCATION (fussball.de uses CSS font substitution)
+// ===========================================
+
+/** Mapping from PostScript glyph names to actual characters (for special chars in fonts) */
+const GLYPH_NAME_TO_CHAR: Record<string, string> = {
+  // German umlauts
+  'adieresis': 'ä', 'odieresis': 'ö', 'udieresis': 'ü', 'germandbls': 'ß',
+  'Adieresis': 'Ä', 'Odieresis': 'Ö', 'Udieresis': 'Ü',
+  // Accented characters (common in player names)
+  'aacute': 'á', 'agrave': 'à', 'acircumflex': 'â', 'atilde': 'ã',
+  'eacute': 'é', 'egrave': 'è', 'ecircumflex': 'ê', 'edieresis': 'ë',
+  'iacute': 'í', 'igrave': 'ì', 'icircumflex': 'î', 'idieresis': 'ï',
+  'oacute': 'ó', 'ograve': 'ò', 'ocircumflex': 'ô', 'otilde': 'õ',
+  'uacute': 'ú', 'ugrave': 'ù', 'ucircumflex': 'û',
+  'Eacute': 'É', 'Egrave': 'È',
+  'Aacute': 'Á', 'Agrave': 'À',
+  // Eastern European (Croatian, Czech, Polish, etc.)
+  'ccaron': 'č', 'Ccaron': 'Č', 'cacute': 'ć', 'Cacute': 'Ć',
+  'scaron': 'š', 'Scaron': 'Š', 'zcaron': 'ž', 'Zcaron': 'Ž',
+  'ntilde': 'ñ', 'Ntilde': 'Ñ', 'ccedilla': 'ç', 'Ccedilla': 'Ç',
+  'lslash': 'ł', 'Lslash': 'Ł',
+  // Punctuation
+  'hyphen': '-', 'period': '.', 'space': ' ',
+  'quotesingle': "'", 'quoteright': '\u2019',
+}
+
+/**
+ * Minimal TTF cmap format 4 + post table parser.
+ * Extracts the codepoint → glyph name mapping from a TrueType font,
+ * which fussball.de uses to obfuscate player names via custom fonts.
+ */
+function parseTTFCmap(buffer: ArrayBuffer): Map<number, string> {
+  const view = new DataView(buffer)
+  const result = new Map<number, string>()
+
+  // Read table directory
+  const numTables = view.getUint16(4)
+  let cmapOffset = 0
+  let postOffset = 0
+  let postLength = 0
+
+  for (let i = 0; i < numTables; i++) {
+    const offset = 12 + i * 16
+    const tag = String.fromCharCode(
+      view.getUint8(offset), view.getUint8(offset + 1),
+      view.getUint8(offset + 2), view.getUint8(offset + 3)
+    )
+    if (tag === 'cmap') cmapOffset = view.getUint32(offset + 8)
+    if (tag === 'post') {
+      postOffset = view.getUint32(offset + 8)
+      postLength = view.getUint32(offset + 12)
+    }
+  }
+
+  if (!cmapOffset || !postOffset) return result
+
+  // Parse post table to get glyphId → name mapping
+  const glyphNames = new Map<number, string>()
+  const postFormat = view.getUint32(postOffset) // Fixed-point: 0x00020000 = 2.0
+
+  if (postFormat === 0x00020000) {
+    // Format 2.0: has custom glyph names
+    const numGlyphs = view.getUint16(postOffset + 32)
+    const nameIndices: number[] = []
+
+    for (let i = 0; i < numGlyphs; i++) {
+      nameIndices.push(view.getUint16(postOffset + 34 + i * 2))
+    }
+
+    // Standard Mac glyph names (first 258)
+    const macGlyphNames = [
+      '.notdef', '.null', 'nonmarkingreturn', 'space', 'exclam', 'quotedbl', 'numbersign',
+      'dollar', 'percent', 'ampersand', 'quotesingle', 'parenleft', 'parenright', 'asterisk',
+      'plus', 'comma', 'hyphen', 'period', 'slash', 'zero', 'one', 'two', 'three', 'four',
+      'five', 'six', 'seven', 'eight', 'nine', 'colon', 'semicolon', 'less', 'equal', 'greater',
+      'question', 'at', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M',
+      'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', 'bracketleft',
+      'backslash', 'bracketright', 'asciicircum', 'underscore', 'grave', 'a', 'b', 'c', 'd',
+      'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't',
+      'u', 'v', 'w', 'x', 'y', 'z', 'braceleft', 'bar', 'braceright', 'asciitilde',
+      'Adieresis', 'Aring', 'Ccedilla', 'Eacute', 'Ntilde', 'Odieresis', 'Udieresis',
+      'aacute', 'agrave', 'acircumflex', 'adieresis', 'atilde', 'aring', 'ccedilla', 'eacute',
+      'egrave', 'ecircumflex', 'edieresis', 'iacute', 'igrave', 'icircumflex', 'idieresis',
+      'ntilde', 'oacute', 'ograve', 'ocircumflex', 'odieresis', 'otilde', 'uacute', 'ugrave',
+      'ucircumflex', 'udieresis', 'dagger', 'degree', 'cent', 'sterling', 'section', 'bullet',
+      'paragraph', 'germandbls', 'registered', 'copyright', 'trademark', 'acute', 'dieresis',
+      'notequal', 'AE', 'Oslash', 'infinity', 'plusminus', 'lessequal', 'greaterequal', 'yen',
+      'mu', 'partialdiff', 'summation', 'product', 'pi', 'integral', 'ordfeminine', 'ordmasculine',
+      'Omega', 'ae', 'oslash', 'questiondown', 'exclamdown', 'logicalnot', 'radical', 'florin',
+      'approxequal', 'Delta', 'guillemotleft', 'guillemotright', 'ellipsis', 'nonbreakingspace',
+      'Agrave', 'Atilde', 'Otilde', 'OE', 'oe', 'endash', 'emdash', 'quotedblleft',
+      'quotedblright', 'quoteleft', 'quoteright', 'divide', 'lozenge', 'ydieresis', 'Ydieresis',
+      'fraction', 'currency', 'guilsinglleft', 'guilsinglright', 'fi', 'fl', 'daggerdbl',
+      'periodcentered', 'quotesinglbase', 'quotedblbase', 'perthousand', 'Acircumflex',
+      'Ecircumflex', 'Aacute', 'Edieresis', 'Egrave', 'Iacute', 'Icircumflex', 'Idieresis',
+      'Igrave', 'Oacute', 'Ocircumflex', 'apple', 'Ograve', 'Uacute', 'Ucircumflex', 'Ugrave',
+      'dotlessi', 'circumflex', 'tilde', 'macron', 'breve', 'dotaccent', 'ring', 'cedilla',
+      'hungarumlaut', 'ogonek', 'caron', 'Lslash', 'lslash', 'Scaron', 'scaron', 'Zcaron',
+      'zcaron', 'brokenbar', 'Eth', 'eth', 'Yacute', 'yacute', 'Thorn', 'thorn', 'minus',
+      'multiply', 'onesuperior', 'twosuperior', 'threesuperior', 'onehalf', 'onequarter',
+      'threequarters', 'franc', 'Gbreve', 'gbreve', 'Idotaccent', 'Scedilla', 'scedilla',
+      'Cacute', 'cacute', 'Ccaron', 'ccaron', 'dcroat',
+    ]
+
+    // Read custom name strings after the indices
+    let strOffset = postOffset + 34 + numGlyphs * 2
+    const customNames: string[] = []
+    while (strOffset < postOffset + postLength && customNames.length < 1000) {
+      const len = view.getUint8(strOffset)
+      strOffset++
+      let name = ''
+      for (let j = 0; j < len && strOffset + j < buffer.byteLength; j++) {
+        name += String.fromCharCode(view.getUint8(strOffset + j))
+      }
+      customNames.push(name)
+      strOffset += len
+    }
+
+    // Build glyphId → name mapping
+    for (let i = 0; i < numGlyphs; i++) {
+      const idx = nameIndices[i]
+      if (idx < 258) {
+        glyphNames.set(i, macGlyphNames[idx] || '')
+      } else {
+        glyphNames.set(i, customNames[idx - 258] || '')
+      }
+    }
+  }
+
+  if (glyphNames.size === 0) return result
+
+  // Parse cmap table
+  const cmapVersion = view.getUint16(cmapOffset)
+  const numSubtables = view.getUint16(cmapOffset + 2)
+
+  for (let i = 0; i < numSubtables; i++) {
+    const subtableOffset = cmapOffset + 4 + i * 8
+    const platformID = view.getUint16(subtableOffset)
+    const encodingID = view.getUint16(subtableOffset + 2)
+    const offset = view.getUint32(subtableOffset + 4)
+    const tableStart = cmapOffset + offset
+
+    // We want platformID=3 (Windows), encodingID=1 (Unicode BMP), format=4
+    if (platformID !== 3 || encodingID !== 1) continue
+
+    const format = view.getUint16(tableStart)
+    if (format !== 4) continue
+
+    const segCountX2 = view.getUint16(tableStart + 6)
+    const segCount = segCountX2 / 2
+
+    const endCountStart = tableStart + 14
+    const startCountStart = endCountStart + segCountX2 + 2 // +2 for reservedPad
+    const idDeltaStart = startCountStart + segCountX2
+    const idRangeOffsetStart = idDeltaStart + segCountX2
+
+    for (let seg = 0; seg < segCount; seg++) {
+      const endCount = view.getUint16(endCountStart + seg * 2)
+      const startCount = view.getUint16(startCountStart + seg * 2)
+      const idDelta = view.getInt16(idDeltaStart + seg * 2)
+      const idRangeOffset = view.getUint16(idRangeOffsetStart + seg * 2)
+
+      if (startCount === 0xFFFF) break
+
+      for (let cp = startCount; cp <= endCount; cp++) {
+        let glyphId: number
+        if (idRangeOffset === 0) {
+          glyphId = (cp + idDelta) & 0xFFFF
+        } else {
+          const glyphIdOffset = idRangeOffsetStart + seg * 2 + idRangeOffset + (cp - startCount) * 2
+          glyphId = view.getUint16(glyphIdOffset)
+          if (glyphId !== 0) {
+            glyphId = (glyphId + idDelta) & 0xFFFF
+          }
+        }
+
+        if (glyphId === 0) continue
+
+        // Only care about obfuscated codepoints (Private Use Area)
+        if (cp < 0xE000 || cp > 0xF100) continue
+
+        const glyphName = glyphNames.get(glyphId)
+        if (!glyphName) continue
+
+        // Single ASCII letters (A-Z, a-z)
+        if (glyphName.length === 1 && /^[A-Za-z]$/.test(glyphName)) {
+          result.set(cp, glyphName)
+        }
+        // Special characters: umlauts, accents, ß, hyphens, etc.
+        else if (GLYPH_NAME_TO_CHAR[glyphName]) {
+          result.set(cp, GLYPH_NAME_TO_CHAR[glyphName])
+        }
+      }
+    }
+  }
+
+  return result
+}
+
+/**
+ * Fetch the obfuscation font from fussball.de and build the decryption mapping.
+ * Returns a Map from obfuscated codepoint → real character.
+ */
+async function fetchDeobfuscationMap(fontKey: string): Promise<Map<number, string>> {
+  try {
+    const fontUrl = `https://www.fussball.de/export.fontface/-/format/ttf/id/${fontKey}/type/font`
+    const response = await fetchWithTimeout(fontUrl, {
+      timeout: 10000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Accept': '*/*',
+      },
+    })
+
+    if (!response.ok) {
+      console.warn(`Font fetch failed: ${response.status}`)
+      return new Map()
+    }
+
+    const buffer = await response.arrayBuffer()
+    const mapping = parseTTFCmap(buffer)
+    console.log(`Font deobfuscation: loaded ${mapping.size} char mappings for key "${fontKey}"`)
+    return mapping
+  } catch (err) {
+    console.warn('Font deobfuscation failed:', err)
+    return new Map()
+  }
+}
+
+/**
+ * Decode an obfuscated HTML string using the font mapping.
+ * Input: HTML entities like "&#xEA7C;&#xEBF5;" or raw Unicode chars
+ * Output: decoded string like "Lu"
+ */
+function deobfuscateText(text: string, mapping: Map<number, string>): string {
+  if (!text || mapping.size === 0) return text
+
+  // First, decode HTML entities to codepoints
+  const decoded = text.replace(/&#x([0-9A-Fa-f]+);/g, (_match, hex) => {
+    const cp = parseInt(hex, 16)
+    return String.fromCodePoint(cp)
+  })
+
+  // Then map each char through the font mapping
+  let result = ''
+  for (const ch of decoded) {
+    const cp = ch.codePointAt(0)!
+    const mapped = mapping.get(cp)
+    if (mapped) {
+      result += mapped
+    } else if (cp < 0xE000) {
+      // Normal character (space, etc.)
+      result += ch
+    }
+    // Skip unmapped PUA characters (decoy glyphs)
+  }
+
+  return result
+}
+
 /**
  * Parse German name with better handling of compound names
  */
@@ -199,6 +465,9 @@ function parseGermanName(fullName: string): { vorname: string; name: string } {
   }
 
   fullName = fullName.trim()
+    // Remove everything after "|" (e.g. "| FUSSBALL.DE")
+    .split('|')[0]
+    .trim()
     // IMPORTANT: Remove "Spielerprofil" FIRST, before removing "(Verein)"
     .replace(/\s*-?\s*(?:Spielerprofil|Basisprofil)\s*$/i, '')
     .trim()
@@ -593,6 +862,12 @@ async function scrapeWithAjax(
     const ajaxHtml = await ajaxResponse.text()
     debugInfo.ajaxLength = ajaxHtml.length
 
+    // Redirect detection: if response is the homepage instead of lineup data
+    if (ajaxHtml.includes('<title>FUSSBALL.DE</title>') || ajaxHtml.length > 100000) {
+      console.log('AJAX: Got homepage redirect instead of lineup data')
+      throw Object.assign(new Error('AJAX returned homepage instead of lineup'), { status: 302 })
+    }
+
     // Check if lineup data exists
     const noDataIndicators = ['keine Daten verfügbar', 'Noch keine Aufstellung', 'no lineup']
     const hasNoData = noDataIndicators.some(indicator =>
@@ -618,8 +893,19 @@ async function scrapeWithAjax(
       }
     }
 
-    // Step 3: Extract players with improved team splitting
-    const { home, away, confidence } = extractPlayersWithTeams(ajaxHtml)
+    // Step 3: Font deobfuscation - extract key and fetch font mapping
+    let fontMapping = new Map<number, string>()
+    const fontKeyMatch = ajaxHtml.match(/data-obfuscation="([a-z0-9]+)"/i)
+    if (fontKeyMatch) {
+      const fontKey = fontKeyMatch[1]
+      debugInfo.fontKey = fontKey
+      console.log(`Font obfuscation key: ${fontKey}`)
+      fontMapping = await fetchDeobfuscationMap(fontKey)
+      debugInfo.fontMappingSize = fontMapping.size
+    }
+
+    // Step 4: Extract players with improved team splitting
+    const { home, away, confidence } = extractPlayersWithTeams(ajaxHtml, fontMapping)
     debugInfo.playersFound = { home: home.length, away: away.length, splitConfidence: confidence }
     console.log(`Found ${home.length} home + ${away.length} away players (confidence: ${confidence})`)
 
@@ -629,7 +915,8 @@ async function scrapeWithAjax(
       debugInfo.teamSplitWarning = 'Low confidence'
     }
 
-    // Step 4: Fetch player names from profiles (with rate limiting)
+    // Step 5: Fetch player names from profiles (with rate limiting)
+    // Now primarily for club info; names already decoded from font
     console.log('Fetching player names from profiles...')
     const homeWithNames = await fetchPlayerNamesFromProfiles(home, debugInfo)
     const awayWithNames = await fetchPlayerNamesFromProfiles(away, debugInfo)
@@ -675,6 +962,23 @@ async function scrapeWithAjax(
     const homeSplit = splitBySubFlag(correctedHome)
     const awaySplit = splitBySubFlag(correctedAway)
 
+    // Metadaten (Datum, Uhrzeit, Ort) direkt aus der Main Page extrahieren
+    // (die Main Page wurde bereits oben geladen für Font-Key/Cookies)
+    let matchDate = ''
+    let matchTime = ''
+    let matchLocation = ''
+    let league = ''
+    try {
+      const titleTag = mainPageHtml.match(/<title>([^<]+)<\/title>/i)?.[1] || ''
+      matchDate = extractDateFromAjax(mainPageHtml, titleTag)
+      matchTime = extractTimeFromAjax(mainPageHtml)
+      matchLocation = extractLocationFromAjax(mainPageHtml)
+      league = extractLeagueFromTitle(mainPageHtml)
+      console.log('Match metadata extracted from main page:', { matchDate, matchTime, matchLocation, league })
+    } catch (metaError) {
+      console.log('Match metadata extraction failed (non-fatal):', metaError)
+    }
+
     const result: ScrapedLineups = {
       homeTeam,
       awayTeam,
@@ -683,6 +987,10 @@ async function scrapeWithAjax(
       awayStarters: awaySplit.starters,
       awaySubs: awaySplit.subs,
       available: true,
+      matchDate,
+      matchTime,
+      location: matchLocation,
+      league,
     }
 
     console.log('AJAX method successful')
@@ -713,10 +1021,10 @@ interface TeamSplitResult {
   confidence: number  // 0-1 confidence score
 }
 
-function extractPlayersWithTeams(html: string): TeamSplitResult {
+function extractPlayersWithTeams(html: string, fontMapping?: Map<number, string>): TeamSplitResult {
   // Method 1: Try player-wrapper class based extraction (most reliable)
   // fussball.de uses class="player-wrapper home" and class="player-wrapper away"
-  const playerWrapperResult = tryPlayerWrapperExtraction(html)
+  const playerWrapperResult = tryPlayerWrapperExtraction(html, fontMapping)
   if (playerWrapperResult) {
     return { ...playerWrapperResult, confidence: 0.99 }
   }
@@ -760,10 +1068,11 @@ function extractPlayersWithTeams(html: string): TeamSplitResult {
  * fussball.de uses class="player-wrapper home" and class="player-wrapper away"
  * Also detects if player is in "substitutes" section to properly mark starters vs subs.
  */
-function tryPlayerWrapperExtraction(html: string): { home: ScrapedPlayer[]; away: ScrapedPlayer[] } | null {
+function tryPlayerWrapperExtraction(html: string, fontMapping?: Map<number, string>): { home: ScrapedPlayer[]; away: ScrapedPlayer[] } | null {
   const homePlayers: ScrapedPlayer[] = []
   const awayPlayers: ScrapedPlayer[] = []
   const seenUrls = new Set<string>()
+  const hasFontMapping = fontMapping && fontMapping.size > 0
 
   // Find position of substitutes section
   const substitutesMatch = html.match(/class="[^"]*substitutes[^"]*"/i)
@@ -779,8 +1088,8 @@ function tryPlayerWrapperExtraction(html: string): { home: ScrapedPlayer[]; away
   for (const match of html.matchAll(playerPattern)) {
     const profileUrl = match[1]
     const team = match[2].toLowerCase()  // "home" or "away"
-    const firstnameRaw = match[3]  // May be obfuscated or empty
-    const lastnameRaw = match[4]   // May be "k.A." or obfuscated
+    const firstnameRaw = match[3]  // Obfuscated HTML entities or plain text
+    const lastnameRaw = match[4]   // Obfuscated HTML entities, "k.A.", or plain text
     const nummerRaw = match[5]
     const matchPosition = match.index!
 
@@ -802,14 +1111,29 @@ function tryPlayerWrapperExtraction(html: string): { home: ScrapedPlayer[]; away
       seenUrls.add(profileUrl)
     }
 
-    // For players without profile, use the name directly from HTML
-    // These players have "k.A." as lastname and empty firstname
-    const isNoProfile = !hasProfile || lastnameRaw === 'k.A.'
+    // Try to decode names using font mapping (primary method)
+    let vorname = ''
+    let name = ''
+
+    if (hasFontMapping && firstnameRaw.includes('&#x')) {
+      // Names are obfuscated with font substitution - decode them
+      vorname = deobfuscateText(firstnameRaw, fontMapping!)
+      name = deobfuscateText(lastnameRaw, fontMapping!)
+    }
+
+    // If font decoding didn't work, check for plain text names
+    if (!name) {
+      const isNoProfile = !hasProfile || lastnameRaw === 'k.A.'
+      if (isNoProfile) {
+        name = 'k.A.'
+      }
+      // Otherwise name stays empty, will be filled by profile fetch
+    }
 
     const player: ScrapedPlayer = {
       nummer,
-      name: isNoProfile ? 'k.A.' : '',
-      vorname: '',
+      name,
+      vorname,
       position: isGoalkeeper ? 'Torwart' : '',
       jahrgang: '',
       profileUrl: hasProfile ? profileUrl : undefined,
@@ -1190,16 +1514,22 @@ async function fetchPlayerNamesFromProfiles(
       batch.map(async (player) => {
         if (!player.profileUrl) return player
 
+        // If player already has a name from font deobfuscation, only fetch profile for club info
+        const alreadyHasName = player.name && player.name !== 'k.A.'
+
         try {
-          const response = await fetchWithTimeout(player.profileUrl, {
-            method: 'GET',
-            timeout: CONFIG.profileFetchTimeoutMs,
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-              'Accept-Language': 'de-DE,de;q=0.9',
-            },
-          })
+          const response = await withRetry(
+            () => fetchWithTimeout(player.profileUrl!, {
+              method: 'GET',
+              timeout: CONFIG.profileFetchTimeoutMs,
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'de-DE,de;q=0.9',
+              },
+            }),
+            { maxRetries: 2, initialDelayMs: 500, maxDelayMs: 2000 }
+          )
 
           if (!response.ok) {
             profileErrors++
@@ -1208,20 +1538,32 @@ async function fetchPlayerNamesFromProfiles(
 
           const html = await response.text()
 
-          // Extract player name
-          const name = extractNameFromProfileHtml(html)
-          if (name) {
-            player.vorname = name.vorname
-            player.name = name.name
+          // Extract player name from profile (only if not already decoded from font)
+          if (!alreadyHasName) {
+            const name = extractNameFromProfileHtml(html)
+            if (name) {
+              player.vorname = name.vorname
+              player.name = name.name
+            }
           }
 
-          // Extract club for team assignment
+          // Extract club for team assignment (always useful)
           const club = extractClubFromProfileHtml(html)
           if (club) {
             player.club = club
           }
 
-          // If no name found, set "k.A." (keine Angabe)
+          // If still no name, try URL slug fallback
+          if (!player.name && !player.vorname && player.profileUrl) {
+            const urlName = extractNameFromProfileUrl(player.profileUrl)
+            if (urlName && urlName.name) {
+              player.vorname = urlName.vorname
+              player.name = urlName.name
+              console.log(`Name from URL slug: ${urlName.vorname} ${urlName.name} (${player.profileUrl})`)
+            }
+          }
+
+          // If still no name found, set "k.A." (keine Angabe)
           if (!player.name && !player.vorname) {
             player.name = 'k.A.'
           }
@@ -1230,7 +1572,16 @@ async function fetchPlayerNamesFromProfiles(
         } catch (err) {
           profileErrors++
           console.warn('Profile fetch failed:', player.profileUrl, String(err).substring(0, 50))
-          // Set "k.A." for failed profile fetches
+          // Try extracting name from URL slug as fallback
+          if (!player.name && !player.vorname && player.profileUrl) {
+            const urlName = extractNameFromProfileUrl(player.profileUrl)
+            if (urlName && urlName.name) {
+              player.vorname = urlName.vorname
+              player.name = urlName.name
+              console.log(`Name from URL slug (after fetch error): ${urlName.vorname} ${urlName.name}`)
+            }
+          }
+          // Set "k.A." only if still no name
           if (!player.name && !player.vorname) {
             player.name = 'k.A.'
           }
@@ -1251,38 +1602,84 @@ async function fetchPlayerNamesFromProfiles(
   return results
 }
 
+// Check if a parsed name looks like an organization/page title instead of a person
+function isInvalidPlayerName(vorname: string, name: string): boolean {
+  const combined = `${vorname} ${name}`.toLowerCase()
+  // These words should never appear in a real player's parsed first/last name
+  const orgWords = ['verband', 'fußball', 'fussball', 'bundesliga', 'regionalliga',
+    'oberliga', 'landesliga', 'kreisliga', 'bezirksliga', 'dfb', 'startseite']
+  return orgWords.some(w => combined.includes(w))
+}
+
 function extractNameFromProfileHtml(html: string): { vorname: string; name: string } | null {
   // Pattern 1: <h1 class="headline">Vorname Nachname</h1>
   const h1Match = html.match(/<h1[^>]*class="[^"]*headline[^"]*"[^>]*>([^<]+)<\/h1>/i)
   if (h1Match) {
-    const parsed = parseGermanName(h1Match[1])
-    if (parsed.name) return parsed
+    // Strip common prefixes like "Spielerprofil von "
+    let text = h1Match[1].replace(/^Spielerprofil\s*(von\s*)?/i, '').trim()
+    const parsed = parseGermanName(text)
+    if (parsed.name && !isInvalidPlayerName(parsed.vorname, parsed.name)) return parsed
   }
 
-  // Pattern 2: <title>Vorname Nachname (Verein) Spielerprofil | FUSSBALL.DE</title>
+  // Pattern 2: <title>Vorname Nachname Spielerprofil | FUSSBALL.DE</title>
   const titleMatch = html.match(/<title>([^<]+)<\/title>/i)
   if (titleMatch) {
     let text = titleMatch[1].split('|')[0].trim()
-    const parsed = parseGermanName(text)
-    if (parsed.name) return parsed
+    // Strip "Spielerprofil" suffix and "FUSSBALL.DE"
+    text = text.replace(/\s*Spielerprofil\s*/i, '').replace(/FUSSBALL\.DE/i, '').trim()
+    if (text.length > 1) {
+      const parsed = parseGermanName(text)
+      if (parsed.name && !isInvalidPlayerName(parsed.vorname, parsed.name)) return parsed
+    }
   }
 
   // Pattern 3: og:title meta tag
   const ogMatch = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/i)
   if (ogMatch) {
     let text = ogMatch[1].split('|')[0].trim()
-    const parsed = parseGermanName(text)
-    if (parsed.name) return parsed
+    text = text.replace(/\s*Spielerprofil\s*/i, '').replace(/FUSSBALL\.DE/i, '').trim()
+    if (text.length > 1) {
+      const parsed = parseGermanName(text)
+      if (parsed.name && !isInvalidPlayerName(parsed.vorname, parsed.name)) return parsed
+    }
   }
 
   // Pattern 4: Look for name in profile-header or similar
   const profileNameMatch = html.match(/<[^>]*class="[^"]*(?:profile-name|player-name|name)[^"]*"[^>]*>([^<]+)</i)
   if (profileNameMatch) {
     const parsed = parseGermanName(profileNameMatch[1])
-    if (parsed.name) return parsed
+    if (parsed.name && !isInvalidPlayerName(parsed.vorname, parsed.name)) return parsed
   }
 
   return null
+}
+
+/**
+ * Extract player name from the profile URL slug.
+ * Example: "/spielerprofil/luka-vulin/-/profil/012ABC" → { vorname: "Luka", name: "Vulin" }
+ * This serves as a reliable fallback when profile HTML extraction fails (e.g. redirected pages).
+ */
+function extractNameFromProfileUrl(url: string): { vorname: string; name: string } | null {
+  // Match the slug after /spielerprofil/
+  const slugMatch = url.match(/\/spielerprofil\/([a-z0-9-]+)\//i)
+  if (!slugMatch) return null
+
+  const slug = slugMatch[1]
+  // Split slug by hyphens and capitalize each part
+  const parts = slug.split('-').filter(p => p.length > 0)
+  if (parts.length === 0) return null
+
+  // Capitalize each part
+  const capitalized = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1).toLowerCase())
+
+  if (capitalized.length === 1) {
+    return { vorname: '', name: capitalized[0] }
+  }
+
+  // Last part is surname, rest is first name
+  const name = capitalized.pop()!
+  const vorname = capitalized.join(' ')
+  return { vorname, name }
 }
 
 /**
@@ -1308,6 +1705,313 @@ function extractClubFromProfileHtml(html: string): string | null {
 }
 
 // ===========================================
+// MATCH INFO (Team-Namen, Datum, Uhrzeit, Ort)
+// ===========================================
+
+interface MatchInfoData {
+  homeTeam: string
+  awayTeam: string
+  date: string
+  time: string
+  location: string
+  league: string
+  ageGroup: string
+  matchType: string
+}
+
+function extractGermanDate(dateStr: string): string {
+  if (!dateStr) return ''
+  const cleanDate = dateStr.replace(/^[A-Za-z]{2,},?\s*/, '')
+  const m = cleanDate.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/)
+  if (m) return `${m[1].padStart(2, '0')}.${m[2].padStart(2, '0')}.${m[3]}`
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    const [year, month, day] = dateStr.split('-')
+    return `${day}.${month}.${year}`
+  }
+  return ''
+}
+
+function stripAgeGroup(teamName: string): string {
+  return teamName
+    .replace(/\s+U\d{2}\s*2?$/i, '')
+    .replace(/\s+2$/, '')
+    .replace(/\s+II$/, '')
+    .replace(/\s*\(2\)$/, '')
+    .replace(/\s*\(II\)$/, '')
+    .trim()
+    .replace(/\.$/, '')
+}
+
+function detectAgeGroup(league: string, homeTeam: string, awayTeam: string): string {
+  const combined = `${league} ${homeTeam} ${awayTeam}`.toLowerCase()
+  if (/\bu14\b/.test(combined)) return 'U14'
+  if (/\bu15\b/.test(combined)) return 'U15'
+  if (/\bu16\b/.test(combined)) return 'U16'
+  if (/\bu17\b/.test(combined)) return 'U17'
+  if (/\bu18\b/.test(combined)) return 'U17'
+  if (/\bu19\b/.test(combined)) return 'U19'
+  if (/\bu2[0-3]\b/.test(combined)) return 'Herren'
+  if (/a-jugend|a-junioren/.test(combined)) return 'U19'
+  if (/b-jugend|b-junioren/.test(combined)) return 'U17'
+  if (/c-jugend|c-junioren/.test(combined)) return 'U15'
+  if (/d-jugend|d-junioren/.test(combined)) return 'U14'
+  return 'Herren'
+}
+
+function detectMatchType(league: string): string {
+  const l = league.toLowerCase()
+  if (l.includes('pokal')) return 'Pokalspiel'
+  if (l.includes('freundschaft') || l.includes('test') || l.includes('friendly') || /\bfs\b/.test(l) || l.includes('-fs') || l.includes('fs-')) return 'Freundschaftsspiel'
+  if (l.includes('halle') && l.includes('turnier')) return 'Hallenturnier'
+  if (l.includes('turnier')) return 'Turnier'
+  return 'Punktspiel'
+}
+
+// ===========================================
+// AJAX MATCH.INFO PARSING (Datum, Uhrzeit, Ort)
+// ===========================================
+
+function extractDateFromAjax(html: string, titleHtml?: string): string {
+  const datePatterns = [
+    /data-date="(\d{4}-\d{2}-\d{2})"/,
+    /"date":\s*"(\d{4}-\d{2}-\d{2})"/,
+    /(\d{1,2}\.\d{1,2}\.\d{4})/,
+  ]
+  for (const pattern of datePatterns) {
+    const match = html.match(pattern)
+    if (match) {
+      const date = extractGermanDate(match[1])
+      if (date) return date
+    }
+  }
+  // Fallback: Title-Tag
+  if (titleHtml) {
+    const titleDateMatch = titleHtml.match(/(\d{1,2}\.\d{1,2}\.\d{4})/)
+    if (titleDateMatch) {
+      const date = extractGermanDate(titleDateMatch[1])
+      if (date) return date
+    }
+  }
+  return ''
+}
+
+function extractTimeFromAjax(html: string): string {
+  // Zuerst: Datum+Zeit zusammen (DD.MM.YYYY HH:MM ohne Pipe)
+  const dateTimeMatches = html.match(/\d{1,2}\.\d{1,2}\.\d{4}[^|]{0,5}(\d{1,2}:\d{2})/g)
+  if (dateTimeMatches) {
+    for (const m of dateTimeMatches) {
+      if (m.includes('|')) continue
+      const tm = m.match(/(\d{1,2}:\d{2})$/)
+      if (tm) return tm[1]
+    }
+  }
+
+  const timePatterns = [
+    /,\s*(\d{1,2}:\d{2})\s*UHR/i,
+    /(\d{1,2}:\d{2})\s+UHR/i,
+    /Anpfiff[:\s]*(\d{1,2}:\d{2})/i,
+    /Anstoß[:\s]*(\d{1,2}:\d{2})/i,
+    /Anstoss[:\s]*(\d{1,2}:\d{2})/i,
+    /data-time="(\d{1,2}:\d{2})"/,
+    /"time":\s*"(\d{1,2}:\d{2})"/,
+    /<span>(\d{1,2}:\d{2})Uhr<\/span>/,
+    />(\d{1,2}:\d{2})Uhr</,
+  ]
+  for (const pattern of timePatterns) {
+    const match = html.match(pattern)
+    if (match) return match[1]
+  }
+  return ''
+}
+
+function extractLocationFromAjax(html: string): string {
+  // Pattern 1: <a class="location">Venue Name<span...
+  const locationMatch = html.match(/<a[^>]*class="location"[^>]*>\s*([^<]+?)\s*<span/i)
+  if (locationMatch) {
+    const loc = locationMatch[1].trim().replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()
+    if (loc) return loc
+  }
+  // Pattern 2: Google Maps URL
+  const mapsMatch = html.match(/href="https?:\/\/(?:www\.)?google\.[a-z]+\/maps\?q=([^"]+)"/i)
+  if (mapsMatch) {
+    return decodeURIComponent(mapsMatch[1].replace(/\+/g, ' ')).trim()
+  }
+  return ''
+}
+
+function extractLeagueFromTitle(html: string): string {
+  const titleMatch = html.match(/<title>([^<]+)<\/title>/i)
+  if (titleMatch) {
+    const leagueMatch = titleMatch[1].match(/Ergebnis:\s*(.+?)\s+-\s+/)
+    if (leagueMatch) return leagueMatch[1].trim()
+  }
+  return ''
+}
+
+// Parse team names from URL slug: /spiel/[team1]-[team2]/-/spiel/[ID]
+function parseTeamsFromUrlSlug(urlOrPath: string): { home: string; away: string } {
+  const pathMatch = urlOrPath.match(/\/spiel\/([^\/]+)\/-\/spiel\//i)
+  if (!pathMatch) return { home: '', away: '' }
+
+  const slug = pathMatch[1]
+
+  // Priority patterns: these DEFINITELY start a new team (with number prefix)
+  const priorityPatterns = ['-1-fc-', '-1-fsv-', '-1-ffc-', '-1-sv-']
+  let splitIndex = -1
+
+  for (const pattern of priorityPatterns) {
+    const idx = slug.indexOf(pattern)
+    if (idx > 3) { splitIndex = idx + 1; break }
+  }
+
+  // Only real club prefixes (NO city names like berlin-, hoffenheim-, etc.)
+  if (splitIndex === -1) {
+    const teamPrefixes = [
+      'fc-', 'sv-', 'tsg-', 'vfb-', 'vfl-', 'sc-', 'fsv-', 'bsc-', 'ssc-',
+      'rb-', 'rw-', 'sw-', 'bv-', 'tsv-', 'spvgg-', 'sg-', 'sf-', 'tv-',
+      'borussia-', 'hertha-', 'eintracht-', 'fortuna-', 'arminia-',
+      'tennis-', 'viktoria-', 'alemannia-', 'energie-', 'dynamo-', 'hansa-',
+      'werder-', 'holstein-', 'greuther-', 'jahn-', 'wehen-', 'preussen-',
+      'kickers-', 'stuttgarter-', 'rot-', 'blau-', 'waldhof-', 'schalke-',
+    ]
+    // Collect ALL candidate split positions, then pick the most balanced one
+    const candidates: number[] = []
+    for (const prefix of teamPrefixes) {
+      const idx = slug.indexOf('-' + prefix)
+      if (idx > 3) candidates.push(idx + 1)
+    }
+    if (candidates.length > 0) {
+      // Pick the split that gives the most balanced team name lengths
+      const midpoint = slug.length / 2
+      splitIndex = candidates.reduce((best, pos) =>
+        Math.abs(pos - midpoint) < Math.abs(best - midpoint) ? pos : best
+      )
+    }
+  }
+
+  // Fallback: split in the middle
+  if (splitIndex === -1) {
+    const words = slug.split('-')
+    const mid = Math.ceil(words.length / 2)
+    splitIndex = words.slice(0, mid).join('-').length + 1
+  }
+
+  const homeRaw = slug.substring(0, splitIndex).replace(/-$/, '')
+  const awayRaw = slug.substring(splitIndex)
+
+  // Format: capitalize, replace abbreviations
+  const formatSlug = (s: string): string => {
+    const abbreviations: Record<string, string> = {
+      'sport-club': 'SC', 'fussball-club': 'FC', 'sportverein': 'SV', 'sport-verein': 'SV',
+      'turn-und-sportverein': 'TSV', 'ballspielverein': 'BV', 'rasenballsport': 'RB',
+      'rot-weiss': 'RW', 'schwarz-weiss': 'SW', 'blau-weiss': 'BW',
+      'spielvereinigung': 'SpVgg', 'sportgemeinschaft': 'SG', 'sportfreunde': 'SF',
+    }
+    let f = s
+    for (const [long, short] of Object.entries(abbreviations)) {
+      f = f.replace(new RegExp(long, 'gi'), short)
+    }
+    const upperAbbrevs = ['fc', 'sv', 'sc', 'vfb', 'vfl', 'tsg', 'fsv', 'bsc', 'rb', 'bv', 'tsv', 'rw', 'sw', 'bw', 'sf', 'sg', 'tv', 'ssc']
+    return f.split('-').map(w => {
+      if (upperAbbrevs.includes(w.toLowerCase())) return w.toUpperCase()
+      if (w.toLowerCase() === 'spvgg') return 'SpVgg'
+      if (/^\d+$/.test(w)) return w + '.'
+      return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+    }).join(' ').replace(/\s+/g, ' ').trim()
+  }
+
+  return { home: formatSlug(homeRaw), away: formatSlug(awayRaw) }
+}
+
+async function fetchMatchInfo(
+  gameId: string,
+  url: string | undefined,
+  debugInfo: Record<string, unknown>
+): Promise<{ success: boolean; data?: MatchInfoData; error?: string }> {
+  let homeTeam = ''
+  let awayTeam = ''
+  let league = ''
+
+  // Parse team names from URL slug (zuverlässig)
+  if (url) {
+    const urlTeams = parseTeamsFromUrlSlug(url)
+    if (urlTeams.home && urlTeams.away) {
+      homeTeam = urlTeams.home
+      awayTeam = urlTeams.away
+      debugInfo.teamsSource = 'url-slug'
+    }
+  }
+
+  if (!homeTeam || !awayTeam) {
+    return { success: false, error: 'Could not extract team names from URL' }
+  }
+
+  // Datum, Uhrzeit, Ort direkt aus der Main Page HTML extrahieren
+  // (AJAX match.info Endpoint funktioniert nicht ohne Browser-Session)
+  let date = ''
+  let time = ''
+  let location = ''
+
+  const mainPageUrl = url ? url.split('#')[0] : `https://www.fussball.de/spiel/-/-/spiel/${gameId}`
+
+  try {
+    const mainResponse = await fetchWithTimeout(mainPageUrl, {
+      method: 'GET',
+      timeout: 15000,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'de-DE,de;q=0.9',
+      },
+    })
+
+    if (mainResponse.ok) {
+      const mainHtml = await mainResponse.text()
+      debugInfo.matchInfoMainPageLength = mainHtml.length
+
+      // Liga aus Title-Tag: "Team1 - Team2 Ergebnis: Liga - Kategorie - DD.MM.YYYY"
+      league = extractLeagueFromTitle(mainHtml)
+
+      // Datum + Uhrzeit + Ort direkt aus der Main Page HTML extrahieren
+      const titleTag = mainHtml.match(/<title>([^<]+)<\/title>/i)?.[1] || ''
+      date = extractDateFromAjax(mainHtml, titleTag)
+      time = extractTimeFromAjax(mainHtml)
+      location = extractLocationFromAjax(mainHtml)
+      console.log('match-info: Extracted from main page:', { date, time, location, league })
+    } else {
+      console.log('match-info: Main page failed:', mainResponse.status)
+    }
+  } catch (error) {
+    console.log('match-info: Main page fetch error (non-fatal):', error)
+    // Non-fatal: Teamnamen haben wir schon aus dem URL-Slug
+  }
+
+  // Detect age group (vor dem Strippen der Teamnamen)
+  const ageGroup = detectAgeGroup(league, homeTeam, awayTeam)
+  const matchType = detectMatchType(league)
+
+  // Strip age group from team names for display
+  const cleanHome = stripAgeGroup(homeTeam)
+  const cleanAway = stripAgeGroup(awayTeam)
+
+  console.log('Match info result:', { homeTeam: cleanHome, awayTeam: cleanAway, date, time, location, league, ageGroup, matchType })
+
+  return {
+    success: true,
+    data: {
+      homeTeam: cleanHome,
+      awayTeam: cleanAway,
+      date,
+      time,
+      location,
+      league,
+      ageGroup,
+      matchType,
+    },
+  }
+}
+
+// ===========================================
 // MAIN HANDLER
 // ===========================================
 
@@ -1325,7 +2029,7 @@ serve(async (req) => {
   }
 
   try {
-    const { url, matchId, debug } = await req.json()
+    const { url, matchId, debug, mode } = await req.json()
 
     if (!url && !matchId) {
       return new Response(
@@ -1341,11 +2045,11 @@ serve(async (req) => {
     // Extract matchId from URL
     let gameId = matchId
     if (!gameId && url) {
-      const idMatch = url.match(/\/-\/spiel\/([A-Z0-9]{20,})/i)
+      const idMatch = url.match(/\/-\/spiel\/([A-Z0-9]{6,})/i)
       if (idMatch) {
         gameId = idMatch[1]
       } else {
-        const fallbackMatch = url.match(/([A-Z0-9]{20,})(?:[\/\?#]|$)/i)
+        const fallbackMatch = url.match(/([A-Z0-9]{6,})(?:[\/\?#]|$)/i)
         if (fallbackMatch) {
           gameId = fallbackMatch[1]
         }
@@ -1363,8 +2067,30 @@ serve(async (req) => {
       )
     }
 
-    console.log('Processing lineup for match:', gameId)
+    console.log('Processing match:', gameId, 'mode:', mode || 'lineup')
     debugInfo.gameId = gameId
+    debugInfo.mode = mode || 'lineup'
+
+    // ===========================================
+    // MODE: match-info (Team-Namen, Datum, Uhrzeit, Ort)
+    // ===========================================
+    if (mode === 'match-info') {
+      const matchInfoResult = await fetchMatchInfo(gameId, url, debugInfo)
+      debugInfo.duration = Date.now() - startTime
+
+      const responseData: Record<string, unknown> = {
+        success: matchInfoResult.success,
+        data: matchInfoResult.data,
+        method: 'match-info',
+      }
+      if (!matchInfoResult.success) responseData.error = matchInfoResult.error
+      if (debug) responseData.debug = debugInfo
+
+      return new Response(
+        JSON.stringify(responseData),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+      )
+    }
 
     // Build lineup URL
     const baseUrl = url || `https://www.fussball.de/spiel/-/-/spiel/${gameId}`

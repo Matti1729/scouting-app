@@ -367,21 +367,15 @@ export async function isOnWatchlist(playerId: string): Promise<boolean> {
 // ============================================================================
 
 async function callEdgeFunction(action: string, params?: Record<string, any>) {
-  const token = await getAuthToken();
-  const response = await fetch(EDGE_FUNCTION_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    },
-    body: JSON.stringify({ action, ...params }),
+  const { data, error } = await supabase.functions.invoke('berater-scan', {
+    body: { action, ...params },
   });
 
-  if (!response.ok) {
-    throw new Error(`Edge function error: ${response.status}`);
+  if (error) {
+    throw new Error(`Edge function error: ${error.message}`);
   }
 
-  return response.json();
+  return data;
 }
 
 /**
@@ -391,8 +385,55 @@ export async function loadScanStatus(): Promise<{
   scanState: ScanState;
   stats: BeraterStats;
 }> {
-  const result = await callEdgeFunction('get_status');
-  return { scanState: result.scanState, stats: result.stats };
+  // Direkt aus Supabase laden statt über Edge Function
+  const { data: state } = await supabase
+    .from('berater_scan_state')
+    .select('*')
+    .eq('id', 1)
+    .single();
+
+  const { count: totalPlayers } = await supabase
+    .from('berater_players')
+    .select('*', { count: 'exact', head: true })
+    .eq('is_active', true);
+
+  const { count: playersWithoutAgent } = await supabase
+    .from('berater_players')
+    .select('*', { count: 'exact', head: true })
+    .eq('is_active', true)
+    .eq('has_agent', false);
+
+  const { count: totalClubs } = await supabase
+    .from('berater_clubs')
+    .select('*', { count: 'exact', head: true })
+    .eq('is_active', true);
+
+  const { count: totalChanges } = await supabase
+    .from('berater_changes')
+    .select('*', { count: 'exact', head: true });
+
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+  const { count: recentChanges } = await supabase
+    .from('berater_changes')
+    .select('*', { count: 'exact', head: true })
+    .gte('detected_at', sevenDaysAgo);
+
+  const { count: activeLeagues } = await supabase
+    .from('berater_leagues')
+    .select('*', { count: 'exact', head: true })
+    .eq('is_active', true);
+
+  return {
+    scanState: state,
+    stats: {
+      totalPlayers: totalPlayers || 0,
+      playersWithoutAgent: playersWithoutAgent || 0,
+      totalClubs: totalClubs || 0,
+      totalChanges: totalChanges || 0,
+      recentChanges: recentChanges || 0,
+      activeLeagues: activeLeagues || 0,
+    },
+  };
 }
 
 /**
