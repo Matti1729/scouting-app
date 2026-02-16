@@ -1144,7 +1144,7 @@ function tryPlayerWrapperExtraction(html: string, fontMapping?: Map<number, stri
       nummer,
       name,
       vorname,
-      position: isGoalkeeper ? 'Torwart' : '',
+      position: '',
       jahrgang: '',
       profileUrl: hasProfile ? profileUrl : undefined,
       originalIndex: matchPosition,
