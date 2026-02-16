@@ -63,6 +63,7 @@ export interface Player {
   birth_date?: string;
   fussball_de_url?: string;
   isGoalkeeper?: boolean;
+  isCaptain?: boolean;
 }
 
 export interface PlayerRowProps {
@@ -191,6 +192,22 @@ export const PlayerRow = memo<PlayerRowProps>(({
         )}
       </View>
 
+      {/* Badges: T (Torwart), C (Kapitän) */}
+      {!isEditMode && (player.isGoalkeeper || player.isCaptain) && (
+        <View style={styles.badgeContainer}>
+          {player.isGoalkeeper && (
+            <View style={styles.badge}>
+              <Text style={styles.badgeText}>T</Text>
+            </View>
+          )}
+          {player.isCaptain && (
+            <View style={[styles.badge, styles.badgeCaptain]}>
+              <Text style={styles.badgeText}>C</Text>
+            </View>
+          )}
+        </View>
+      )}
+
     </TouchableOpacity>
   );
 });
@@ -264,6 +281,28 @@ const styles = StyleSheet.create({
   playerPosition: {
     fontSize: 11,
     marginTop: 1,
+  },
+  badgeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    marginLeft: 4,
+  },
+  badge: {
+    width: 18,
+    height: 18,
+    backgroundColor: '#6b7280',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 3,
+  },
+  badgeCaptain: {
+    backgroundColor: '#d4a017',
+  },
+  badgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#fff',
   },
 });
 

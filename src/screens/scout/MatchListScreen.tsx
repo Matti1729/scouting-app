@@ -128,6 +128,7 @@ interface Player {
   birth_date?: string;  // Vollständiges Geburtsdatum (DD.MM.YYYY) von Transfermarkt
   fussball_de_url?: string;
   isGoalkeeper?: boolean;  // Torwart-Flag aus Scraper
+  isCaptain?: boolean;  // Kapitän-Flag
 }
 
 // Leere Aufstellungen - werden erst durch Import oder manuelle Eingabe gefüllt
@@ -321,6 +322,7 @@ const dbLineupToPlayer = (dbLineup: DbLineup): Player => ({
   birth_date: dbLineup.birth_date || undefined,
   fussball_de_url: dbLineup.fussball_de_url || undefined,
   isGoalkeeper: dbLineup.is_goalkeeper ?? false,
+  isCaptain: dbLineup.is_captain ?? false,
 });
 
 export function MatchListScreen({ navigation }: any) {

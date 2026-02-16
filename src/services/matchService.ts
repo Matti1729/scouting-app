@@ -41,6 +41,7 @@ export interface DbLineup {
   has_agent: boolean;
   birth_date: string | null;
   is_goalkeeper: boolean;
+  is_captain: boolean;
 }
 
 // Input-Typen (ohne auto-generierte Felder)
@@ -74,6 +75,7 @@ export interface LineupInput {
   has_agent?: boolean;
   birth_date?: string;
   is_goalkeeper?: boolean;
+  is_captain?: boolean;
 }
 
 // ============================================
