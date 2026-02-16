@@ -59,7 +59,8 @@ interface ScrapedPlayer {
   club?: string  // Club-Name aus Spielerprofil für Team-Zuordnung
   originalIndex?: number  // Position im Original-HTML für korrekte Starter/Subs-Sortierung
   isSub?: boolean  // true wenn Spieler aus Ersatzbank-Sektion kommt
-  isGoalkeeper?: boolean  // true wenn Spieler Torwart ist (gekennzeichnet mit "T" bei fussball.de)
+  isGoalkeeper?: boolean  // true wenn Spieler Torwart ist (div.captain > span.c = "T")
+  isCaptain?: boolean  // true wenn Spieler Kapitän ist (div.captain > span.c = "C")
 }
 
 interface ScrapedLineups {
@@ -1082,8 +1083,9 @@ function tryPlayerWrapperExtraction(html: string, fontMapping?: Map<number, stri
   // Matches both players with profile URLs and players without (href="#")
   // Also captures firstname and lastname spans for players without profiles
   // Note: players with profiles have data-obfuscation attribute, players without don't
-  // Goalkeeper is marked with "T" instead of a number, so we match [T\d]+ for player-number
-  const playerPattern = /<a[^>]*href="([^"]*)"[^>]*class="player-wrapper (home|away)"[^>]*>[\s\S]*?<span[^>]*class="firstname"[^>]*>([^<]*)<\/span><span[^>]*class="lastname"[^>]*>([^<]*)<\/span>[\s\S]*?<span class="player-number">([T\d]+)<\/span>/gi
+  // After player-number, there may be a <div class="captain"><span class="c">T/C</span></div>
+  // T = Torwart (goalkeeper), C = Kapitän (captain)
+  const playerPattern = /<a[^>]*href="([^"]*)"[^>]*class="player-wrapper (home|away)"[^>]*>[\s\S]*?<span[^>]*class="firstname"[^>]*>([^<]*)<\/span><span[^>]*class="lastname"[^>]*>([^<]*)<\/span>[\s\S]*?<span class="player-number">([T\d]+)<\/span>[\s\S]*?<\/a>/gi
 
   for (const match of html.matchAll(playerPattern)) {
     const profileUrl = match[1]
@@ -1092,10 +1094,18 @@ function tryPlayerWrapperExtraction(html: string, fontMapping?: Map<number, stri
     const lastnameRaw = match[4]   // Obfuscated HTML entities, "k.A.", or plain text
     const nummerRaw = match[5]
     const matchPosition = match.index!
+    const fullBlock = match[0]  // Full matched HTML block for captain/GK detection
 
-    // Check if goalkeeper (marked with "T" instead of number)
-    const isGoalkeeper = nummerRaw.toUpperCase() === 'T'
-    const nummer = isGoalkeeper ? '1' : nummerRaw  // Torwart gets number 1 if "T"
+    // Check for captain div marker: <div class="captain"><span class="c">T</span></div>
+    // T = Torwart (goalkeeper), C = Kapitän (captain)
+    const captainMarker = fullBlock.match(/<div class="captain"><span class="c">([^<]+)<\/span><\/div>/i)
+    const markerValue = captainMarker ? captainMarker[1].toUpperCase().trim() : ''
+
+    // Goalkeeper: either marked with "T" in captain div, or number is literally "T"
+    const isGoalkeeper = markerValue === 'T' || nummerRaw.toUpperCase() === 'T'
+    // Captain: marked with "C" in captain div
+    const isCaptain = markerValue === 'C'
+    const nummer = nummerRaw.toUpperCase() === 'T' ? '1' : nummerRaw  // Torwart gets number 1 if "T"
 
     // Skip duplicates (but not for players without profile URL)
     const hasProfile = profileUrl.includes('spielerprofil')
@@ -1140,6 +1150,7 @@ function tryPlayerWrapperExtraction(html: string, fontMapping?: Map<number, stri
       originalIndex: matchPosition,
       isSub: matchPosition > substitutesPosition,  // Player is sub if after substitutes section
       isGoalkeeper,
+      isCaptain,
     }
 
     if (team === 'home') {

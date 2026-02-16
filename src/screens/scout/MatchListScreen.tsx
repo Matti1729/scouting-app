@@ -1377,7 +1377,7 @@ export function MatchListScreen({ navigation }: any) {
     try {
       // Hilfsfunktion: Spieler für Supabase vorbereiten
       const preparePlayersForDb = (
-        players: { nummer: string; vorname: string; name: string; jahrgang: string; position: string; isGoalkeeper?: boolean }[],
+        players: { nummer: string; vorname: string; name: string; jahrgang: string; position: string; isGoalkeeper?: boolean; isCaptain?: boolean }[],
         team: 'home' | 'away',
         isStarter: boolean
       ) => players.map(p => ({
@@ -1389,6 +1389,7 @@ export function MatchListScreen({ navigation }: any) {
         jahrgang: p.jahrgang,
         position: p.position,
         is_goalkeeper: p.isGoalkeeper ?? false,
+        is_captain: p.isCaptain ?? false,
       }));
 
       // 1. Versuche zuerst den Puppeteer-Scraper (wenn Backend konfiguriert)
@@ -1552,7 +1553,7 @@ export function MatchListScreen({ navigation }: any) {
 
       // Spieler für DB vorbereiten (wie bei handleImportLineups)
       const preparePlayersForDb = (
-        players: { nummer: string; vorname: string; name: string; jahrgang: string; position: string; isGoalkeeper?: boolean }[],
+        players: { nummer: string; vorname: string; name: string; jahrgang: string; position: string; isGoalkeeper?: boolean; isCaptain?: boolean }[],
         team: 'home' | 'away',
         isStarter: boolean
       ) => players.map(p => ({
@@ -1564,6 +1565,7 @@ export function MatchListScreen({ navigation }: any) {
         jahrgang: p.jahrgang,
         position: p.position,
         is_goalkeeper: p.isGoalkeeper ?? false,
+        is_captain: p.isCaptain ?? false,
       }));
 
       const data = result.data;
