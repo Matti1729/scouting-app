@@ -401,6 +401,9 @@ export function MatchListScreen({ navigation }: any) {
   // Archiv-Ansicht
   const [showArchive, setShowArchive] = useState(false);
 
+  // Aktionsmenü (mobile "..." Menü)
+  const [actionMenuVisible, setActionMenuVisible] = useState(false);
+
   // Sortierung
   const [sortField, setSortField] = useState<SortField>('datum');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
@@ -2192,7 +2195,7 @@ export function MatchListScreen({ navigation }: any) {
                     </>
                   ) : (
                     <>
-                      {/* View Mode: Top bar with import button + close */}
+                      {/* View Mode: Top bar with import button + ... menu + close */}
                       <View style={styles.modalTopBar}>
                         <TouchableOpacity
                           style={[styles.modalTopBarButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
@@ -2207,10 +2210,35 @@ export function MatchListScreen({ navigation }: any) {
                             </Text>
                           )}
                         </TouchableOpacity>
-                        <TouchableOpacity onPress={() => { setIsEditMode(false); setModalVisible(false); }}>
-                          <Text style={[styles.modalClose, { color: colors.textSecondary }]}>✕</Text>
-                        </TouchableOpacity>
+                        <View style={styles.modalTopBarRight}>
+                          <TouchableOpacity
+                            style={[styles.actionMenuButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+                            onPress={() => setActionMenuVisible(true)}
+                          >
+                            <Text style={[styles.actionMenuButtonText, { color: colors.text }]}>{'\u2026'}</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity onPress={() => { setIsEditMode(false); setActionMenuVisible(false); setModalVisible(false); }}>
+                            <Text style={[styles.modalClose, { color: colors.textSecondary }]}>✕</Text>
+                          </TouchableOpacity>
+                        </View>
                       </View>
+                      {/* Action Menu Popup */}
+                      {actionMenuVisible && (
+                        <View style={styles.actionMenuWrapper}>
+                          <TouchableOpacity style={styles.actionMenuOverlay} activeOpacity={1} onPress={() => setActionMenuVisible(false)} />
+                          <View style={[styles.actionMenuContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                            <TouchableOpacity style={[styles.actionMenuItem, { borderBottomColor: colors.border }]} onPress={() => { setActionMenuVisible(false); handleEditMatch(); }}>
+                              <Text style={[styles.actionMenuItemText, { color: colors.text }]}>Bearbeiten</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={[styles.actionMenuItem, { borderBottomColor: colors.border }]} onPress={() => { setActionMenuVisible(false); handleAddPlayer(); }}>
+                              <Text style={[styles.actionMenuItemText, { color: colors.text }]}>Spieler hinzufügen</Text>
+                            </TouchableOpacity>
+                            <TouchableOpacity style={styles.actionMenuItem} onPress={() => { setActionMenuVisible(false); handleDeleteMatch(); }}>
+                              <Text style={[styles.actionMenuItemText, { color: colors.error || '#ef4444' }]}>Spiel löschen</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      )}
                       {/* Centered info: age group, match type, date, time */}
                       <View style={styles.modalInfoCenter}>
                         <View style={[styles.modalBadge, { backgroundColor: colors.primary }]}>
@@ -2374,48 +2402,23 @@ export function MatchListScreen({ navigation }: any) {
                   </View>
                 </View>
 
-                {/* Footer */}
-                <View style={[styles.modalFooter, { borderTopColor: colors.border }]}>
-                  {isEditMode ? (
-                    /* Bearbeitungsmodus Footer */
-                    <>
-                      <TouchableOpacity
-                        style={[styles.footerButton, { borderColor: colors.border }]}
-                        onPress={handleCancelEdit}
-                      >
-                        <Text style={[styles.footerButtonText, { color: colors.text }]}>Abbrechen</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.footerButton, { backgroundColor: colors.primary }]}
-                        onPress={handleSaveEditedMatch}
-                      >
-                        <Text style={[styles.footerButtonText, { color: colors.primaryText }]}>Speichern</Text>
-                      </TouchableOpacity>
-                    </>
-                  ) : (
-                    /* Normaler Footer */
-                    <>
-                      <TouchableOpacity
-                        style={[styles.footerButton, { borderColor: colors.error }]}
-                        onPress={handleDeleteMatch}
-                      >
-                        <Text style={[styles.footerButtonText, { color: colors.error }]}>Angelegtes Spiel löschen</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.footerButton, { backgroundColor: colors.primary }]}
-                        onPress={handleAddPlayer}
-                      >
-                        <Text style={[styles.footerButtonText, { color: colors.primaryText }]}>Spieler hinzufügen</Text>
-                      </TouchableOpacity>
-                      <TouchableOpacity
-                        style={[styles.footerButton, { borderColor: colors.border }]}
-                        onPress={handleEditMatch}
-                      >
-                        <Text style={[styles.footerButtonText, { color: colors.text }]}>Bearbeiten</Text>
-                      </TouchableOpacity>
-                    </>
-                  )}
-                </View>
+                {/* Footer — nur im Edit-Modus sichtbar */}
+                {isEditMode && (
+                  <View style={[styles.modalFooter, { borderTopColor: colors.border }]}>
+                    <TouchableOpacity
+                      style={[styles.footerButton, { borderColor: colors.border }]}
+                      onPress={handleCancelEdit}
+                    >
+                      <Text style={[styles.footerButtonText, { color: colors.text }]}>Abbrechen</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.footerButton, { backgroundColor: colors.primary }]}
+                      onPress={handleSaveEditedMatch}
+                    >
+                      <Text style={[styles.footerButtonText, { color: colors.primaryText }]}>Speichern</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
               </>
             )}
           </View>
@@ -3745,6 +3748,56 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '600',
   },
+  modalTopBarRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  actionMenuButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  actionMenuButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  actionMenuWrapper: {
+    position: 'relative',
+    zIndex: 100,
+  },
+  actionMenuOverlay: {
+    position: 'absolute',
+    top: -100,
+    left: -100,
+    right: -100,
+    bottom: -1000,
+    zIndex: 99,
+  },
+  actionMenuContainer: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    borderRadius: 8,
+    borderWidth: 1,
+    minWidth: 180,
+    zIndex: 100,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  actionMenuItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+  },
+  actionMenuItemText: {
+    fontSize: 14,
+  },
   modalInfoCenter: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -3927,24 +3980,24 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   modalFooter: {
-    padding: 16,
+    padding: 12,
     borderTopWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
   },
   footerButton: {
     flex: 1,
-    paddingVertical: 12,
-    paddingHorizontal: 16,
-    borderRadius: 8,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 6,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   footerButtonText: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
   },
   // Tab-Leiste Styles
