@@ -2129,12 +2129,12 @@ export function MatchListScreen({ navigation }: any) {
         animationType="fade"
         onRequestClose={() => setModalVisible(false)}
       >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View style={[styles.modalOverlay, isMobile && styles.modalOverlayMobile]}>
+          <View style={[styles.modalContent, isMobile && styles.modalContentMobile, { backgroundColor: colors.surface, borderColor: colors.border }]}>
             {selectedMatch && (
               <>
                 {/* Modal Header */}
-                <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
+                <View style={[styles.modalHeader, isMobile && styles.modalHeaderMobile, { borderBottomColor: colors.border }]}>
                   {isEditMode ? (
                     <>
                       {/* Edit Mode: Original layout */}
@@ -3646,6 +3646,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 24,
   },
+  modalOverlayMobile: {
+    padding: 0,
+    justifyContent: 'flex-end',
+  },
   modalContent: {
     width: '95%',
     maxWidth: 1200,
@@ -3654,9 +3658,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: 'hidden',
   },
+  modalContentMobile: {
+    width: '100%',
+    maxWidth: '100%',
+    maxHeight: '100%',
+    height: '100%',
+    borderRadius: 0,
+    borderWidth: 0,
+  },
   modalHeader: {
     padding: 20,
     borderBottomWidth: 1,
+  },
+  modalHeaderMobile: {
+    padding: 16,
+    paddingTop: 12,
   },
   modalHeaderRow: {
     flexDirection: 'row',
