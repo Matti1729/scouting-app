@@ -2128,11 +2128,11 @@ export function MatchListScreen({ navigation }: any) {
               <>
                 {/* Modal Header */}
                 <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
-                  <View style={styles.modalHeaderRow}>
-                    {/* Left: Mannschaft + Art */}
-                    <View style={styles.modalHeaderLeft}>
-                      {isEditMode ? (
-                        <>
+                  {isEditMode ? (
+                    <>
+                      {/* Edit Mode: Original layout */}
+                      <View style={styles.modalHeaderRow}>
+                        <View style={styles.modalHeaderLeft}>
                           <Dropdown
                             options={ALTERSKLASSE_OPTIONS}
                             value={editedMatchData.mannschaft}
@@ -2145,89 +2145,84 @@ export function MatchListScreen({ navigation }: any) {
                             onChange={(value) => setEditedMatchData(prev => ({ ...prev, matchType: value as string }))}
                             placeholder="Spielart"
                           />
-                        </>
-                      ) : (
-                        <>
-                          <View style={[styles.modalBadge, { backgroundColor: colors.primary }]}>
-                            <Text style={[styles.modalBadgeText, { color: colors.primaryText }]}>
-                              {selectedMatch.mannschaft}
-                            </Text>
+                        </View>
+                        <View style={styles.editHeaderCenter}>
+                          <TextInput
+                            style={[styles.editHeaderInput, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
+                            value={editedMatchData.homeTeam}
+                            onChangeText={(text) => setEditedMatchData(prev => ({ ...prev, homeTeam: text }))}
+                            placeholder="Heimmannschaft"
+                            placeholderTextColor={colors.textSecondary}
+                          />
+                          <Text style={[styles.editHeaderVs, { color: colors.textSecondary }]}>-</Text>
+                          <TextInput
+                            style={[styles.editHeaderInput, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
+                            value={editedMatchData.awayTeam}
+                            onChangeText={(text) => setEditedMatchData(prev => ({ ...prev, awayTeam: text }))}
+                            placeholder="Auswärtsmannschaft"
+                            placeholderTextColor={colors.textSecondary}
+                          />
+                        </View>
+                        <View style={styles.modalHeaderRight}>
+                          <View style={styles.editDateTimeContainer}>
+                            <TextInput
+                              style={[styles.editDateInput, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
+                              value={editedMatchData.datum}
+                              onChangeText={(text) => setEditedMatchData(prev => ({ ...prev, datum: text }))}
+                              placeholder="Datum"
+                              placeholderTextColor={colors.textSecondary}
+                            />
+                            <TextInput
+                              style={[styles.editTimeInput, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
+                              value={editedMatchData.zeit}
+                              onChangeText={(text) => setEditedMatchData(prev => ({ ...prev, zeit: text }))}
+                              placeholder="Zeit"
+                              placeholderTextColor={colors.textSecondary}
+                            />
                           </View>
-                          <Text style={[styles.modalArt, { color: colors.textSecondary }]}>
-                            {selectedMatch.art}
-                          </Text>
-                        </>
-                      )}
-                    </View>
-
-                    {/* Center: Partie oder Edit-Inputs */}
-                    {isEditMode ? (
-                      <View style={styles.editHeaderCenter}>
-                        <TextInput
-                          style={[styles.editHeaderInput, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
-                          value={editedMatchData.homeTeam}
-                          onChangeText={(text) => setEditedMatchData(prev => ({ ...prev, homeTeam: text }))}
-                          placeholder="Heimmannschaft"
-                          placeholderTextColor={colors.textSecondary}
-                        />
-                        <Text style={[styles.editHeaderVs, { color: colors.textSecondary }]}>-</Text>
-                        <TextInput
-                          style={[styles.editHeaderInput, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
-                          value={editedMatchData.awayTeam}
-                          onChangeText={(text) => setEditedMatchData(prev => ({ ...prev, awayTeam: text }))}
-                          placeholder="Auswärtsmannschaft"
-                          placeholderTextColor={colors.textSecondary}
-                        />
-                      </View>
-                    ) : (
-                      <View style={styles.modalTitleContainer}>
-                        <Text style={[styles.modalTitle, { color: colors.text }]}>
-                          {selectedMatch.spiel}
-                        </Text>
-                        {selectedMatch.fussballDeUrl ? (
-                          <TouchableOpacity onPress={() => Linking.openURL(selectedMatch.fussballDeUrl!)}>
-                            <Text style={[styles.fussballDeLink, { color: colors.primary }]}>
-                              fussball.de
-                            </Text>
+                          <TouchableOpacity onPress={() => { setIsEditMode(false); setModalVisible(false); }}>
+                            <Text style={[styles.modalClose, { color: colors.textSecondary }]}>✕</Text>
                           </TouchableOpacity>
-                        ) : null}
+                        </View>
                       </View>
-                    )}
-
-                    {/* Right: Datum + Zeit + Close */}
-                    <View style={styles.modalHeaderRight}>
-                      {isEditMode ? (
-                        <View style={styles.editDateTimeContainer}>
-                          <TextInput
-                            style={[styles.editDateInput, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
-                            value={editedMatchData.datum}
-                            onChangeText={(text) => setEditedMatchData(prev => ({ ...prev, datum: text }))}
-                            placeholder="Datum"
-                            placeholderTextColor={colors.textSecondary}
-                          />
-                          <TextInput
-                            style={[styles.editTimeInput, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
-                            value={editedMatchData.zeit}
-                            onChangeText={(text) => setEditedMatchData(prev => ({ ...prev, zeit: text }))}
-                            placeholder="Zeit"
-                            placeholderTextColor={colors.textSecondary}
-                          />
-                        </View>
-                      ) : (
-                        <View style={styles.modalDateTime}>
-                          <Text style={[styles.modalDateText, { color: colors.text }]}>
-                            {selectedMatch.datum}
-                          </Text>
-                          <Text style={[styles.modalTimeText, { color: colors.textSecondary }]}>
-                            {selectedMatch.zeit}
+                    </>
+                  ) : (
+                    <>
+                      {/* View Mode: Info-Zeile oben, Partie darunter */}
+                      <View style={styles.modalInfoRow}>
+                        <View style={[styles.modalBadge, { backgroundColor: colors.primary }]}>
+                          <Text style={[styles.modalBadgeText, { color: colors.primaryText }]}>
+                            {selectedMatch.mannschaft}
                           </Text>
                         </View>
-                      )}
-                      <TouchableOpacity onPress={() => { setIsEditMode(false); setModalVisible(false); }}>
-                        <Text style={[styles.modalClose, { color: colors.textSecondary }]}>✕</Text>
-                      </TouchableOpacity>
-                    </View>
-                  </View>
+                        <Text style={[styles.modalInfoText, { color: colors.textSecondary }]}>
+                          {selectedMatch.art}
+                        </Text>
+                        <Text style={[styles.modalInfoDot, { color: colors.textSecondary }]}>{'\u00B7'}</Text>
+                        <Text style={[styles.modalInfoText, { color: colors.textSecondary }]}>
+                          {selectedMatch.datum || '-'}
+                        </Text>
+                        <Text style={[styles.modalInfoDot, { color: colors.textSecondary }]}>{'\u00B7'}</Text>
+                        <Text style={[styles.modalInfoText, { color: colors.textSecondary }]}>
+                          {selectedMatch.zeit || '-'}
+                        </Text>
+                        <View style={{ flex: 1 }} />
+                        <TouchableOpacity onPress={() => { setIsEditMode(false); setModalVisible(false); }}>
+                          <Text style={[styles.modalClose, { color: colors.textSecondary }]}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                      <Text style={[styles.modalTitle, { color: colors.text }]}>
+                        {selectedMatch.spiel}
+                      </Text>
+                      {selectedMatch.fussballDeUrl ? (
+                        <TouchableOpacity onPress={() => Linking.openURL(selectedMatch.fussballDeUrl!)} style={styles.fussballDeLinkContainer}>
+                          <Text style={[styles.fussballDeLink, { color: colors.primary }]}>
+                            fussball.de
+                          </Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </>
+                  )}
                 </View>
 
                 {/* Aufstellungen - Zwei Spalten */}
@@ -3731,6 +3726,19 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textAlign: 'center',
   },
+  modalInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 12,
+    flexWrap: 'wrap',
+  },
+  modalInfoText: {
+    fontSize: 13,
+  },
+  modalInfoDot: {
+    fontSize: 13,
+  },
   modalTitleContainer: {
     flex: 2,
     alignItems: 'center',
@@ -3739,6 +3747,10 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     textAlign: 'center',
+  },
+  fussballDeLinkContainer: {
+    alignItems: 'center',
+    marginTop: 4,
   },
   fussballDeLink: {
     fontSize: 12,
