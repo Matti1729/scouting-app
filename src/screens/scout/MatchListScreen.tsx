@@ -3661,9 +3661,11 @@ const styles = StyleSheet.create({
   modalContentMobile: {
     width: '100%',
     maxWidth: '100%',
-    maxHeight: '100%',
-    height: '100%',
-    borderRadius: 0,
+    maxHeight: '90%',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     borderWidth: 0,
   },
   modalHeader: {
