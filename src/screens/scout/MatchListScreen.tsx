@@ -2188,8 +2188,27 @@ export function MatchListScreen({ navigation }: any) {
                     </>
                   ) : (
                     <>
-                      {/* View Mode: Info-Zeile oben, Partie darunter */}
-                      <View style={styles.modalInfoRow}>
+                      {/* View Mode: Top bar with import button + close */}
+                      <View style={styles.modalTopBar}>
+                        <TouchableOpacity
+                          style={[styles.modalTopBarButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+                          onPress={handleLoadLineups}
+                          disabled={isLoadingLineups}
+                        >
+                          {isLoadingLineups ? (
+                            <ActivityIndicator size="small" color={colors.primary} />
+                          ) : (
+                            <Text style={[styles.modalTopBarButtonText, { color: colors.text }]}>
+                              Aufstellungen laden
+                            </Text>
+                          )}
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => { setIsEditMode(false); setModalVisible(false); }}>
+                          <Text style={[styles.modalClose, { color: colors.textSecondary }]}>✕</Text>
+                        </TouchableOpacity>
+                      </View>
+                      {/* Centered info: age group, match type, date, time */}
+                      <View style={styles.modalInfoCenter}>
                         <View style={[styles.modalBadge, { backgroundColor: colors.primary }]}>
                           <Text style={[styles.modalBadgeText, { color: colors.primaryText }]}>
                             {selectedMatch.mannschaft}
@@ -2206,11 +2225,8 @@ export function MatchListScreen({ navigation }: any) {
                         <Text style={[styles.modalInfoText, { color: colors.textSecondary }]}>
                           {selectedMatch.zeit || '-'}
                         </Text>
-                        <View style={{ flex: 1 }} />
-                        <TouchableOpacity onPress={() => { setIsEditMode(false); setModalVisible(false); }}>
-                          <Text style={[styles.modalClose, { color: colors.textSecondary }]}>✕</Text>
-                        </TouchableOpacity>
                       </View>
+                      {/* Centered match name */}
                       <Text style={[styles.modalTitle, { color: colors.text }]}>
                         {selectedMatch.spiel}
                       </Text>
@@ -2227,22 +2243,9 @@ export function MatchListScreen({ navigation }: any) {
 
                 {/* Aufstellungen - Zwei Spalten */}
                 <View style={styles.modalBody}>
-                  {/* Import Button und Status */}
+                  {/* Import Status */}
                   {!isEditMode && (
                     <View style={styles.importSection}>
-                      <TouchableOpacity
-                        style={[styles.importButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
-                        onPress={handleLoadLineups}
-                        disabled={isLoadingLineups}
-                      >
-                        {isLoadingLineups ? (
-                          <ActivityIndicator size="small" color={colors.primary} />
-                        ) : (
-                          <Text style={[styles.importButtonText, { color: colors.text }]}>
-                            Aufstellungen laden
-                          </Text>
-                        )}
-                      </TouchableOpacity>
                       {lineupStatus === 'unavailable' && (
                         <Text style={[styles.lineupStatusText, { color: colors.textSecondary }]}>
                           Keine Aufstellung bei fussball.de. Screenshot importieren oder manuell anlegen.
@@ -3726,11 +3729,28 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textAlign: 'center',
   },
-  modalInfoRow: {
+  modalTopBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  modalTopBarButton: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  modalTopBarButtonText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  modalInfoCenter: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 6,
-    marginBottom: 12,
+    marginBottom: 8,
     flexWrap: 'wrap',
   },
   modalInfoText: {
