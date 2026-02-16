@@ -2255,11 +2255,7 @@ export function MatchListScreen({ navigation }: any) {
                           Keine Aufstellung bei fussball.de. Screenshot importieren oder manuell anlegen.
                         </Text>
                       )}
-                      {lineupStatus === 'available' && (
-                        <Text style={[styles.lineupStatusText, { color: colors.success || '#22c55e' }]}>
-                          Daten erfolgreich importiert!
-                        </Text>
-                      )}
+                      {/* lineupStatus === 'available' — kein Text nötig, Aufstellung ist sichtbar */}
                       {isSearchingTM && (
                         <View style={styles.tmSearchProgress}>
                           <ActivityIndicator size="small" color={colors.primary} />
@@ -3737,16 +3733,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 8,
   },
   modalTopBarButton: {
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
     borderWidth: 1,
   },
   modalTopBarButtonText: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '600',
   },
   modalInfoCenter: {
@@ -3754,7 +3750,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    marginBottom: 8,
+    marginBottom: 4,
     flexWrap: 'wrap',
   },
   modalInfoText: {
@@ -3783,7 +3779,9 @@ const styles = StyleSheet.create({
   },
   modalBody: {
     flex: 1,
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
   },
   lineupsContainer: {
     flexDirection: 'row',
@@ -3975,8 +3973,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
-    paddingBottom: 12,
-    marginBottom: 12,
+    paddingBottom: 4,
+    marginBottom: 4,
     borderBottomWidth: 1,
     borderBottomColor: 'rgba(0,0,0,0.1)',
     flexWrap: 'wrap',
