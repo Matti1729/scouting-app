@@ -86,15 +86,16 @@ export function DashboardScreen() {
   };
 
   const calculateAge = (birthDate: string | null): string | null => {
-    if (!birthDate) return null;
+    if (!birthDate) return 'k.A.';
     const parts = birthDate.split('.');
-    if (parts.length !== 3) return null;
+    if (parts.length !== 3) return 'k.A.';
     const birth = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
     const now = new Date();
     let age = now.getFullYear() - birth.getFullYear();
     if (now.getMonth() < birth.getMonth() || (now.getMonth() === birth.getMonth() && now.getDate() < birth.getDate())) {
       age--;
     }
+    if (age < 10 || age > 50) return 'k.A.';
     return `${age} J.`;
   };
 
@@ -193,92 +194,30 @@ export function DashboardScreen() {
             </Text>
           </TouchableOpacity>
 
-          {/* Watchlist / Interessante Spieler Karte */}
-          <View
+          {/* Watchlist Karte */}
+          <TouchableOpacity
             style={[
               styles.card,
-              styles.cardLarge,
               isWide && styles.cardWide,
               { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder },
             ]}
+            onPress={() => navigation.navigate('Beraterstatus')}
           >
             <View style={styles.cardHeader}>
               <View style={[styles.cardIconContainer, { backgroundColor: colors.accent + '20' }]}>
                 <Text style={styles.cardIcon}>⭐</Text>
               </View>
               <Text style={[styles.cardTitle, { color: colors.text }]}>Watchlist</Text>
-              <View style={styles.cardHeaderRight}>
-                <Text style={[styles.watchlistCount, { color: colors.textSecondary }]}>
-                  {watchlist.length}
-                </Text>
-              </View>
             </View>
-
-            {watchlist.length === 0 ? (
-              <View style={styles.emptyState}>
-                <Text style={[styles.emptyIcon]}>⭐</Text>
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  Watchlist ist leer
-                </Text>
-                <Text style={[styles.emptyHint, { color: colors.textSecondary }]}>
-                  Füge Spieler im Beraterstatus-Tracker zur Watchlist hinzu
-                </Text>
-              </View>
-            ) : (
-              <View style={styles.playerList}>
-                {watchlist.slice(0, 8).map((entry) => {
-                  if (!entry.player) return null;
-                  const agentInfo = getAgentLabel(entry.player);
-                  const age = calculateAge(entry.player.birth_date);
-                  return (
-                    <TouchableOpacity
-                      key={entry.id}
-                      style={[styles.playerRow, { borderBottomColor: colors.border }]}
-                      onPress={() => handleRemoveFromWatchlist(entry.player_id)}
-                      activeOpacity={0.7}
-                    >
-                      <View style={styles.playerInfo}>
-                        <View style={styles.playerNameRow}>
-                          <Text style={[styles.playerName, { color: colors.text }]} numberOfLines={1}>
-                            {entry.player.player_name}
-                          </Text>
-                          {age && (
-                            <Text style={[styles.playerAge, { color: colors.textSecondary }]}>
-                              {age}
-                            </Text>
-                          )}
-                        </View>
-                        <Text style={[styles.playerDetails, { color: colors.textSecondary }]} numberOfLines={1}>
-                          {entry.player.club_name || ''}
-                          {entry.player.market_value ? ` · ${entry.player.market_value}` : ''}
-                        </Text>
-                      </View>
-                      <View
-                        style={[
-                          styles.statusBadge,
-                          { backgroundColor: agentInfo.color + '20' },
-                        ]}
-                      >
-                        <Text style={[styles.statusText, { color: agentInfo.color }]} numberOfLines={1}>
-                          {agentInfo.text}
-                        </Text>
-                      </View>
-                    </TouchableOpacity>
-                  );
-                })}
-                {watchlist.length > 8 && (
-                  <TouchableOpacity
-                    style={styles.showMoreButton}
-                    onPress={() => navigation.navigate('Beraterstatus')}
-                  >
-                    <Text style={[styles.showMoreText, { color: colors.primary }]}>
-                      +{watchlist.length - 8} weitere anzeigen →
-                    </Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            )}
-          </View>
+            <View style={styles.cardStats}>
+              <Text style={[styles.cardStatNumber, { color: colors.accent }]}>{watchlist.length}</Text>
+              <Text style={[styles.cardStatLabel, { color: colors.textSecondary }]}>Spieler auf der Watchlist</Text>
+            </View>
+            <View style={[styles.cardDivider, { backgroundColor: colors.border }]} />
+            <Text style={[styles.cardAction, { color: colors.primary }]}>
+              Watchlist anzeigen →
+            </Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
     </SafeAreaView>

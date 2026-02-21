@@ -25,6 +25,7 @@ const calculateAge = (birthDate: string): number | null => {
   if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
     age--;
   }
+  if (age < 10 || age > 50) return null;
   return age;
 };
 
