@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -34,6 +34,11 @@ export function WatchlistScreen() {
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Sort
+  type SortKey = 'name' | 'mv' | 'club' | 'agent' | 'added';
+  const [sortKey, setSortKey] = useState<SortKey>('added');
+  const [sortAsc, setSortAsc] = useState(false); // newest first by default
 
   // Detail modal
   const [selectedPlayer, setSelectedPlayer] = useState<BeraterPlayer | null>(null);
@@ -122,6 +127,52 @@ export function WatchlistScreen() {
     return `${years} ${years === 1 ? 'Jahr' : 'Jahre'}`;
   };
 
+  const parseMvNumber = (mv: string): number => {
+    if (!mv) return 0;
+    const clean = mv.replace(/[^\d.,]/g, ' ').trim();
+    const num = parseFloat(clean.replace(',', '.'));
+    if (isNaN(num)) return 0;
+    if (mv.includes('Mrd')) return num * 1000000000;
+    if (mv.includes('Mio')) return num * 1000000;
+    if (mv.includes('Tsd')) return num * 1000;
+    return num;
+  };
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortAsc(!sortAsc);
+    } else {
+      setSortKey(key);
+      setSortAsc(key === 'name' || key === 'club' || key === 'agent'); // alphabetisch aufsteigend, Datum/MW absteigend
+    }
+  };
+
+  const sortedWatchlist = useMemo(() => {
+    return [...watchlist].sort((a, b) => {
+      const dir = sortAsc ? 1 : -1;
+      const pA = a.player;
+      const pB = b.player;
+      if (!pA || !pB) return 0;
+
+      switch (sortKey) {
+        case 'name':
+          return dir * formatNameLastFirst(pA.player_name).localeCompare(formatNameLastFirst(pB.player_name));
+        case 'mv':
+          return dir * (parseMvNumber(pA.market_value || '') - parseMvNumber(pB.market_value || ''));
+        case 'club':
+          return dir * (pA.club_name || '').localeCompare(pB.club_name || '');
+        case 'agent':
+          return dir * (pA.current_agent_name || '').localeCompare(pB.current_agent_name || '');
+        case 'added':
+          return dir * (new Date(a.added_at).getTime() - new Date(b.added_at).getTime());
+        default:
+          return 0;
+      }
+    });
+  }, [watchlist, sortKey, sortAsc]);
+
+  const sortIndicator = (key: SortKey) => sortKey === key ? (sortAsc ? ' \u25B2' : ' \u25BC') : '';
+
   // Modal handlers
   const openPlayerDetail = async (player: BeraterPlayer) => {
     setSelectedPlayer(player);
@@ -157,6 +208,7 @@ export function WatchlistScreen() {
     const player = item.player;
     const agentLabel = getAgentLabel(player);
     const age = calculateAge(player.birth_date);
+    const addedDate = formatDateDE(item.added_at);
 
     return (
       <TouchableOpacity
@@ -185,6 +237,11 @@ export function WatchlistScreen() {
             </Text>
           </View>
         </View>
+        {addedDate && (
+          <Text style={[styles.mobileCardAdded, { color: colors.textSecondary }]}>
+            Hinzugefügt am {addedDate}
+          </Text>
+        )}
       </TouchableOpacity>
     );
   };
@@ -195,6 +252,7 @@ export function WatchlistScreen() {
     const player = item.player;
     const agentLabel = getAgentLabel(player);
     const age = calculateAge(player.birth_date);
+    const addedDate = formatDateDE(item.added_at);
 
     return (
       <TouchableOpacity
@@ -217,6 +275,9 @@ export function WatchlistScreen() {
           </Text>
           <Text style={[styles.playerColAgent, { color: agentLabel.color }]} numberOfLines={1}>
             {agentLabel.text}
+          </Text>
+          <Text style={[styles.playerColAdded, { color: colors.textSecondary }]} numberOfLines={1}>
+            {addedDate || '-'}
           </Text>
         </View>
       </TouchableOpacity>
@@ -378,7 +439,7 @@ export function WatchlistScreen() {
       {/* List */}
       {isMobile ? (
         <FlatList
-          data={watchlist}
+          data={sortedWatchlist}
           renderItem={renderMobileCard}
           keyExtractor={(item) => item.id}
           ListEmptyComponent={!loading ? renderEmpty : null}
@@ -393,17 +454,38 @@ export function WatchlistScreen() {
       ) : (
         <View style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
           {watchlist.length > 0 && (
-            <View style={[styles.desktopHeader, { borderBottomColor: colors.border }]}>
+            <View style={[styles.desktopHeader, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
               <View style={styles.playerRowColumns}>
-                <Text style={[styles.desktopHeaderText, { flex: 1.5, color: colors.textSecondary }]}>Name</Text>
-                <Text style={[styles.desktopHeaderText, { flex: 1, color: colors.textSecondary }]}>Marktwert</Text>
-                <Text style={[styles.desktopHeaderText, { flex: 1.5, color: colors.textSecondary }]}>Verein</Text>
-                <Text style={[styles.desktopHeaderText, { flex: 2, color: colors.textSecondary }]}>Berater</Text>
+                <TouchableOpacity style={styles.playerColNameWrap} onPress={() => toggleSort('name')}>
+                  <Text style={[styles.desktopHeaderText, { color: sortKey === 'name' ? colors.primary : colors.text }]}>
+                    Name{sortIndicator('name')}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={{ flex: 1 }} onPress={() => toggleSort('mv')}>
+                  <Text style={[styles.desktopHeaderText, { color: sortKey === 'mv' ? colors.primary : colors.text }]}>
+                    Marktwert{sortIndicator('mv')}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={{ flex: 1.5 }} onPress={() => toggleSort('club')}>
+                  <Text style={[styles.desktopHeaderText, { color: sortKey === 'club' ? colors.primary : colors.text }]}>
+                    Verein{sortIndicator('club')}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={{ flex: 2 }} onPress={() => toggleSort('agent')}>
+                  <Text style={[styles.desktopHeaderText, { color: sortKey === 'agent' ? colors.primary : colors.text }]}>
+                    Berater{sortIndicator('agent')}
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={{ flex: 1 }} onPress={() => toggleSort('added')}>
+                  <Text style={[styles.desktopHeaderText, { color: sortKey === 'added' ? colors.primary : colors.text }]}>
+                    Hinzugefügt{sortIndicator('added')}
+                  </Text>
+                </TouchableOpacity>
               </View>
             </View>
           )}
           <FlatList
-            data={watchlist}
+            data={sortedWatchlist}
             renderItem={renderDesktopRow}
             keyExtractor={(item) => item.id}
             ListEmptyComponent={!loading ? renderEmpty : null}
@@ -532,6 +614,10 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '500',
   },
+  mobileCardAdded: {
+    fontSize: 11,
+    marginTop: 6,
+  },
 
   // Desktop row
   playerRow: {
@@ -572,6 +658,10 @@ const styles = StyleSheet.create({
   },
   playerColAgent: {
     flex: 2,
+    fontSize: 11,
+  },
+  playerColAdded: {
+    flex: 1,
     fontSize: 11,
   },
 

@@ -391,7 +391,29 @@ export function BeraterstatusScreen() {
         await loadWatchlistTab();
       }
     } else {
-      const success = await addToWatchlist(selectedPlayer.id);
+      let success: boolean;
+      if (!selectedPlayer.id) {
+        // Vorschläge-Spieler ohne berater_players-Eintrag
+        success = await addStatPlayerToWatchlist({
+          id: '',
+          player_id: null,
+          tm_player_id: selectedPlayer.tm_player_id,
+          player_name: selectedPlayer.player_name,
+          tm_profile_url: selectedPlayer.tm_profile_url,
+          birth_date: selectedPlayer.birth_date,
+          position: selectedPlayer.position,
+          league_id: selectedPlayer.league_id || '',
+          club_name: selectedPlayer.club_name || null,
+          stat_type: 'goals',
+          stat_value: 0,
+          games_played: null,
+          rank_in_league: null,
+          season: null,
+          updated_at: '',
+        });
+      } else {
+        success = await addToWatchlist(selectedPlayer.id);
+      }
       if (success) {
         setIsOnWatchlistState(true);
         await loadWatchlistTab();
