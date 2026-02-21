@@ -1527,7 +1527,12 @@ export function BeraterstatusScreen() {
 
       return true;
     }).sort((a, b) => {
-      if (changeSortKey === 'default') return 0; // keep loadChangesTab priority sort
+      if (changeSortKey === 'default') {
+        // Standard: neueste zuerst, dann alphabetisch nach Name
+        const dateComp = new Date(b.detected_at).getTime() - new Date(a.detected_at).getTime();
+        if (dateComp !== 0) return dateComp;
+        return formatNameLastFirst(a.player_name).localeCompare(formatNameLastFirst(b.player_name));
+      }
 
       const dir = changeSortAsc ? 1 : -1;
       switch (changeSortKey) {
@@ -1928,7 +1933,7 @@ export function BeraterstatusScreen() {
                     {!isCollapsed && (
                       <View style={[styles.playerRow, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
                         <View style={styles.playerRowColumns}>
-                          <Text style={[styles.playerColNameWrap, styles.columnHeader, { color: colors.textSecondary }]}>Spieler</Text>
+                          <Text style={[styles.playerColNameWrap, styles.columnHeader, { color: colors.textSecondary }]}>Name</Text>
                           <Text style={[styles.playerColClub, styles.columnHeader, { color: colors.textSecondary }]}>Verein</Text>
                           <Text style={[styles.playerColAgent, styles.columnHeader, { color: colors.textSecondary }]}>Berater</Text>
                           <Text style={[styles.suggestionColGames, styles.columnHeader, { color: colors.textSecondary }]}>Spiele</Text>

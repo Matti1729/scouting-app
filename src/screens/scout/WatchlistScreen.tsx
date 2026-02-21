@@ -8,11 +8,22 @@ import {
   RefreshControl,
   useWindowDimensions,
   Linking,
+  Modal,
+  ScrollView,
+  ActivityIndicator,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
-import { loadWatchlist, WatchlistEntry, BeraterPlayer } from '../../services/beraterService';
+import {
+  loadWatchlist,
+  WatchlistEntry,
+  BeraterPlayer,
+  BeraterChange,
+  removeFromWatchlist,
+  loadPlayerHistory,
+} from '../../services/beraterService';
 
 export function WatchlistScreen() {
   const navigation = useNavigation();
@@ -23,6 +34,11 @@ export function WatchlistScreen() {
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+
+  // Detail modal
+  const [selectedPlayer, setSelectedPlayer] = useState<BeraterPlayer | null>(null);
+  const [playerHistory, setPlayerHistory] = useState<BeraterChange[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const fetchData = useCallback(async () => {
     const data = await loadWatchlist();
@@ -42,7 +58,7 @@ export function WatchlistScreen() {
     setRefreshing(false);
   }, [fetchData]);
 
-  // Helpers (same as BeraterstatusScreen)
+  // Helpers
   const formatNameLastFirst = (fullName: string): string => {
     const parts = fullName.trim().split(/\s+/);
     if (parts.length <= 1) return fullName;
@@ -75,13 +91,67 @@ export function WatchlistScreen() {
     return `${age} J.`;
   };
 
-  const handlePlayerPress = (player: BeraterPlayer) => {
-    if (player.tm_profile_url) {
-      Linking.openURL(player.tm_profile_url);
+  const formatDateDE = (dateStr: string | null): string | null => {
+    if (!dateStr) return null;
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
+  };
+
+  const formatDurationBetween = (fromDate: string, toDate: string): string => {
+    const from = new Date(fromDate);
+    const to = new Date(toDate);
+    const diffMs = to.getTime() - from.getTime();
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffDays < 1) return '< 1 Tag';
+    if (diffDays < 7) return `${diffDays} ${diffDays === 1 ? 'Tag' : 'Tage'}`;
+    if (diffDays < 30) {
+      const weeks = Math.floor(diffDays / 7);
+      return `${weeks} ${weeks === 1 ? 'Woche' : 'Wochen'}`;
+    }
+    if (diffDays < 365) {
+      const months = Math.floor(diffDays / 30);
+      return `${months} ${months === 1 ? 'Monat' : 'Monate'}`;
+    }
+    const years = Math.floor(diffDays / 365);
+    const remainingMonths = Math.floor((diffDays % 365) / 30);
+    if (remainingMonths > 0) {
+      return `${years} J. ${remainingMonths} Mon.`;
+    }
+    return `${years} ${years === 1 ? 'Jahr' : 'Jahre'}`;
+  };
+
+  // Modal handlers
+  const openPlayerDetail = async (player: BeraterPlayer) => {
+    setSelectedPlayer(player);
+    setPlayerHistory([]);
+    setHistoryLoading(true);
+
+    const history = await loadPlayerHistory(player.id);
+    setPlayerHistory(history);
+    setHistoryLoading(false);
+  };
+
+  const handleRemoveFromWatchlist = async () => {
+    if (!selectedPlayer) return;
+    const success = await removeFromWatchlist(selectedPlayer.id);
+    if (success) {
+      setWatchlist(prev => prev.filter(w => w.player_id !== selectedPlayer.id));
+      setSelectedPlayer(null);
     }
   };
 
-  // Mobile card (same layout as BeraterstatusScreen)
+  const handleOpenProfile = () => {
+    if (selectedPlayer?.tm_profile_url) {
+      Linking.openURL(selectedPlayer.tm_profile_url);
+    } else if (selectedPlayer?.player_name) {
+      const query = encodeURIComponent(selectedPlayer.player_name);
+      Linking.openURL(`https://www.transfermarkt.de/schnellsuche/ergebnis/schnellsuche?query=${query}`);
+    }
+  };
+
+  // Mobile card
   const renderMobileCard = ({ item }: { item: WatchlistEntry }) => {
     if (!item.player) return null;
     const player = item.player;
@@ -91,7 +161,7 @@ export function WatchlistScreen() {
     return (
       <TouchableOpacity
         style={[styles.mobileCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
-        onPress={() => handlePlayerPress(player)}
+        onPress={() => openPlayerDetail(player)}
         activeOpacity={0.7}
       >
         <View style={styles.mobileCardHeader}>
@@ -119,7 +189,7 @@ export function WatchlistScreen() {
     );
   };
 
-  // Desktop row (same layout as BeraterstatusScreen)
+  // Desktop row
   const renderDesktopRow = ({ item }: { item: WatchlistEntry }) => {
     if (!item.player) return null;
     const player = item.player;
@@ -129,7 +199,7 @@ export function WatchlistScreen() {
     return (
       <TouchableOpacity
         style={[styles.playerRow, { borderBottomColor: colors.border }]}
-        onPress={() => handlePlayerPress(player)}
+        onPress={() => openPlayerDetail(player)}
         activeOpacity={0.7}
       >
         <View style={styles.playerRowColumns}>
@@ -163,6 +233,137 @@ export function WatchlistScreen() {
     </View>
   );
 
+  // Detail modal (identical to BeraterstatusScreen)
+  const renderDetailSheet = () => {
+    if (!selectedPlayer) return null;
+    const agentLabel = getAgentLabel(selectedPlayer);
+    const age = calculateAge(selectedPlayer.birth_date);
+    const sinceDate = formatDateDE(selectedPlayer.agent_since);
+
+    return (
+      <Modal
+        visible={!!selectedPlayer}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSelectedPlayer(null)}
+      >
+        <TouchableOpacity
+          style={[styles.modalOverlay, !isMobile && styles.modalOverlayDesktop]}
+          activeOpacity={1}
+          onPress={() => setSelectedPlayer(null)}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={[styles.detailSheet, { backgroundColor: colors.surface }, !isMobile && styles.detailSheetDesktop]}
+            onPress={() => {}}
+          >
+            <TouchableOpacity
+              style={[styles.closeButton, { borderColor: colors.border }]}
+              onPress={() => setSelectedPlayer(null)}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.closeButtonText, { color: colors.textSecondary }]}>✕</Text>
+            </TouchableOpacity>
+
+            <ScrollView bounces={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
+              <View style={styles.detailTopRow}>
+                <View style={{ flex: 1, marginRight: 12 }}>
+                  <Text style={[styles.detailName, { color: colors.text }]}>
+                    {selectedPlayer.player_name}{'  '}
+                    <Text style={[styles.detailNameMeta, { color: colors.textSecondary }]}>
+                      {[selectedPlayer.birth_date, age ? `(${age})` : null].filter(Boolean).join(' ')}
+                    </Text>
+                  </Text>
+                  <Text style={[styles.detailSub, { color: colors.textSecondary }]}>
+                    {[selectedPlayer.club_name, selectedPlayer.league_name].filter(Boolean).join(' · ')}
+                  </Text>
+                  {selectedPlayer.market_value ? (
+                    <Text style={[styles.detailSub, { color: colors.text, fontSize: 18, fontWeight: '600' }]}>
+                      {selectedPlayer.market_value}
+                    </Text>
+                  ) : null}
+                </View>
+                <View style={styles.detailButtonsCol}>
+                  <TouchableOpacity onPress={handleOpenProfile} activeOpacity={0.7}>
+                    <Image
+                      source={require('../../../assets/transfermarkt-logo.png')}
+                      style={styles.tmLogo}
+                      resizeMode="contain"
+                    />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.watchlistMini,
+                      {
+                        backgroundColor: colors.error + '15',
+                        borderColor: colors.error,
+                      },
+                    ]}
+                    onPress={handleRemoveFromWatchlist}
+                  >
+                    <Text style={[styles.watchlistMiniText, { color: colors.error }]}>
+                      Von Watchlist entfernen
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Beraterstatus Timeline */}
+              <View style={[styles.detailSection, { borderColor: colors.border }]}>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Beraterstatus</Text>
+
+                {historyLoading ? (
+                  <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 8 }} />
+                ) : (
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hTimeline}>
+                    <View style={[styles.hTimelineCard, styles.hTimelineCardCurrent, { backgroundColor: agentLabel.color + '15', borderColor: agentLabel.color }]}>
+                      <Text style={[styles.hTimelineAgent, { color: agentLabel.color }]} numberOfLines={2}>
+                        {agentLabel.text}
+                      </Text>
+                      {selectedPlayer.current_agent_company && selectedPlayer.current_agent_company !== selectedPlayer.current_agent_name && (
+                        <Text style={[styles.hTimelineCompany, { color: colors.textSecondary }]} numberOfLines={1}>
+                          {selectedPlayer.current_agent_company}
+                        </Text>
+                      )}
+                      <Text style={[styles.hTimelineDuration, { color: colors.textSecondary }]}>
+                        {sinceDate ? `seit ${sinceDate}` : 'aktuell'}
+                      </Text>
+                    </View>
+
+                    {playerHistory.map((change, index) => {
+                      const agentName = change.previous_agent_name || 'kein Berater';
+                      const phaseEndDate = change.detected_at;
+                      const phaseStartDate = playerHistory[index + 1]?.detected_at || null;
+                      const phaseDuration = phaseStartDate
+                        ? formatDurationBetween(phaseStartDate, phaseEndDate)
+                        : null;
+
+                      return (
+                        <View key={change.id} style={[styles.hTimelineCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                          <Text style={[styles.hTimelineAgent, { color: colors.text }]} numberOfLines={2}>
+                            {agentName}
+                          </Text>
+                          {phaseDuration && (
+                            <Text style={[styles.hTimelineDuration, { color: colors.textSecondary }]}>
+                              {phaseDuration}
+                            </Text>
+                          )}
+                          <Text style={[styles.hTimelineDate, { color: colors.textSecondary }]}>
+                            {phaseStartDate ? formatDateDE(phaseStartDate) : '?'} – {formatDateDE(phaseEndDate)}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </ScrollView>
+                )}
+              </View>
+            </ScrollView>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
+    );
+  };
+
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
@@ -191,6 +392,16 @@ export function WatchlistScreen() {
         />
       ) : (
         <View style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+          {watchlist.length > 0 && (
+            <View style={[styles.desktopHeader, { borderBottomColor: colors.border }]}>
+              <View style={styles.playerRowColumns}>
+                <Text style={[styles.desktopHeaderText, { flex: 1.5, color: colors.textSecondary }]}>Name</Text>
+                <Text style={[styles.desktopHeaderText, { flex: 1, color: colors.textSecondary }]}>Marktwert</Text>
+                <Text style={[styles.desktopHeaderText, { flex: 1.5, color: colors.textSecondary }]}>Verein</Text>
+                <Text style={[styles.desktopHeaderText, { flex: 2, color: colors.textSecondary }]}>Berater</Text>
+              </View>
+            </View>
+          )}
           <FlatList
             data={watchlist}
             renderItem={renderDesktopRow}
@@ -205,6 +416,9 @@ export function WatchlistScreen() {
           />
         </View>
       )}
+
+      {/* Detail Modal */}
+      {renderDetailSheet()}
     </SafeAreaView>
   );
 }
@@ -251,7 +465,20 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
 
-  // Mobile card (same as BeraterstatusScreen)
+  // Desktop header row
+  desktopHeader: {
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+  },
+  desktopHeaderText: {
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.3,
+  },
+
+  // Mobile card
   mobileCard: {
     borderRadius: 12,
     padding: 14,
@@ -304,10 +531,9 @@ const styles = StyleSheet.create({
   mobileCardAgentText: {
     fontSize: 12,
     fontWeight: '500',
-    flex: 1,
   },
 
-  // Desktop row (same as BeraterstatusScreen)
+  // Desktop row
   playerRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -372,5 +598,126 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
     maxWidth: 250,
+  },
+
+  // Detail Sheet (Modal)
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalOverlayDesktop: {
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  detailSheet: {
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+    paddingTop: 50,
+    paddingBottom: 8,
+    maxHeight: '85%',
+    minWidth: '100%',
+  },
+  detailSheetDesktop: {
+    borderRadius: 16,
+    minWidth: 0,
+    width: 480,
+    maxHeight: '80%',
+  },
+  closeButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    zIndex: 1,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  closeButtonText: {
+    fontSize: 16,
+    fontWeight: '400',
+  },
+  detailTopRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  detailButtonsCol: {
+    alignItems: 'flex-end',
+    gap: 8,
+  },
+  detailName: {
+    fontSize: 20,
+    fontWeight: '700',
+  },
+  detailNameMeta: {
+    fontSize: 13,
+    fontWeight: '400',
+  },
+  tmLogo: {
+    height: 26,
+    width: 65,
+  },
+  detailSub: {
+    fontSize: 14,
+    marginTop: 4,
+  },
+  detailSection: {
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    flex: 1,
+    justifyContent: 'center',
+  },
+  detailLabel: {
+    fontSize: 11,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  watchlistMini: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  watchlistMiniText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  // Horizontal Timeline
+  hTimeline: {
+    marginTop: 12,
+  },
+  hTimelineCard: {
+    width: 120,
+    padding: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    marginRight: 8,
+  },
+  hTimelineCardCurrent: {
+    borderWidth: 2,
+  },
+  hTimelineAgent: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  hTimelineCompany: {
+    fontSize: 10,
+    marginTop: 2,
+  },
+  hTimelineDuration: {
+    fontSize: 10,
+    marginTop: 2,
+  },
+  hTimelineDate: {
+    fontSize: 10,
+    marginTop: 2,
+    fontStyle: 'italic',
   },
 });
