@@ -13,4 +13,5 @@ export type RootStackParamList = {
     playerBirthYear?: string;
   };
   Beraterstatus: undefined;
+  Watchlist: undefined;
 };

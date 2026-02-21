@@ -201,7 +201,7 @@ export function DashboardScreen() {
               isWide && styles.cardWide,
               { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder },
             ]}
-            onPress={() => navigation.navigate('Beraterstatus')}
+            onPress={() => navigation.navigate('Watchlist')}
           >
             <View style={styles.cardHeader}>
               <View style={[styles.cardIconContainer, { backgroundColor: colors.accent + '20' }]}>
