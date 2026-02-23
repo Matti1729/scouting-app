@@ -45,6 +45,13 @@ import {
   addStatPlayerToWatchlist,
 } from '../../services/beraterService';
 
+function fuzzyMatch(query: string, ...fields: (string | null | undefined)[]): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 0);
+  if (words.length === 0) return true;
+  const combined = fields.map(f => (f || '').toLowerCase()).join(' ');
+  return words.every(word => combined.includes(word));
+}
+
 type TabKey = 'alle_spieler' | 'beraterwechsel' | 'vorschlaege';
 type PlayerListItem =
   | { type: 'club_header'; clubName: string; count: number }
@@ -1292,15 +1299,9 @@ export function BeraterstatusScreen() {
   const playerSections = useMemo(() => {
     // Client-seitige Suche
     const filteredPlayers = searchQuery.trim()
-      ? players.filter(p => {
-          const q = searchQuery.toLowerCase();
-          return (
-            p.player_name.toLowerCase().includes(q) ||
-            (p.club_name || '').toLowerCase().includes(q) ||
-            (p.current_agent_name || '').toLowerCase().includes(q) ||
-            (p.current_agent_company || '').toLowerCase().includes(q)
-          );
-        })
+      ? players.filter(p => fuzzyMatch(searchQuery,
+          p.player_name, p.club_name, p.current_agent_name, p.current_agent_company
+        ))
       : players;
 
     const TOP_LEAGUES = ['L1', 'L2', 'L3'];
@@ -1424,13 +1425,9 @@ export function BeraterstatusScreen() {
     // Suche anwenden
     let filtered = suggestedPlayers;
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      filtered = suggestedPlayers.filter(p =>
-        p.player_name.toLowerCase().includes(q) ||
-        (p.club_name && p.club_name.toLowerCase().includes(q)) ||
-        (p.league_name && p.league_name.toLowerCase().includes(q)) ||
-        (p.current_agent_company && p.current_agent_company.toLowerCase().includes(q))
-      );
+      filtered = suggestedPlayers.filter(p => fuzzyMatch(searchQuery,
+        p.player_name, p.club_name, p.league_name, p.current_agent_company
+      ));
     }
 
     // Nach Liga gruppieren
@@ -1512,14 +1509,10 @@ export function BeraterstatusScreen() {
 
       // Suche
       if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase();
-        const matches =
-          c.player_name.toLowerCase().includes(q) ||
-          (c.club_name || '').toLowerCase().includes(q) ||
-          (c.new_agent_name || '').toLowerCase().includes(q) ||
-          (c.previous_agent_name || '').toLowerCase().includes(q) ||
-          (c.new_agent_company || '').toLowerCase().includes(q) ||
-          (c.previous_agent_company || '').toLowerCase().includes(q);
+        const matches = fuzzyMatch(searchQuery,
+          c.player_name, c.club_name, c.new_agent_name, c.previous_agent_name,
+          c.new_agent_company, c.previous_agent_company
+        );
         if (!matches) return false;
       }
 
