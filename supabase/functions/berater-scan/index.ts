@@ -262,43 +262,82 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
     }
 
     // ========== BERATER-INFO EXTRAHIEREN ==========
+    // Position-based search to avoid issues with nested <span> inside agent section
+    const beraterPos = html.search(/Spielerberater:/i)
 
-    // Helper: Extracts agent name from matched HTML section
-    function extractAgentFromSection(sectionHtml: string): { agentName: string; agentCompany: string | null } | null {
-      const linkMatch = sectionHtml.match(/<a[^>]*href="([^"]*)"[^>]*>([^<]+)<\/a>/i)
-      if (linkMatch) {
-        const agentName = linkMatch[2].trim()
-        if (agentName) return { agentName, agentCompany: agentName }
+    if (beraterPos !== -1) {
+      // Search forward 800 chars from "Spielerberater:" for the agent link/text
+      const searchArea = html.substring(beraterPos, beraterPos + 800)
+
+      // Look for <a> tag in this area (handles inner HTML elements like <span>)
+      const aTagMatch = searchArea.match(/<a\s([^>]*)>([\s\S]*?)<\/a>/i)
+
+      if (aTagMatch) {
+        const attrs = aTagMatch[1]
+        const innerHTML = aTagMatch[2]
+
+        // Extract href and title from attributes
+        const hrefMatch = attrs.match(/href="([^"]*)"/)
+        const titleMatch = attrs.match(/title="([^"]*)"/)
+        const href = hrefMatch ? hrefMatch[1] : ''
+        const title = titleMatch ? titleMatch[1].trim() : null
+
+        // Get visible text (strip any inner HTML tags)
+        const linkText = innerHTML.replace(/<[^>]*>/g, '').trim()
+
+        // agentCompany: prefer title > href slug > link text
+        let agentCompany = title || null
+        if (!agentCompany || agentCompany.endsWith('...')) {
+          const slugMatch = href.match(/^\/([^\/]+)\/beraterfirma\//)
+          if (slugMatch) {
+            agentCompany = slugMatch[1].replace(/-/g, ' ')
+              .split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+          }
+        }
+        if (!agentCompany || agentCompany.endsWith('...')) agentCompany = linkText
+
+        // agentName: use company name if link text is abbreviated
+        const agentName = (title || (linkText.endsWith('...') && agentCompany ? agentCompany : linkText)).trim()
+
+        if (agentName) return { agentName, agentCompany, birthDate, isRetired, currentClubName, marketValue }
       }
-      const textContent = sectionHtml.replace(/<[^>]*>/g, '').trim()
+
+      // No link found - extract text from the bold span
+      const boldMatch = searchArea.match(/info-table__content--bold[^>]*>([\s\S]*?)(?:<\/span>\s*<\/span>|<\/td>)/i)
+      const textContent = boldMatch
+        ? boldMatch[1].replace(/<[^>]*>/g, '').trim()
+        : searchArea.replace(/<[^>]*>/g, '').replace(/Spielerberater:\s*/i, '').trim().split('\n')[0]?.trim()
+
       if (textContent && textContent !== '-' && textContent !== '---') {
-        return { agentName: textContent, agentCompany: null }
+        return { agentName: textContent, agentCompany: null, birthDate, isRetired, currentClubName, marketValue }
       }
-      return null
-    }
-
-    // Pattern 1: Info-Table (primary, existing pattern)
-    const pattern1 = /Spielerberater:<\/span>\s*<span[^>]*class="[^"]*info-table__content--bold[^"]*"[^>]*>([\s\S]*?)<\/span>/i
-    const match1 = html.match(pattern1)
-    if (match1) {
-      const result = extractAgentFromSection(match1[1])
-      if (result) return { ...result, birthDate, isRetired, currentClubName, marketValue }
     }
 
     // Pattern 2: Header area (data-header)
-    const pattern2 = /class="data-header__label"[^>]*>\s*Berater:\s*<span[^>]*class="[^"]*data-header__content[^"]*"[^>]*>([\s\S]*?)<\/span>/i
-    const match2 = html.match(pattern2)
-    if (match2) {
-      const result = extractAgentFromSection(match2[1])
-      if (result) return { ...result, birthDate, isRetired, currentClubName, marketValue }
-    }
-
-    // Pattern 3: Generic agent firm link (beraterfirma)
-    const pattern3 = /href="\/[^"]*\/beraterfirma\/berater\/\d+"[^>]*>([^<]+)<\/a>/i
-    const match3 = html.match(pattern3)
-    if (match3) {
-      const agentName = match3[1].trim()
-      if (agentName) return { agentName, agentCompany: agentName, birthDate, isRetired, currentClubName, marketValue }
+    const beraterHeaderPos = html.search(/Berater:\s*<span/i)
+    if (beraterHeaderPos !== -1) {
+      const headerArea = html.substring(beraterHeaderPos, beraterHeaderPos + 500)
+      const aTagMatch = headerArea.match(/<a\s([^>]*)>([\s\S]*?)<\/a>/i)
+      if (aTagMatch) {
+        const attrs = aTagMatch[1]
+        const innerHTML = aTagMatch[2]
+        const hrefMatch = attrs.match(/href="([^"]*)"/)
+        const titleMatch = attrs.match(/title="([^"]*)"/)
+        const href = hrefMatch ? hrefMatch[1] : ''
+        const title = titleMatch ? titleMatch[1].trim() : null
+        const linkText = innerHTML.replace(/<[^>]*>/g, '').trim()
+        const agentName = (title || linkText).trim()
+        let agentCompany = title || null
+        if (!agentCompany || agentCompany.endsWith('...')) {
+          const slugMatch = href.match(/^\/([^\/]+)\/beraterfirma\//)
+          if (slugMatch) {
+            agentCompany = slugMatch[1].replace(/-/g, ' ')
+              .split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+          }
+        }
+        if (!agentCompany || agentCompany.endsWith('...')) agentCompany = linkText
+        if (agentName) return { agentName, agentCompany, birthDate, isRetired, currentClubName, marketValue }
+      }
     }
 
     // Validate page is a real TM profile before returning 'kein Beratereintrag'
@@ -439,8 +478,20 @@ function agentsAreDifferent(oldName: string | null, newName: string | null): boo
   // Einer null, anderer nicht → Wechsel
   if (!normalizedOld || !normalizedNew) return true
 
-  // Normalisierter String-Vergleich
-  return normalizedOld.toLowerCase() !== normalizedNew.toLowerCase()
+  const oldLower = normalizedOld.toLowerCase()
+  const newLower = normalizedNew.toLowerCase()
+
+  // Abgekürzte Namen erkennen ("Funke ..." == "Funke Spielerberatung")
+  if (oldLower.endsWith('...')) {
+    const prefix = oldLower.slice(0, -3).trim()
+    if (prefix && newLower.startsWith(prefix)) return false
+  }
+  if (newLower.endsWith('...')) {
+    const prefix = newLower.slice(0, -3).trim()
+    if (prefix && oldLower.startsWith(prefix)) return false
+  }
+
+  return oldLower !== newLower
 }
 
 // ============================================================================

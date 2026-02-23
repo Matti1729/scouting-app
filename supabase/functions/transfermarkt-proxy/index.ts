@@ -414,38 +414,61 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
     console.log('Final birth date result:', birthDate)
 
     // ========== BERATER-INFO EXTRAHIEREN ==========
-    // Suche nach Spielerberater-Eintrag
-    // Pattern 1: Mit Link: <span>Spielerberater:</span> <span><a href="...">Agent Name</a></span>
-    // Pattern 2: Ohne Link: <span>Spielerberater:</span> <span>Text wie "Familienangehörige" oder "-"</span>
+    // Position-based search to avoid issues with nested <span> inside agent section
+    const beraterPos = html.search(/Spielerberater:/i)
 
-    // Erweiterte Suche für den Spielerberater-Bereich
-    const agentSectionPattern = /Spielerberater:<\/span>\s*<span[^>]*class="[^"]*info-table__content--bold[^"]*"[^>]*>([\s\S]*?)<\/span>/i
-    const sectionMatch = html.match(agentSectionPattern)
+    if (beraterPos !== -1) {
+      // Search forward 800 chars from "Spielerberater:" for the agent link/text
+      const searchArea = html.substring(beraterPos, beraterPos + 800)
 
-    if (sectionMatch) {
-      const agentSection = sectionMatch[1].trim()
+      // Look for <a> tag in this area (handles inner HTML elements like <span>)
+      const aTagMatch = searchArea.match(/<a\s([^>]*)>([\s\S]*?)<\/a>/i)
 
-      // Prüfe ob ein Link vorhanden ist (echter Berater/Agentur)
-      const linkMatch = agentSection.match(/<a[^>]*href="([^"]*)"[^>]*>([^<]+)<\/a>/i)
+      if (aTagMatch) {
+        const attrs = aTagMatch[1]
+        const innerHTML = aTagMatch[2]
 
-      if (linkMatch) {
-        const agentUrl = `https://www.transfermarkt.de${linkMatch[1]}`
-        const agentName = linkMatch[2].trim()
+        // Extract href and title from attributes
+        const hrefMatch = attrs.match(/href="([^"]*)"/)
+        const titleMatch = attrs.match(/title="([^"]*)"/)
+        const href = hrefMatch ? hrefMatch[1] : ''
+        const title = titleMatch ? titleMatch[1].trim() : null
 
-        console.log('Found agent with link:', agentName, agentUrl)
+        // Get visible text (strip any inner HTML tags)
+        const linkText = innerHTML.replace(/<[^>]*>/g, '').trim()
+
+        const agentUrl = `https://www.transfermarkt.de${href}`
+
+        // agentCompany: prefer title > href slug > link text
+        let agentCompany: string = title || ''
+        if (!agentCompany || agentCompany.endsWith('...')) {
+          const slugMatch = href.match(/^\/([^\/]+)\/beraterfirma\//)
+          if (slugMatch) {
+            agentCompany = slugMatch[1].replace(/-/g, ' ')
+              .split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
+          }
+        }
+        if (!agentCompany || agentCompany.endsWith('...')) agentCompany = linkText
+
+        // agentName: use company name if link text is abbreviated
+        const agentName = (title || (linkText.endsWith('...') && agentCompany ? agentCompany : linkText)).trim()
+
+        console.log('Found agent with link:', agentName, '| company:', agentCompany, '| url:', agentUrl)
         return {
           agentName,
-          agentCompany: agentName,
+          agentCompany,
           agentUrl,
           birthDate,
         }
       }
 
-      // Kein Link - prüfe den Textinhalt (z.B. "Familienangehörige", "-", etc.)
-      const textContent = agentSection.replace(/<[^>]*>/g, '').trim()
+      // No link found - extract text from the info-table__content--bold span
+      const boldMatch = searchArea.match(/info-table__content--bold[^>]*>([\s\S]*?)(?:<\/span>\s*<\/span>|<\/td>)/i)
+      const textContent = boldMatch
+        ? boldMatch[1].replace(/<[^>]*>/g, '').trim()
+        : searchArea.replace(/<[^>]*>/g, '').replace(/Spielerberater:\s*/i, '').trim().split('\n')[0]?.trim()
 
       if (textContent && textContent !== '-' && textContent !== '---') {
-        // Es gibt einen Eintrag wie "Familienangehörige"
         console.log('Found agent text (no link):', textContent)
         return {
           agentName: textContent,
@@ -455,7 +478,6 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
         }
       }
 
-      // Eintrag ist leer oder "-" = kein Berater
       console.log('Agent field exists but empty or dash')
       return { agentName: 'kein Beratereintrag', agentCompany: null, agentUrl: null, birthDate }
     }
