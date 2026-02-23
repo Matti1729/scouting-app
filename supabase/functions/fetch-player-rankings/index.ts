@@ -20,8 +20,8 @@ const ALLOWED_LEAGUE_IDS = [
   'RLW3',    // Regionalliga West
   'RLSW',    // Regionalliga Südwest
   'RLB3',    // Regionalliga Bayern
-  // U19 Nachwuchsliga Vorrunde (8 Gruppen)
-  'U19D1', 'U19D2', 'U19D3', 'U19D4', 'U19D5', 'U19D6', 'U19D7', 'U19D8',
+  // U19 Nachwuchsliga Vorrunde (9 Gruppen)
+  'U19D1', 'U19D2', 'U19D3', 'U19D4', 'U19D5', 'U19D6', 'U19D7', 'U19D8', 'U19D9',
   // U19 Nachwuchsliga Hauptrunde (2 Ligen)
   '19LA', '19LB',
   // U17 Nachwuchsliga Vorrunde (8 Gruppen)
@@ -124,31 +124,36 @@ function extractTmPlayerId(url: string): string | null {
 }
 
 // Robuste Club-Extraktion mit mehreren Fallback-Patterns
-function extractClubName(html: string): string {
+function extractClubName(html: string, playerName?: string): string {
   const patterns = [
-    // Pattern 1: Club-Link mit title-Attribut (häufigster Fall)
+    // Pattern 1a: Club-Link mit href vor title (häufigster Fall)
     /<a[^>]*href="[^"]*\/verein\/\d+[^"]*"[^>]*title="([^"]+)"/i,
+    // Pattern 1b: Club-Link mit title vor href (alternative Attribut-Reihenfolge)
+    /<a[^>]*title="([^"]+)"[^>]*href="[^"]*\/verein\/\d+[^"]*"/i,
     // Pattern 2: Club-Link mit direktem Text-Content
     /<a[^>]*href="[^"]*\/verein\/\d+[^"]*"[^>]*>([^<]+)<\/a>/i,
-    // Pattern 3: Wappen-Bild mit alt-Attribut (tiny_wappen)
+    // Pattern 3: Wappen-Bild in Verein-Link (img alt innerhalb eines /verein/ Links)
+    /<a[^>]*href="[^"]*\/verein\/\d+[^"]*"[^>]*>[\s\S]*?<img[^>]*alt="([^"]+)"/i,
+    // Pattern 3b: Verein-Link mit title vor href + img alt
+    /<a[^>]*title="[^"]*"[^>]*href="[^"]*\/verein\/\d+[^"]*"[^>]*>[\s\S]*?<img[^>]*alt="([^"]+)"/i,
+    // Pattern 4: Wappen-Bild mit tiny_wappen class
     /<img[^>]*alt="([^"]+)"[^>]*class="[^"]*tiny_wappen[^"]*"/i,
-    // Pattern 4: Wappen-Bild mit class vor alt (alternative Reihenfolge)
     /<img[^>]*class="[^"]*tiny_wappen[^"]*"[^>]*alt="([^"]+)"/i,
     // Pattern 5: Allgemeines Wappen-Pattern (mini_wappen, wappen, etc.)
     /<img[^>]*alt="([^"]+)"[^>]*class="[^"]*wappen[^"]*"/i,
     /<img[^>]*class="[^"]*wappen[^"]*"[^>]*alt="([^"]+)"/i,
     // Pattern 6: td mit title-Attribut für Club-Info
     /<td[^>]*title="([^"]+)"[^>]*class="[^"]*(?:verein|klub|club)[^"]*"/i,
-    // Pattern 7: Zelle mit hauptlink class die Club-Link enthält
-    /<td[^>]*class="[^"]*hauptlink[^"]*"[^>]*>[\s\S]*?<a[^>]*title="([^"]+)"/i,
+    // Pattern 7: Zelle mit hauptlink class die einen Verein-Link enthält
+    /<td[^>]*class="[^"]*hauptlink[^"]*"[^>]*>[\s\S]*?<a[^>]*href="[^"]*\/verein\/\d+[^"]*"[^>]*title="([^"]+)"/i,
   ]
 
   for (const pattern of patterns) {
     const match = html.match(pattern)
     if (match && match[1]) {
       const clubName = decodeHtmlEntities(match[1].trim())
-      // Filter out player names (Links zu Spielern statt Vereinen)
-      if (clubName && !clubName.includes('/spieler/')) {
+      // Filter: keine Spieler-URLs und nicht den Spielernamen selbst
+      if (clubName && !clubName.includes('/spieler/') && (!playerName || clubName !== playerName)) {
         return clubName
       }
     }
@@ -189,7 +194,7 @@ function parseRankingTable(html: string): RankedPlayer[] {
     if (!tmPlayerId) continue
 
     // Verein extrahieren mit robuster Helper-Funktion
-    const clubName = extractClubName(rowHtml)
+    const clubName = extractClubName(rowHtml, playerName)
 
     // Statistik-Wert extrahieren (Tore oder Assists)
     // Die Statistik-Spalte hat class="zentriert hauptlink"

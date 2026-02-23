@@ -610,7 +610,11 @@ export async function loadSuggestedPlayers(
     if (aggregatedMap.has(key)) {
       const existing = aggregatedMap.get(key)!;
       existing.stat_value += player.stat_value;
-      existing.games_played = (existing.games_played || 0) + (player.games_played || 0);
+      if (existing.games_played !== null && player.games_played !== null) {
+        existing.games_played = existing.games_played + player.games_played;
+      } else if (player.games_played !== null) {
+        existing.games_played = player.games_played;
+      }
     } else {
       aggregatedMap.set(key, { ...player });
     }

@@ -1297,7 +1297,8 @@ export function BeraterstatusScreen() {
           return (
             p.player_name.toLowerCase().includes(q) ||
             (p.club_name || '').toLowerCase().includes(q) ||
-            (p.current_agent_name || '').toLowerCase().includes(q)
+            (p.current_agent_name || '').toLowerCase().includes(q) ||
+            (p.current_agent_company || '').toLowerCase().includes(q)
           );
         })
       : players;
@@ -1427,7 +1428,8 @@ export function BeraterstatusScreen() {
       filtered = suggestedPlayers.filter(p =>
         p.player_name.toLowerCase().includes(q) ||
         (p.club_name && p.club_name.toLowerCase().includes(q)) ||
-        (p.league_name && p.league_name.toLowerCase().includes(q))
+        (p.league_name && p.league_name.toLowerCase().includes(q)) ||
+        (p.current_agent_company && p.current_agent_company.toLowerCase().includes(q))
       );
     }
 
@@ -1515,7 +1517,9 @@ export function BeraterstatusScreen() {
           c.player_name.toLowerCase().includes(q) ||
           (c.club_name || '').toLowerCase().includes(q) ||
           (c.new_agent_name || '').toLowerCase().includes(q) ||
-          (c.previous_agent_name || '').toLowerCase().includes(q);
+          (c.previous_agent_name || '').toLowerCase().includes(q) ||
+          (c.new_agent_company || '').toLowerCase().includes(q) ||
+          (c.previous_agent_company || '').toLowerCase().includes(q);
         if (!matches) return false;
       }
 
