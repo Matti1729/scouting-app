@@ -9,7 +9,9 @@ import {
   KeyboardAvoidingView,
   Platform,
   Linking,
+  Alert,
 } from 'react-native';
+import { supabase } from '../../config/supabase';
 import { useTheme } from '../../contexts/ThemeContext';
 import { PhysicalTagSelector } from '../../components/PhysicalTagSelector';
 import { DevelopmentStageSelector } from '../../components/DevelopmentStageSelector';
@@ -163,6 +165,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
   // Bewertung
   const [overallRating, setOverallRating] = useState(5);
   const [notes, setNotes] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const handleTagToggle = (tag: PhysicalTag) => {
     setPhysicalTags((prev) =>
@@ -181,25 +184,47 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
     ? positions.map(p => POSITION_LABELS[p]).join(', ')
     : 'Position wählen';
 
-  const handleSave = () => {
-    // TODO: Speichern in Supabase
-    console.log({
-      matchName,
-      matchDate,
-      ageGroup,
-      lastName,
-      firstName,
-      jerseyNumber: jerseyNumber ? parseInt(jerseyNumber) : null,
-      currentClub,
-      positions,
-      playerHeightM: playerHeightM ? parseFloat(playerHeightM) : null,
-      bodyStructure,
-      heightCm: heightCm ? parseInt(heightCm) : null,
-      developmentStage,
-      physicalTags,
-      overallRating,
-      notes,
-    });
+  const handleSave = async () => {
+    if (!lastName.trim()) {
+      Alert.alert('Fehler', 'Nachname ist erforderlich.');
+      return;
+    }
+    setSaving(true);
+    try {
+      const { error } = await supabase.from('player_evaluations').insert({
+        match_id: params.matchId || null,
+        lineup_player_id: params.lineupPlayerId || null,
+        match_name: matchName || null,
+        match_date: matchDate || null,
+        age_group: ageGroup || null,
+        first_name: firstName || null,
+        last_name: lastName,
+        jersey_number: jerseyNumber ? parseInt(jerseyNumber) : null,
+        current_club: currentClub || null,
+        positions: positions.join(', ') || null,
+        transfermarkt_url: transfermarktUrl || null,
+        agent_name: agentName || null,
+        birth_date: birthDateFromTM || null,
+        height_m: playerHeightM ? parseFloat(playerHeightM) : null,
+        height_cm: heightCm ? parseInt(heightCm) : null,
+        body_structure: bodyStructure,
+        development_stage: developmentStage || null,
+        adult_body_type: adultBodyType || null,
+        physical_tags: physicalTags.length > 0 ? physicalTags : null,
+        speed_athleticism: speedAthleticism,
+        overall_rating: overallRating,
+        notes: notes || null,
+      });
+      if (error) {
+        Alert.alert('Fehler', error.message);
+      } else {
+        navigation.goBack();
+      }
+    } catch (err: any) {
+      Alert.alert('Fehler', err.message || 'Speichern fehlgeschlagen');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -478,11 +503,12 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
 
           {/* ========== SPEICHERN ========== */}
           <TouchableOpacity
-            style={[styles.saveButton, { backgroundColor: colors.primary }]}
+            style={[styles.saveButton, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1 }]}
             onPress={handleSave}
+            disabled={saving}
           >
             <Text style={[styles.saveButtonText, { color: colors.primaryText }]}>
-              Spieler speichern
+              {saving ? 'Speichert...' : 'Spieler speichern'}
             </Text>
           </TouchableOpacity>
         </ScrollView>
