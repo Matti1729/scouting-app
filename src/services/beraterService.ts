@@ -528,7 +528,6 @@ export async function loadSuggestedPlayers(
   options?: {
     leagueIds?: string[];
     limit?: number;
-    includeOnWatchlist?: boolean;
   }
 ): Promise<PlayerStat[]> {
   const limit = options?.limit || 100;
@@ -623,11 +622,6 @@ export async function loadSuggestedPlayers(
   // Nach aggregiertem stat_value sortieren
   const players = Array.from(aggregatedMap.values())
     .sort((a, b) => b.stat_value - a.stat_value);
-
-  // Standardmäßig bereits auf Watchlist befindliche ausfiltern
-  if (!options?.includeOnWatchlist) {
-    return players.filter(p => !p.is_on_watchlist);
-  }
 
   return players;
 }
