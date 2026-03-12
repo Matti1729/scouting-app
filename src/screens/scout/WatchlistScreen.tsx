@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,6 +12,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Image,
+  TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -21,8 +22,15 @@ import {
   WatchlistEntry,
   BeraterPlayer,
   BeraterChange,
+  PlayerEvaluation,
   removeFromWatchlist,
   loadPlayerHistory,
+  loadAllEvaluations,
+  loadPlayerEvaluation,
+  savePlayerEvaluation,
+  deletePlayerEvaluation,
+  updateEvaluationNotes,
+  updateEvaluationRating,
 } from '../../services/beraterService';
 
 export function WatchlistScreen() {
@@ -45,9 +53,17 @@ export function WatchlistScreen() {
   const [playerHistory, setPlayerHistory] = useState<BeraterChange[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
 
+  // Evaluations
+  const [evaluations, setEvaluations] = useState<Map<string, PlayerEvaluation>>(new Map());
+  const [modalRating, setModalRating] = useState<number | null>(null);
+  const [modalNotes, setModalNotes] = useState('');
+  const [modalEvalStatus, setModalEvalStatus] = useState<'interessant' | 'nicht_interessant' | null>(null);
+  const notesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const fetchData = useCallback(async () => {
-    const data = await loadWatchlist();
+    const [data, evals] = await Promise.all([loadWatchlist(), loadAllEvaluations()]);
     setWatchlist(data);
+    setEvaluations(evals);
     setLoading(false);
   }, []);
 
@@ -179,6 +195,12 @@ export function WatchlistScreen() {
     setPlayerHistory([]);
     setHistoryLoading(true);
 
+    // Bestehende Evaluation laden
+    const existingEval = evaluations.get(player.id);
+    setModalRating(existingEval?.rating ?? null);
+    setModalNotes(existingEval?.notes ?? '');
+    setModalEvalStatus(existingEval?.status ?? null);
+
     const history = await loadPlayerHistory(player.id);
     setPlayerHistory(history);
     setHistoryLoading(false);
@@ -193,6 +215,73 @@ export function WatchlistScreen() {
     }
   };
 
+  const handleEvaluation = async (status: 'interessant' | 'nicht_interessant') => {
+    if (!selectedPlayer) return;
+    if (modalEvalStatus === status) {
+      // Toggle: gleicher Status nochmal → Bewertung entfernen
+      const success = await deletePlayerEvaluation(selectedPlayer.id);
+      if (success) {
+        setEvaluations(prev => {
+          const next = new Map(prev);
+          next.delete(selectedPlayer.id);
+          return next;
+        });
+        setModalEvalStatus(null);
+      }
+    } else {
+      // Neuer Status setzen
+      const success = await savePlayerEvaluation(selectedPlayer.id, status, modalRating, modalNotes || null);
+      if (success) {
+        setEvaluations(prev => {
+          const next = new Map(prev);
+          next.set(selectedPlayer.id, {
+            id: '',
+            player_id: selectedPlayer.id,
+            status,
+            rating: modalRating,
+            notes: modalNotes || null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+          return next;
+        });
+        setModalEvalStatus(status);
+      }
+    }
+    setSelectedPlayer(null);
+  };
+
+  const handleRatingChange = async (rating: number | null) => {
+    setModalRating(rating);
+    if (!selectedPlayer) return;
+    const existing = evaluations.get(selectedPlayer.id);
+    if (existing) {
+      await updateEvaluationRating(selectedPlayer.id, rating);
+      setEvaluations(prev => {
+        const next = new Map(prev);
+        next.set(selectedPlayer.id, { ...existing, rating, updated_at: new Date().toISOString() });
+        return next;
+      });
+    }
+  };
+
+  const handleNotesChange = (text: string) => {
+    setModalNotes(text);
+    if (!selectedPlayer) return;
+    if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
+    notesTimerRef.current = setTimeout(async () => {
+      const existing = evaluations.get(selectedPlayer.id);
+      if (existing) {
+        await updateEvaluationNotes(selectedPlayer.id, text || null);
+        setEvaluations(prev => {
+          const next = new Map(prev);
+          next.set(selectedPlayer.id, { ...existing, notes: text || null, updated_at: new Date().toISOString() });
+          return next;
+        });
+      }
+    }, 800);
+  };
+
   const handleOpenProfile = () => {
     if (selectedPlayer?.tm_profile_url) {
       Linking.openURL(selectedPlayer.tm_profile_url);
@@ -202,6 +291,16 @@ export function WatchlistScreen() {
     }
   };
 
+  // Evaluation color helper
+  const getEvalColor = (playerId: string, isOnWatchlist: boolean): { bg: string; border: string } | null => {
+    // Evaluation-Status hat Vorrang vor Watchlist-Farbe
+    const ev = evaluations.get(playerId);
+    if (ev?.status === 'interessant') return { bg: colors.success + '12', border: colors.success };
+    if (ev?.status === 'nicht_interessant') return { bg: colors.error + '12', border: colors.error };
+    if (isOnWatchlist) return { bg: colors.warning + '12', border: colors.warning };
+    return null;
+  };
+
   // Mobile card
   const renderMobileCard = ({ item }: { item: WatchlistEntry }) => {
     if (!item.player) return null;
@@ -209,10 +308,15 @@ export function WatchlistScreen() {
     const agentLabel = getAgentLabel(player);
     const age = calculateAge(player.birth_date);
     const addedDate = formatDateDE(item.added_at);
+    const evalColor = getEvalColor(player.id, true); // Watchlist items are always on watchlist
 
     return (
       <TouchableOpacity
-        style={[styles.mobileCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+        style={[
+          styles.mobileCard,
+          { backgroundColor: evalColor?.bg || colors.surface, borderColor: colors.border },
+          evalColor && { borderLeftWidth: 3, borderLeftColor: evalColor.border },
+        ]}
         onPress={() => openPlayerDetail(player)}
         activeOpacity={0.7}
       >
@@ -253,10 +357,15 @@ export function WatchlistScreen() {
     const agentLabel = getAgentLabel(player);
     const age = calculateAge(player.birth_date);
     const addedDate = formatDateDE(item.added_at);
+    const evalColor = getEvalColor(player.id, true);
 
     return (
       <TouchableOpacity
-        style={[styles.playerRow, { borderBottomColor: colors.border }]}
+        style={[
+          styles.playerRow,
+          { borderBottomColor: colors.border },
+          evalColor && { backgroundColor: evalColor.bg, borderLeftWidth: 3, borderLeftColor: evalColor.border },
+        ]}
         onPress={() => openPlayerDetail(player)}
         activeOpacity={0.7}
       >
@@ -300,6 +409,7 @@ export function WatchlistScreen() {
     const agentLabel = getAgentLabel(selectedPlayer);
     const age = calculateAge(selectedPlayer.birth_date);
     const sinceDate = formatDateDE(selectedPlayer.agent_since);
+    const ratingOptions: (number | null)[] = [null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 
     return (
       <Modal
@@ -326,7 +436,7 @@ export function WatchlistScreen() {
               <Text style={[styles.closeButtonText, { color: colors.textSecondary }]}>✕</Text>
             </TouchableOpacity>
 
-            <ScrollView bounces={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
+            <ScrollView bounces={false} showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
               <View style={styles.detailTopRow}>
                 <View style={{ flex: 1, marginRight: 12 }}>
                   <Text style={[styles.detailName, { color: colors.text }]}>
@@ -351,20 +461,6 @@ export function WatchlistScreen() {
                       style={styles.tmLogo}
                       resizeMode="contain"
                     />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.watchlistMini,
-                      {
-                        backgroundColor: colors.error + '15',
-                        borderColor: colors.error,
-                      },
-                    ]}
-                    onPress={handleRemoveFromWatchlist}
-                  >
-                    <Text style={[styles.watchlistMiniText, { color: colors.error }]}>
-                      Von Watchlist entfernen
-                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -418,7 +514,90 @@ export function WatchlistScreen() {
                   </ScrollView>
                 )}
               </View>
+
+              {/* Bewertung (1-10) */}
+              <View style={[styles.detailSection, { borderColor: colors.border }]}>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Bewertung</Text>
+                <View style={styles.ratingRow}>
+                  {ratingOptions.map((val) => {
+                    const isActive = modalRating === val;
+                    return (
+                      <TouchableOpacity
+                        key={val === null ? 'none' : val}
+                        style={[
+                          styles.ratingButton,
+                          {
+                            backgroundColor: isActive ? colors.primary : colors.surfaceSecondary,
+                            borderColor: isActive ? colors.primary : colors.border,
+                          },
+                        ]}
+                        onPress={() => handleRatingChange(val)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.ratingButtonText, { color: isActive ? '#fff' : colors.text }]}>
+                          {val === null ? '-' : val}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Notizen */}
+              <View style={[styles.detailSection, { borderColor: colors.border }]}>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Notizen</Text>
+                <TextInput
+                  style={[
+                    styles.notesInput,
+                    {
+                      color: colors.text,
+                      backgroundColor: colors.surfaceSecondary,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  value={modalNotes}
+                  onChangeText={handleNotesChange}
+                  placeholder="Notizen zum Spieler..."
+                  placeholderTextColor={colors.textSecondary}
+                  multiline
+                  numberOfLines={3}
+                  textAlignVertical="top"
+                />
+              </View>
             </ScrollView>
+
+            {/* Eval-Buttons (links unten) */}
+            <View style={[styles.evalButtonRow, { borderTopColor: colors.border }]}>
+              <TouchableOpacity
+                style={[styles.evalButton, modalEvalStatus === 'nicht_interessant'
+                  ? { backgroundColor: colors.error }
+                  : { backgroundColor: colors.border }
+                ]}
+                onPress={() => handleEvaluation('nicht_interessant')}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.evalButtonText, { color: modalEvalStatus === 'nicht_interessant' ? '#fff' : colors.textSecondary }]}>Uninteressant</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.evalButton, modalEvalStatus === 'interessant'
+                  ? { backgroundColor: colors.success }
+                  : { backgroundColor: colors.border }
+                ]}
+                onPress={() => handleEvaluation('interessant')}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.evalButtonText, { color: modalEvalStatus === 'interessant' ? '#fff' : colors.textSecondary }]}>Interessant</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.evalButton, { backgroundColor: colors.error }]}
+                onPress={handleRemoveFromWatchlist}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.evalButtonText, { color: '#fff' }]}>
+                  Entfernen
+                </Text>
+              </TouchableOpacity>
+            </View>
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
@@ -705,15 +884,15 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     padding: 24,
     paddingTop: 50,
-    paddingBottom: 8,
-    maxHeight: '85%',
+    paddingBottom: 0,
+    maxHeight: '92%',
     minWidth: '100%',
   },
   detailSheetDesktop: {
     borderRadius: 16,
     minWidth: 0,
-    width: 480,
-    maxHeight: '80%',
+    width: 680,
+    maxHeight: '90%',
   },
   closeButton: {
     position: 'absolute',
@@ -809,5 +988,56 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 2,
     fontStyle: 'italic',
+  },
+
+  // Rating
+  ratingRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+  ratingButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ratingButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  // Notizen
+  notesInput: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 14,
+    minHeight: 80,
+  },
+
+  // Tinder-Buttons
+  evalButtonRow: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingTop: 12,
+    paddingBottom: 16,
+    borderTopWidth: 1,
+    alignItems: 'center',
+  },
+  evalButton: {
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  evalButtonText: {
+    fontSize: 11,
+    fontWeight: '600',
   },
 });

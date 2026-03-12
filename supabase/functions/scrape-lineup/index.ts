@@ -1926,7 +1926,7 @@ function parseTeamsFromUrlSlug(urlOrPath: string): { home: string; away: string 
     return f.split('-').map(w => {
       if (upperAbbrevs.includes(w.toLowerCase())) return w.toUpperCase()
       if (w.toLowerCase() === 'spvgg') return 'SpVgg'
-      if (/^\d+$/.test(w)) return w + '.'
+      if (/^\d$/.test(w)) return w + '.'
       return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
     }).join(' ').replace(/\s+/g, ' ').trim()
   }

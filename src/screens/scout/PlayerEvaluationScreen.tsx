@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,64 +8,35 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
-  Linking,
   Alert,
+  useWindowDimensions,
 } from 'react-native';
 import { supabase } from '../../config/supabase';
 import { useTheme } from '../../contexts/ThemeContext';
-import { PhysicalTagSelector } from '../../components/PhysicalTagSelector';
-import { DevelopmentStageSelector } from '../../components/DevelopmentStageSelector';
-import { Dropdown } from '../../components/Dropdown';
-import { BodyStructureSelector } from '../../components/BodyStructureSelector';
-import { AdultBodyTypeSelector } from '../../components/AdultBodyTypeSelector';
-import { SpeedAthleticismSelector, createEmptySpeedAthleticismData } from '../../components/SpeedAthleticismSelector';
 import {
-  PhysicalTag,
-  DevelopmentStage,
   AgeGroup,
   Position,
-  POSITION_LABELS,
   BodyStructureData,
-  AdultBodyType,
   SpeedAthleticismData,
 } from '../../types';
-import { createEmptyBodyStructureData, isYouthPlayer } from '../../utils/bodyStructureCalculation';
-
-const POSITIONS: Position[] = ['TW', 'IV', 'LV', 'RV', 'DM', 'ZM', 'LM', 'RM', 'OM', 'LF', 'RF', 'ST'];
-
-const POSITION_OPTIONS = POSITIONS.map(pos => ({
-  value: pos,
-  label: `${pos} - ${POSITION_LABELS[pos]}`,
-}));
-
-// Alter aus Geburtsdatum berechnen (Format: DD.MM.YYYY)
-const calculateAge = (birthDate: string): number | null => {
-  const parts = birthDate.split('.');
-  if (parts.length !== 3) return null;
-  const day = parseInt(parts[0], 10);
-  const month = parseInt(parts[1], 10) - 1;
-  const year = parseInt(parts[2], 10);
-  const birth = new Date(year, month, day);
-  const today = new Date();
-  let age = today.getFullYear() - birth.getFullYear();
-  const monthDiff = today.getMonth() - birth.getMonth();
-  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
-    age--;
-  }
-  return age;
-};
-
-// Geburtsdatum mit Alter formatieren
-const formatBirthDateWithAge = (birthDate: string): string => {
-  const age = calculateAge(birthDate);
-  if (age !== null) {
-    return `${birthDate} (${age})`;
-  }
-  return birthDate;
-};
+import { createEmptyBodyStructureData } from '../../utils/bodyStructureCalculation';
+import { createEmptySpeedAthleticismData } from '../../components/SpeedAthleticismSelector';
+import { EvalHeader } from '../../components/evaluation/EvalHeader';
+import { KoerperCard } from '../../components/evaluation/KoerperCard';
+import { AthletikCard } from '../../components/evaluation/AthletikCard';
+import {
+  savePlayerEvaluation as saveBeraterEval,
+  deletePlayerEvaluation as deleteBeraterEval,
+  loadPlayerEvaluation as loadBeraterEval,
+  addToWatchlist,
+  removeFromWatchlist,
+  isOnWatchlist,
+} from '../../services/beraterService';
 
 export function PlayerEvaluationScreen({ navigation, route }: any) {
   const { colors } = useTheme();
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
 
   // Params vom vorherigen Screen
   const params = route?.params || {};
@@ -82,107 +53,185 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
 
   const parsedName = parsePlayerName(params.playerName);
 
-  // Event-Daten (Partie/Turnier) - aus Navigation oder manuell
-  const [matchName, setMatchName] = useState(params.matchName || '');
-  const [matchDate, setMatchDate] = useState(params.matchDate || '');
-  const [ageGroup, setAgeGroup] = useState<AgeGroup>(
-    (params.mannschaft as AgeGroup) || 'U15'
-  );
+  // Event-Daten (aus Navigation)
+  const [matchName] = useState(params.matchName || '');
+  const [matchDate] = useState(params.matchDate || '');
+  const [ageGroup] = useState<AgeGroup>((params.mannschaft as AgeGroup) || 'U15');
 
-  // Spielerdaten - aus Navigation übernehmen
-  const [lastName, setLastName] = useState(parsedName.lastName);
-  const [firstName, setFirstName] = useState(parsedName.firstName);
-  const [jerseyNumber, setJerseyNumber] = useState(params.playerNumber || '');
-  const [currentClub, setCurrentClub] = useState(params.playerClub || '');
+  // Spielerdaten
+  const [lastName] = useState(parsedName.lastName);
+  const [firstName] = useState(parsedName.firstName);
+  const [jerseyNumber] = useState(params.playerNumber?.toString() || '');
+  const [currentClub] = useState(params.playerClub || '');
   const [positions, setPositions] = useState<Position[]>(
     params.playerPosition ? [params.playerPosition as Position] : []
   );
   const transfermarktUrl = params.transfermarktUrl || '';
   const agentName = params.agentName || '';
-  const birthDateFromTM = params.playerBirthDate || ''; // Vollständiges Geburtsdatum von TM
+  const birthDateFromTM = params.playerBirthDate || '';
 
-  // Größe für Körperbau (in Metern, z.B. "1.75")
-  const heightFromTM = params.playerHeight || ''; // Größe von Transfermarkt (in cm oder m)
-  const [playerHeightM, setPlayerHeightM] = useState(() => {
-    // Konvertiere von cm zu m wenn nötig
-    if (heightFromTM) {
-      const num = parseFloat(heightFromTM.replace(',', '.'));
-      if (!isNaN(num)) {
-        // Wenn > 3, ist es wahrscheinlich in cm
-        return num > 3 ? (num / 100).toFixed(2) : num.toFixed(2);
-      }
-    }
-    return '';
-  });
-
-  // Körperbau für Jugendspieler (Entwicklungszustand)
+  // Körperbau
   const [bodyStructure, setBodyStructure] = useState<BodyStructureData>(
     createEmptyBodyStructureData()
   );
-
-  // Körpertyp für Erwachsene
-  const [adultBodyType, setAdultBodyType] = useState<AdultBodyType | null>(null);
-
-  // Geburtsjahr aus Datum extrahieren (für Jugend/Erwachsen-Unterscheidung)
-  const birthYear = useMemo(() => {
-    if (birthDateFromTM) {
-      // Format: DD.MM.YYYY
-      const parts = birthDateFromTM.split('.');
-      if (parts.length === 3) {
-        return parseInt(parts[2], 10);
-      }
-    }
-    return null;
-  }, [birthDateFromTM]);
-
-  // Prüfen ob Jugendspieler (noch U19-berechtigt)
-  const isYouth = useMemo(() => {
-    if (birthYear) {
-      return isYouthPlayer(birthYear);
-    }
-    // Wenn kein Geburtsjahr bekannt, default zu Jugend
-    return true;
-  }, [birthYear]);
-
-  // Spieleralter berechnen (für Körperbau-Prognose bei Jugendspielern)
-  const playerAge = useMemo(() => {
-    if (birthDateFromTM) {
-      return calculateAge(birthDateFromTM);
-    }
-    return null;
-  }, [birthDateFromTM]);
 
   // Schnelligkeit & Athletik
   const [speedAthleticism, setSpeedAthleticism] = useState<SpeedAthleticismData>(
     createEmptySpeedAthleticismData()
   );
 
-  // Körperliche Daten
-  const [heightCm, setHeightCm] = useState('');
-  const [developmentStage, setDevelopmentStage] = useState<DevelopmentStage>('im_wachstumsschub');
-  const [physicalTags, setPhysicalTags] = useState<PhysicalTag[]>([]);
-
   // Bewertung
-  const [overallRating, setOverallRating] = useState(5);
+  const [overallRating, setOverallRating] = useState(0);
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [existingId, setExistingId] = useState<string | null>(null);
 
-  const handleTagToggle = (tag: PhysicalTag) => {
-    setPhysicalTags((prev) =>
-      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag]
-    );
+  // Felder die nicht mehr im UI sind, aber beim Laden erhalten bleiben
+  const [preservedFields, setPreservedFields] = useState<Record<string, any>>({});
+
+  // Berater-Evaluation + Watchlist Status
+  const [beraterPlayerId, setBeraterPlayerId] = useState<string>(params.beraterPlayerId || '');
+  const [beraterEvalStatus, setBeraterEvalStatus] = useState<'interessant' | 'nicht_interessant' | null>(null);
+  const [onWatchlist, setOnWatchlist] = useState(false);
+
+  // Bestehende Bewertung laden
+  useEffect(() => {
+    const loadExisting = async () => {
+      if (!params.matchId || !parsedName.lastName) {
+        setIsLoading(false);
+        return;
+      }
+      try {
+        let query = supabase
+          .from('player_evaluations')
+          .select('*')
+          .eq('match_id', params.matchId)
+          .eq('last_name', parsedName.lastName);
+        if (parsedName.firstName) {
+          query = query.eq('first_name', parsedName.firstName);
+        } else {
+          query = query.is('first_name', null);
+        }
+        const { data } = await query.maybeSingle();
+        if (data) {
+          setExistingId(data.id);
+          if (data.positions) setPositions(data.positions.split(', ').filter(Boolean) as Position[]);
+          if (data.body_structure) setBodyStructure(data.body_structure);
+          if (data.speed_athleticism) setSpeedAthleticism(data.speed_athleticism);
+          if (data.overall_rating != null) setOverallRating(data.overall_rating);
+          if (data.notes) setNotes(data.notes);
+          // Felder erhalten die nicht mehr im UI sind
+          setPreservedFields({
+            height_m: data.height_m,
+            height_cm: data.height_cm,
+            development_stage: data.development_stage,
+            adult_body_type: data.adult_body_type,
+            physical_tags: data.physical_tags,
+          });
+        }
+      } catch (err) {
+        console.error('Error loading existing evaluation:', err);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadExisting();
+  }, []);
+
+  // Berater-Status laden
+  useEffect(() => {
+    if (!beraterPlayerId) return;
+    const loadBeraterStatus = async () => {
+      const [eval_, wl] = await Promise.all([
+        loadBeraterEval(beraterPlayerId),
+        isOnWatchlist(beraterPlayerId),
+      ]);
+      if (eval_) setBeraterEvalStatus(eval_.status);
+      setOnWatchlist(wl);
+    };
+    loadBeraterStatus();
+  }, [beraterPlayerId]);
+
+  // Berater-Spieler suchen oder on-demand erstellen
+  const ensureBeraterPlayer = async (): Promise<string | null> => {
+    if (beraterPlayerId) return beraterPlayerId;
+
+    // 1. Per TM-URL suchen
+    if (transfermarktUrl) {
+      const { data: byUrl } = await supabase
+        .from('berater_players')
+        .select('id')
+        .eq('tm_profile_url', transfermarktUrl)
+        .maybeSingle();
+      if (byUrl) {
+        setBeraterPlayerId(byUrl.id);
+        return byUrl.id;
+      }
+    }
+
+    // 2. Per Name suchen
+    const playerName = [firstName, lastName].filter(Boolean).join(' ');
+    if (playerName) {
+      const { data: byName } = await supabase
+        .from('berater_players')
+        .select('id')
+        .ilike('player_name', playerName)
+        .maybeSingle();
+      if (byName) {
+        setBeraterPlayerId(byName.id);
+        return byName.id;
+      }
+    }
+
+    // 3. Neuen Spieler anlegen
+    const { data: newPlayer, error } = await supabase
+      .from('berater_players')
+      .insert({
+        player_name: playerName || lastName,
+        tm_profile_url: transfermarktUrl || null,
+        tm_player_id: null,
+        birth_date: birthDateFromTM || null,
+        position: positions[0] || null,
+        is_active: true,
+        has_agent: false,
+      })
+      .select('id')
+      .single();
+
+    if (error) {
+      console.error('Error creating berater player:', error);
+      return null;
+    }
+    setBeraterPlayerId(newPlayer.id);
+    return newPlayer.id;
   };
 
-  const handlePositionToggle = (pos: Position) => {
-    setPositions((prev) =>
-      prev.includes(pos) ? prev.filter((p) => p !== pos) : [...prev, pos]
-    );
+  const handleBeraterEvaluation = async (status: 'interessant' | 'nicht_interessant') => {
+    if (beraterEvalStatus === status) {
+      if (!beraterPlayerId) return;
+      const success = await deleteBeraterEval(beraterPlayerId);
+      if (success) setBeraterEvalStatus(null);
+    } else {
+      const playerId = await ensureBeraterPlayer();
+      if (!playerId) return;
+      const success = await saveBeraterEval(playerId, status);
+      if (success) setBeraterEvalStatus(status);
+    }
   };
 
-  // Positionen als Text (für Anzeige)
-  const positionsText = positions.length > 0
-    ? positions.map(p => POSITION_LABELS[p]).join(', ')
-    : 'Position wählen';
+  const handleWatchlistToggle = async () => {
+    if (onWatchlist) {
+      if (!beraterPlayerId) return;
+      const success = await removeFromWatchlist(beraterPlayerId);
+      if (success) setOnWatchlist(false);
+    } else {
+      const playerId = await ensureBeraterPlayer();
+      if (!playerId) return;
+      const success = await addToWatchlist(playerId);
+      if (success) setOnWatchlist(true);
+    }
+  };
 
   const handleSave = async () => {
     if (!lastName.trim()) {
@@ -191,7 +240,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
     }
     setSaving(true);
     try {
-      const { error } = await supabase.from('player_evaluations').insert({
+      const evalData: Record<string, any> = {
         match_id: params.matchId || null,
         lineup_player_id: params.lineupPlayerId || null,
         match_name: matchName || null,
@@ -205,15 +254,19 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         transfermarkt_url: transfermarktUrl || null,
         agent_name: agentName || null,
         birth_date: birthDateFromTM || null,
-        height_m: playerHeightM ? parseFloat(playerHeightM) : null,
-        height_cm: heightCm ? parseInt(heightCm) : null,
+        height_m: preservedFields.height_m ?? null,
+        height_cm: preservedFields.height_cm ?? null,
         body_structure: bodyStructure,
-        development_stage: developmentStage || null,
-        adult_body_type: adultBodyType || null,
-        physical_tags: physicalTags.length > 0 ? physicalTags : null,
+        development_stage: preservedFields.development_stage ?? null,
+        adult_body_type: preservedFields.adult_body_type ?? null,
+        physical_tags: preservedFields.physical_tags ?? null,
         speed_athleticism: speedAthleticism,
-        overall_rating: overallRating,
+        overall_rating: overallRating || null,
         notes: notes || null,
+      };
+      if (existingId) evalData.id = existingId;
+      const { error } = await supabase.from('player_evaluations').upsert(evalData, {
+        onConflict: 'match_id,last_name,first_name',
       });
       if (error) {
         Alert.alert('Fehler', error.message);
@@ -229,261 +282,69 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
 
   return (
     <View style={styles.modalOverlay}>
-      <View style={[styles.modalContainer, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-        {/* Modal Header */}
-        <View style={[styles.modalHeader, { borderBottomColor: colors.border }]}>
-          <TouchableOpacity
-            style={styles.backButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Text style={[styles.backButtonText, { color: colors.textSecondary }]}>←</Text>
-            <Text style={[styles.backButtonLabel, { color: colors.textSecondary }]}>Aufstellung</Text>
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Spieler bewerten</Text>
-          <TouchableOpacity
-            style={styles.closeButton}
-            onPress={() => navigation.goBack()}
-          >
-            <Text style={[styles.closeButtonText, { color: colors.textSecondary }]}>✕</Text>
-          </TouchableOpacity>
-        </View>
-
+      <View style={[styles.modalContainer, { backgroundColor: colors.background, borderColor: colors.border }]}>
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
-        <ScrollView
-          style={styles.scrollView}
-          contentContainerStyle={styles.content}
-          keyboardShouldPersistTaps="handled"
-        >
-          {/* ========== SPIELERDATEN (OBEN) ========== */}
-          <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            {/* Event-Header: Altersklasse | Partie | Datum */}
-            <View style={styles.eventHeader}>
-              {/* Links: Altersklasse (vom Event, nicht editierbar) */}
-              <View style={[styles.ageGroupBadge, { backgroundColor: colors.primary }]}>
-                <Text style={[styles.ageGroupText, { color: colors.primaryText }]}>{ageGroup}</Text>
-              </View>
+          <ScrollView
+            style={styles.flex}
+            contentContainerStyle={styles.content}
+            keyboardShouldPersistTaps="handled"
+          >
+            {/* Header Card */}
+            <EvalHeader
+              jerseyNumber={jerseyNumber}
+              firstName={firstName}
+              lastName={lastName}
+              currentClub={currentClub}
+              ageGroup={ageGroup}
+              birthDate={birthDateFromTM}
+              positions={positions}
+              onPositionsChange={setPositions}
+              matchName={matchName}
+              matchDate={matchDate}
+              overallRating={overallRating}
+              onRatingChange={setOverallRating}
+              onClose={() => navigation.goBack()}
+              transfermarktUrl={transfermarktUrl}
+              agentName={agentName}
+            />
 
-              {/* Mitte: Partie/Spielname */}
-              <TextInput
-                style={[styles.matchNameInput, { color: colors.text }]}
-                value={matchName}
-                onChangeText={setMatchName}
-                placeholder="Partie / Turnier"
-                placeholderTextColor={colors.textSecondary}
+            {/* Körper + Athletik Cards */}
+            <View style={isMobile ? styles.cardsColumn : styles.cardsRow}>
+              <KoerperCard
+                relativeHeight={bodyStructure.relativeHeight}
+                onRelativeHeightChange={(v) => setBodyStructure(prev => ({ ...prev, relativeHeight: v }))}
+                proportion={bodyStructure.proportion}
+                onProportionChange={(v) => setBodyStructure(prev => ({ ...prev, proportion: v }))}
+                pelvis={bodyStructure.pelvis}
+                onPelvisChange={(v) => setBodyStructure(prev => ({ ...prev, pelvis: v }))}
+                shoulderLine={bodyStructure.shoulderLine}
+                onShoulderLineChange={(v) => setBodyStructure(prev => ({ ...prev, shoulderLine: v }))}
+                musculature={bodyStructure.musculature}
+                onMusculatureChange={(v) => setBodyStructure(prev => ({ ...prev, musculature: v }))}
               />
-
-              {/* Rechts: Datum */}
-              <TextInput
-                style={[styles.matchDateInput, { color: colors.textSecondary }]}
-                value={matchDate}
-                onChangeText={setMatchDate}
-                placeholder="Datum"
-                placeholderTextColor={colors.textSecondary}
+              <AthletikCard
+                antritt={speedAthleticism.antritt}
+                onAntrittChange={(v) => setSpeedAthleticism(prev => ({ ...prev, antritt: v }))}
+                endspeed={speedAthleticism.endspeed}
+                onEndspeedChange={(v) => setSpeedAthleticism(prev => ({ ...prev, endspeed: v }))}
+                beweglichkeit={speedAthleticism.beweglichkeit}
+                onBeweglichkeitChange={(v) => setSpeedAthleticism(prev => ({ ...prev, beweglichkeit: v }))}
+                koordination={speedAthleticism.koordination}
+                onKoordinationChange={(v) => setSpeedAthleticism(prev => ({ ...prev, koordination: v }))}
+                intensitaet={speedAthleticism.intensitaet}
+                onIntensitaetChange={(v) => setSpeedAthleticism(prev => ({ ...prev, intensitaet: v }))}
               />
             </View>
 
-            {/* Trennlinie */}
-            <View style={[styles.divider, { backgroundColor: colors.border }]} />
-
-            {/* Spieler-Info Zeile */}
-            <View style={styles.playerHeader}>
-              {/* Links: Nummer */}
+            {/* Scouting Report */}
+            <View style={[styles.reportCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+              <Text style={[styles.reportLabel, { color: colors.textSecondary }]}>SCOUTING REPORT</Text>
               <TextInput
                 style={[
-                  styles.jerseyNumberInput,
-                  {
-                    backgroundColor: colors.inputBackground,
-                    borderColor: colors.inputBorder,
-                    color: colors.text,
-                  },
-                ]}
-                value={jerseyNumber}
-                onChangeText={setJerseyNumber}
-                placeholder="#"
-                placeholderTextColor={colors.textSecondary}
-                keyboardType="numeric"
-                maxLength={2}
-              />
-
-              {/* Mitte: Name + Position */}
-              <View style={styles.playerInfo}>
-                <View style={styles.nameRow}>
-                  <TextInput
-                    style={[styles.nameInput, { color: colors.text }]}
-                    value={lastName}
-                    onChangeText={setLastName}
-                    placeholder="Name"
-                    placeholderTextColor={colors.textSecondary}
-                  />
-                  <Text style={[styles.nameComma, { color: colors.text }]}>, </Text>
-                  <TextInput
-                    style={[styles.nameInput, { color: colors.text }]}
-                    value={firstName}
-                    onChangeText={setFirstName}
-                    placeholder="Vorname"
-                    placeholderTextColor={colors.textSecondary}
-                  />
-                </View>
-                <Text style={[styles.positionText, { color: colors.textSecondary }]}>
-                  {positionsText}
-                </Text>
-              </View>
-
-              {/* Rechts: Verein + TM-Link */}
-              <View style={styles.clubContainer}>
-                <View style={[styles.clubBox, { borderColor: colors.border }]}>
-                  <TextInput
-                    style={[styles.clubInput, { color: colors.text }]}
-                    value={currentClub}
-                    onChangeText={setCurrentClub}
-                    placeholder="Verein"
-                    placeholderTextColor={colors.textSecondary}
-                  />
-                </View>
-                {transfermarktUrl ? (
-                  <TouchableOpacity
-                    style={[styles.tmLinkButton, { backgroundColor: colors.surfaceSecondary }]}
-                    onPress={() => Linking.openURL(transfermarktUrl)}
-                  >
-                    <Text style={[styles.tmLinkText, { color: colors.primary }]}>TM</Text>
-                  </TouchableOpacity>
-                ) : null}
-              </View>
-            </View>
-
-            {/* Berater-Info */}
-            {agentName ? (
-              <View style={styles.agentRow}>
-                <Text style={[styles.agentLabel, { color: colors.textSecondary }]}>Berater:</Text>
-                <Text style={[styles.agentName, { color: colors.primary }]}>{agentName}</Text>
-              </View>
-            ) : null}
-
-            {/* Geburtsdatum von Transfermarkt */}
-            {birthDateFromTM ? (
-              <View style={styles.agentRow}>
-                <Text style={[styles.agentLabel, { color: colors.textSecondary }]}>Geburtsdatum:</Text>
-                <Text style={[styles.birthDateText, { color: colors.text }]}>{formatBirthDateWithAge(birthDateFromTM)}</Text>
-              </View>
-            ) : null}
-
-            {/* Trennlinie */}
-            <View style={[styles.divider, { backgroundColor: colors.border }]} />
-
-            {/* Position Auswahl */}
-            <Dropdown
-              label="Position"
-              options={POSITION_OPTIONS}
-              value={positions}
-              onChange={(val) => setPositions(val as Position[])}
-              placeholder="Position wählen"
-              multiSelect
-            />
-          </View>
-
-          {/* ========== KÖRPERBAU / ENTWICKLUNGSZUSTAND ========== */}
-          <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.sectionHeader, { color: colors.text }]}>
-              {isYouth ? 'Körperliche Entwicklungszustand' : 'Körperbau'}
-            </Text>
-
-            {isYouth ? (
-              /* Jugendspieler: Vollständige Entwicklungsprognose */
-              <>
-                {/* Größe in Metern */}
-                <View style={styles.inputGroup}>
-                  <Text style={[styles.label, { color: colors.textSecondary }]}>Größe (m)</Text>
-                  <TextInput
-                    style={[
-                      styles.input,
-                      {
-                        backgroundColor: colors.inputBackground,
-                        borderColor: colors.inputBorder,
-                        color: colors.text,
-                        maxWidth: 120,
-                      },
-                    ]}
-                    value={playerHeightM}
-                    onChangeText={setPlayerHeightM}
-                    placeholder="z.B. 1.75"
-                    placeholderTextColor={colors.textSecondary}
-                    keyboardType="decimal-pad"
-                    maxLength={4}
-                  />
-                </View>
-
-                <BodyStructureSelector
-                  data={bodyStructure}
-                  onChange={setBodyStructure}
-                  playerAge={playerAge}
-                />
-              </>
-            ) : (
-              /* Erwachsene: Vereinfachter Körperbau ohne Prognose */
-              <AdultBodyTypeSelector
-                heightM={playerHeightM}
-                onHeightChange={setPlayerHeightM}
-                bodyType={adultBodyType}
-                onBodyTypeChange={setAdultBodyType}
-              />
-            )}
-          </View>
-
-          {/* ========== SCHNELLIGKEIT & ATHLETIK ========== */}
-          <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.sectionHeader, { color: colors.text }]}>
-              Schnelligkeit & Athletik
-            </Text>
-            <SpeedAthleticismSelector
-              data={speedAthleticism}
-              onChange={setSpeedAthleticism}
-            />
-          </View>
-
-          {/* ========== BEWERTUNG ========== */}
-          <View style={[styles.section, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <Text style={[styles.sectionHeader, { color: colors.text }]}>
-              Gesamtbewertung
-            </Text>
-
-            {/* Rating 1-10 */}
-            <View style={styles.ratingContainer}>
-              <Text style={[styles.ratingValue, { color: colors.primary }]}>{overallRating}</Text>
-              <View style={styles.ratingButtons}>
-                {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((num) => (
-                  <TouchableOpacity
-                    key={num}
-                    style={[
-                      styles.ratingButton,
-                      {
-                        backgroundColor: overallRating === num ? colors.primary : colors.surfaceSecondary,
-                        borderColor: overallRating === num ? colors.primary : colors.border,
-                      },
-                    ]}
-                    onPress={() => setOverallRating(num)}
-                  >
-                    <Text
-                      style={[
-                        styles.ratingButtonText,
-                        { color: overallRating === num ? colors.primaryText : colors.text },
-                      ]}
-                    >
-                      {num}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            {/* Notizen */}
-            <View style={styles.inputGroup}>
-              <Text style={[styles.label, { color: colors.textSecondary }]}>Notizen</Text>
-              <TextInput
-                style={[
-                  styles.textArea,
+                  styles.reportTextArea,
                   {
                     backgroundColor: colors.inputBackground,
                     borderColor: colors.inputBorder,
@@ -492,27 +353,69 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                 ]}
                 value={notes}
                 onChangeText={setNotes}
-                placeholder="Stärken, Schwächen, Beobachtungen..."
+                placeholder="Detaillierte Beobachtungen..."
                 placeholderTextColor={colors.textSecondary}
                 multiline
-                numberOfLines={4}
+                numberOfLines={6}
                 textAlignVertical="top"
               />
             </View>
-          </View>
 
-          {/* ========== SPEICHERN ========== */}
-          <TouchableOpacity
-            style={[styles.saveButton, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1 }]}
-            onPress={handleSave}
-            disabled={saving}
-          >
-            <Text style={[styles.saveButtonText, { color: colors.primaryText }]}>
-              {saving ? 'Speichert...' : 'Spieler speichern'}
-            </Text>
-          </TouchableOpacity>
-        </ScrollView>
-      </KeyboardAvoidingView>
+          </ScrollView>
+          {/* Fixed bottom bar */}
+          <View style={[styles.bottomBar, { borderTopColor: colors.border }]}>
+            <View style={styles.evalButtons}>
+              <TouchableOpacity
+                style={[
+                  styles.evalButton,
+                  beraterEvalStatus === 'nicht_interessant'
+                    ? { backgroundColor: colors.error }
+                    : { backgroundColor: colors.border },
+                ]}
+                onPress={() => handleBeraterEvaluation('nicht_interessant')}
+              >
+                <Text style={[styles.evalButtonText, { color: beraterEvalStatus === 'nicht_interessant' ? '#fff' : colors.textSecondary }]}>
+                  Uninteressant
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.evalButton,
+                  beraterEvalStatus === 'interessant'
+                    ? { backgroundColor: colors.success }
+                    : { backgroundColor: colors.border },
+                ]}
+                onPress={() => handleBeraterEvaluation('interessant')}
+              >
+                <Text style={[styles.evalButtonText, { color: beraterEvalStatus === 'interessant' ? '#fff' : colors.textSecondary }]}>
+                  Interessant
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.evalButton,
+                  onWatchlist
+                    ? { backgroundColor: colors.warning }
+                    : { backgroundColor: colors.border },
+                ]}
+                onPress={handleWatchlistToggle}
+              >
+                <Text style={[styles.evalButtonText, { color: onWatchlist ? '#fff' : colors.textSecondary }]}>
+                  Watchlist
+                </Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={[styles.saveButton, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1 }]}
+              onPress={handleSave}
+              disabled={saving}
+            >
+              <Text style={[styles.saveButtonText, { color: colors.primaryText }]}>
+                {saving ? 'Speichert...' : 'Änderungen speichern'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </KeyboardAvoidingView>
       </View>
     </View>
   );
@@ -522,238 +425,68 @@ const styles = StyleSheet.create({
   flex: {
     flex: 1,
   },
-  scrollView: {
-    flex: 1,
-  },
   content: {
     padding: 16,
     gap: 16,
     paddingBottom: 40,
   },
-  section: {
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
+  cardsRow: {
+    flexDirection: 'row',
     gap: 16,
   },
-  sectionHeader: {
-    fontSize: 18,
-    fontWeight: '700',
-    marginBottom: 4,
+  cardsColumn: {
+    flexDirection: 'column',
+    gap: 16,
   },
-  row: {
-    flexDirection: 'row',
+  reportCard: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16,
     gap: 12,
   },
-  inputGroup: {
+  reportLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    letterSpacing: 1,
+  },
+  reportTextArea: {
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 15,
+    minHeight: 140,
+  },
+  bottomBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderTopWidth: 1,
+  },
+  evalButtons: {
+    flexDirection: 'row',
     gap: 6,
   },
-  label: {
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-  },
-  textArea: {
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
-    minHeight: 100,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
-  },
-  chip: {
+  evalButton: {
+    paddingVertical: 7,
     paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
+    borderRadius: 6,
   },
-  chipText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  hint: {
-    fontSize: 12,
-    marginTop: 4,
-  },
-  tagsSection: {
-    marginTop: 8,
-  },
-  ratingContainer: {
-    alignItems: 'center',
-    gap: 12,
-  },
-  ratingValue: {
-    fontSize: 48,
-    fontWeight: '700',
-  },
-  ratingButtons: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  ratingButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  ratingButtonText: {
-    fontSize: 16,
+  evalButtonText: {
+    fontSize: 11,
     fontWeight: '600',
   },
   saveButton: {
-    padding: 16,
-    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 6,
     alignItems: 'center',
-    marginTop: 8,
   },
   saveButtonText: {
-    fontSize: 16,
+    fontSize: 11,
     fontWeight: '600',
   },
-  // Spieler Header Styles
-  playerHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  jerseyNumberInput: {
-    width: 50,
-    height: 50,
-    borderRadius: 8,
-    borderWidth: 1,
-    fontSize: 18,
-    fontWeight: '700',
-    textAlign: 'center',
-  },
-  playerInfo: {
-    flex: 1,
-    gap: 2,
-  },
-  nameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  nameInput: {
-    fontSize: 17,
-    fontWeight: '600',
-    padding: 0,
-    minWidth: 60,
-  },
-  nameComma: {
-    fontSize: 17,
-    fontWeight: '600',
-  },
-  birthInput: {
-    fontSize: 14,
-    padding: 0,
-  },
-  clubBox: {
-    borderWidth: 1,
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    minWidth: 80,
-  },
-  clubInput: {
-    fontSize: 14,
-    fontWeight: '500',
-    textAlign: 'center',
-    padding: 0,
-  },
-  clubContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  tmLinkButton: {
-    paddingHorizontal: 10,
-    paddingVertical: 8,
-    borderRadius: 6,
-  },
-  tmLinkText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  agentRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 8,
-    gap: 6,
-  },
-  agentLabel: {
-    fontSize: 12,
-  },
-  agentName: {
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  birthDateText: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  // Event Header Styles
-  eventHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: 12,
-  },
-  ageGroupBadge: {
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 6,
-  },
-  ageGroupText: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  matchNameInput: {
-    flex: 1,
-    fontSize: 16,
-    fontWeight: '600',
-    textAlign: 'center',
-    padding: 0,
-  },
-  matchDateInput: {
-    fontSize: 14,
-    textAlign: 'right',
-    padding: 0,
-    minWidth: 80,
-  },
-  divider: {
-    height: 1,
-    marginVertical: 12,
-  },
-  positionText: {
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  birthInline: {
-    fontSize: 15,
-    fontWeight: '400',
-  },
-  // Dropdown Layout
-  dropdownRow: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  dropdownHalf: {
-    flex: 1,
-  },
-  // Modal Styles
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -768,43 +501,5 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     overflow: 'hidden',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderBottomWidth: 1,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    flex: 1,
-    textAlign: 'center',
-  },
-  closeButton: {
-    padding: 4,
-    width: 100,
-    alignItems: 'flex-end',
-  },
-  closeButtonText: {
-    fontSize: 24,
-    fontWeight: '300',
-  },
-  backButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 4,
-    gap: 6,
-    width: 100,
-  },
-  backButtonText: {
-    fontSize: 20,
-    fontWeight: '400',
-  },
-  backButtonLabel: {
-    fontSize: 14,
-    fontWeight: '500',
   },
 });

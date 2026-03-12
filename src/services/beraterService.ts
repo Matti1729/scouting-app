@@ -83,6 +83,16 @@ export interface WatchlistEntry {
   player?: BeraterPlayer;
 }
 
+export interface PlayerEvaluation {
+  id: string;
+  player_id: string;
+  status: 'interessant' | 'nicht_interessant';
+  rating: number | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export type AgentFilter = 'all' | 'without_agent';
 export type AgeFilter = string; // 'all' | 'herren' | 'younger' | '2007' | '2008' | '2009' | '2010'
 
@@ -819,4 +829,226 @@ export async function addStatPlayerToWatchlist(stat: PlayerStat, notes?: string)
     console.error('Error adding stat player to watchlist:', error);
     return false;
   }
+}
+
+// ============================================================================
+// SPIELER-BEWERTUNGEN (Evaluations)
+// ============================================================================
+
+/**
+ * Speichert eine Spielerbewertung (Upsert: erstellt oder aktualisiert)
+ */
+export async function savePlayerEvaluation(
+  playerId: string,
+  status: 'interessant' | 'nicht_interessant',
+  rating?: number | null,
+  notes?: string | null
+): Promise<boolean> {
+  const { error } = await supabase
+    .from('berater_player_evaluations')
+    .upsert(
+      {
+        player_id: playerId,
+        status,
+        rating: rating ?? null,
+        notes: notes ?? null,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: 'player_id' }
+    );
+
+  if (error) {
+    console.error('Error saving evaluation:', error);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Lädt die Bewertung eines einzelnen Spielers
+ */
+export async function loadPlayerEvaluation(playerId: string): Promise<PlayerEvaluation | null> {
+  const { data, error } = await supabase
+    .from('berater_player_evaluations')
+    .select('*')
+    .eq('player_id', playerId)
+    .maybeSingle();
+
+  if (error) {
+    console.error('Error loading evaluation:', error);
+    return null;
+  }
+  return data;
+}
+
+/**
+ * Lädt alle Bewertungen als Map<player_id, PlayerEvaluation> für Listen-Einfärbung
+ */
+export async function loadAllEvaluations(): Promise<Map<string, PlayerEvaluation>> {
+  const { data, error } = await supabase
+    .from('berater_player_evaluations')
+    .select('*');
+
+  if (error) {
+    console.error('Error loading evaluations:', error);
+    return new Map();
+  }
+
+  const map = new Map<string, PlayerEvaluation>();
+  for (const ev of data || []) {
+    map.set(ev.player_id, ev);
+  }
+  return map;
+}
+
+/**
+ * Aktualisiert nur die Notizen einer bestehenden Bewertung
+ */
+export async function updateEvaluationNotes(playerId: string, notes: string | null): Promise<boolean> {
+  const { error } = await supabase
+    .from('berater_player_evaluations')
+    .update({ notes, updated_at: new Date().toISOString() })
+    .eq('player_id', playerId);
+
+  if (error) {
+    console.error('Error updating notes:', error);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Aktualisiert nur das Rating einer bestehenden Bewertung
+ */
+export async function updateEvaluationRating(playerId: string, rating: number | null): Promise<boolean> {
+  const { error } = await supabase
+    .from('berater_player_evaluations')
+    .update({ rating, updated_at: new Date().toISOString() })
+    .eq('player_id', playerId);
+
+  if (error) {
+    console.error('Error updating rating:', error);
+    return false;
+  }
+  return true;
+}
+
+export async function deletePlayerEvaluation(playerId: string): Promise<boolean> {
+  const { error } = await supabase
+    .from('berater_player_evaluations')
+    .delete()
+    .eq('player_id', playerId);
+
+  if (error) {
+    console.error('Error deleting evaluation:', error);
+    return false;
+  }
+  return true;
+}
+
+// ============================================================================
+// LINEUP-INTEGRATION: Berater-Status für Aufstellungsspieler laden
+// ============================================================================
+
+interface LineupPlayerInput {
+  id: string;
+  name: string;
+  vorname: string;
+  transfermarkt_url?: string;
+}
+
+export interface BeraterStatusResult {
+  status: 'interessant' | 'nicht_interessant' | 'watchlist';
+  beraterPlayerId: string;
+}
+
+/**
+ * Lädt Berater-Evaluierungen + Watchlist und matcht sie gegen Lineup-Spieler.
+ * Matching: 1. Transfermarkt-URL, 2. Nachname
+ */
+export async function loadBeraterStatusForLineup(
+  players: LineupPlayerInput[]
+): Promise<Map<string, BeraterStatusResult>> {
+  const result = new Map<string, BeraterStatusResult>();
+  if (players.length === 0) return result;
+
+  // Alle Evaluierungen mit Spielerdaten laden
+  const { data: evals } = await supabase
+    .from('berater_player_evaluations')
+    .select('player_id, status, berater_players(player_name, tm_profile_url)');
+
+  // Alle Watchlist-Einträge mit Spielerdaten laden
+  const { data: watchlist } = await supabase
+    .from('berater_watchlist')
+    .select('player_id, berater_players(player_name, tm_profile_url)');
+
+  // Berater-Spieler-Daten indexieren: tm_url → { beraterPlayerId, status }
+  type StatusEntry = { beraterPlayerId: string; status: 'interessant' | 'nicht_interessant' | 'watchlist' };
+  const byTmUrl = new Map<string, StatusEntry>();
+  const byLastName = new Map<string, StatusEntry>();
+  const byFullName = new Map<string, StatusEntry>();
+
+  const indexPlayer = (bp: any, entry: StatusEntry, overwrite: boolean) => {
+    if (bp.tm_profile_url) {
+      if (overwrite || !byTmUrl.has(bp.tm_profile_url)) {
+        byTmUrl.set(bp.tm_profile_url, entry);
+      }
+    }
+    if (bp.player_name) {
+      const normalized = bp.player_name.trim().toLowerCase();
+      if (overwrite || !byFullName.has(normalized)) {
+        byFullName.set(normalized, entry);
+      }
+      // Nachname extrahieren (player_name kann "Vorname Nachname" sein)
+      const parts = normalized.split(/\s+/);
+      const lastName = parts[parts.length - 1];
+      if (overwrite || !byLastName.has(lastName)) {
+        byLastName.set(lastName, entry);
+      }
+    }
+  };
+
+  // Evaluierungen indexieren (Priorität über Watchlist)
+  for (const ev of evals || []) {
+    const bp = (ev as any).berater_players;
+    if (!bp) continue;
+    indexPlayer(bp, { beraterPlayerId: ev.player_id, status: ev.status as 'interessant' | 'nicht_interessant' }, true);
+  }
+
+  // Watchlist indexieren (nur wenn kein Eval existiert)
+  for (const w of watchlist || []) {
+    const bp = (w as any).berater_players;
+    if (!bp) continue;
+    indexPlayer(bp, { beraterPlayerId: w.player_id, status: 'watchlist' as const }, false);
+  }
+
+  // Lineup-Spieler matchen
+  for (const player of players) {
+    // 1. Primär: Transfermarkt-URL
+    if (player.transfermarkt_url) {
+      const match = byTmUrl.get(player.transfermarkt_url);
+      if (match) {
+        result.set(player.id, match);
+        continue;
+      }
+    }
+    // 2. Vollständiger Name (Vorname + Nachname)
+    if (player.vorname && player.name) {
+      const fullName = `${player.vorname} ${player.name}`.toLowerCase();
+      const match = byFullName.get(fullName);
+      if (match) {
+        result.set(player.id, match);
+        continue;
+      }
+    }
+    // 3. Fallback: Nachname
+    if (player.name) {
+      const match = byLastName.get(player.name.toLowerCase());
+      if (match) {
+        result.set(player.id, match);
+      }
+    }
+  }
+
+  return result;
 }

@@ -23,6 +23,7 @@ interface DropdownProps {
   placeholder?: string;
   multiSelect?: boolean;
   label?: string;
+  compact?: boolean;
 }
 
 export const Dropdown = memo<DropdownProps>(function Dropdown({
@@ -32,6 +33,7 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
   placeholder = 'Auswählen...',
   multiSelect = false,
   label,
+  compact = false,
 }) {
   const { colors } = useTheme();
   const [isOpen, setIsOpen] = useState(false);
@@ -152,6 +154,7 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
             backgroundColor: colors.inputBackground,
             borderColor: isOpen ? colors.primary : colors.inputBorder,
           },
+          compact && styles.buttonCompact,
         ]}
         onPress={handleOpen}
         activeOpacity={0.7}
@@ -159,6 +162,7 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
         <Text
           style={[
             styles.buttonText,
+            compact && styles.buttonTextCompact,
             {
               color: selectedValues.length > 0 ? colors.text : colors.textSecondary,
             },
@@ -189,7 +193,7 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
                     borderColor: colors.border,
                     top: dropdownPosition.top,
                     left: dropdownPosition.left,
-                    width: dropdownPosition.width,
+                    minWidth: Math.max(dropdownPosition.width, 200),
                     maxHeight: 250,
                   },
                 ]}
@@ -238,8 +242,18 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     minHeight: 44,
   },
+  buttonCompact: {
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    minHeight: 28,
+    minWidth: 100,
+  },
   buttonText: {
     fontSize: 15,
+    flex: 1,
+  },
+  buttonTextCompact: {
+    fontSize: 13,
     flex: 1,
   },
   chevron: {
@@ -281,7 +295,8 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   optionText: {
-    fontSize: 15,
+    fontSize: 14,
+    flexShrink: 1,
   },
   doneButton: {
     margin: 8,

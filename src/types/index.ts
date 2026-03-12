@@ -264,7 +264,7 @@ export const BODY_STRUCTURE_LABELS = {
     breit: 'breit',
   },
   musculature: {
-    wenig_aufbau: 'wenig Aufbau',
+    wenig_aufbau: 'wenig aufbau',
     altersgerecht: 'altersgerecht',
     kraeftig: 'kräftig',
   },
@@ -324,10 +324,10 @@ export interface SpeedAthleticismData {
 
 // Labels
 export const SPEED_RATING_LABELS: Record<SpeedRating, string> = {
-  top: 'Top',
-  gut: 'Gut',
-  durchschnitt: 'Durchschnitt',
-  schwach: 'Schwach',
+  top: 'top',
+  gut: 'gut',
+  durchschnitt: 'durchschnitt',
+  schwach: 'schwach',
 };
 
 export const MOVEMENT_ECONOMY_LABELS: Record<MovementEconomy, string> = {
@@ -337,20 +337,20 @@ export const MOVEMENT_ECONOMY_LABELS: Record<MovementEconomy, string> = {
 };
 
 export const INTENSITY_LABELS: Record<Intensity, string> = {
-  hoch: 'Hoch',
-  mittel: 'Mittel',
-  niedrig: 'Niedrig',
+  hoch: 'hoch',
+  mittel: 'mittel',
+  niedrig: 'niedrig',
 };
 
 export const FLEXIBILITY_LABELS: Record<Flexibility, string> = {
-  sehr_beweglich: 'Sehr beweglich',
-  beweglich: 'Beweglich',
-  durchschnittlich: 'Durchschnittlich',
-  steif: 'Steif',
+  sehr_beweglich: 'sehr beweglich',
+  beweglich: 'beweglich',
+  durchschnittlich: 'durchschnittlich',
+  steif: 'steif',
 };
 
 export const COORDINATION_LABELS: Record<Coordination, string> = {
-  sauber: 'Sauber',
-  normal: 'Normal',
-  wacklig: 'Wacklig',
+  sauber: 'sauber',
+  normal: 'normal',
+  wacklig: 'wacklig',
 };

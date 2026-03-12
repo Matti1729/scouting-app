@@ -698,6 +698,8 @@ function normalizeName(name: string): string {
   for (const [char, replacement] of Object.entries(replacements)) {
     result = result.replace(new RegExp(char, 'g'), replacement);
   }
+  // Deutsche Digraphen normalisieren (fussball.de nutzt "oe"/"ae"/"ue" statt Umlaute)
+  result = result.replace(/oe/g, 'o').replace(/ae/g, 'a').replace(/ue/g, 'u');
   return result;
 }
 
@@ -806,13 +808,34 @@ export async function enrichFromBeraterDB(
     }
 
     // 1. Club in berater_clubs suchen (fuzzy: ilike)
-    const normalizedHint = clubHint.replace(/\s+/g, '%');
+    // fussball.de nutzt ASCII-Digraphen ("Koeln"), berater_clubs nutzt Umlaute ("Köln")
+    const normalizedHint = clubHint.replace(/[.\s]+/g, '%');
+    const withUmlauts = clubHint
+      .replace(/oe/gi, 'ö').replace(/ae/gi, 'ä').replace(/ue/gi, 'ü');
+    const normalizedUmlaut = withUmlauts.replace(/[.\s]+/g, '%');
+
+    // Kern-Vereinsname extrahieren (ohne FC, SV, Nummern, Altersklassen)
+    const commonPrefixes = new Set(['fc', 'sv', 'vfl', 'vfb', 'tsv', 'bsg', 'sg', 'sc', 'fsv', 'spvgg', 'tus', 'bv', 'ssv']);
+    const coreWords = clubHint.split(/[\s.]+/)
+      .filter(w => w.length > 2 && !commonPrefixes.has(w.toLowerCase()) && !/^\d+$/.test(w) && !/^u\d+$/i.test(w));
+    const coreName = coreWords[0] || '';
+    const coreUmlaut = coreName.replace(/oe/gi, 'ö').replace(/ae/gi, 'ä').replace(/ue/gi, 'ü');
+
+    // Mehrere Varianten suchen für robustes Matching
+    let orClauses = `club_name.ilike.%${normalizedHint}%,club_name.ilike.%${normalizedUmlaut}%`;
+    if (coreName) {
+      orClauses += `,club_name.ilike.%${coreName}%`;
+      if (coreUmlaut !== coreName) {
+        orClauses += `,club_name.ilike.%${coreUmlaut}%`;
+      }
+    }
+
     const { data: clubs } = await supabase
       .from('berater_clubs')
       .select('id, club_name')
-      .or(`club_name.ilike.%${normalizedHint}%,club_name.ilike.%${clubHint}%`)
+      .or(orClauses)
       .eq('is_active', true)
-      .limit(5);
+      .limit(10);
 
     if (!clubs?.length) {
       console.log(`[BeraterDB] Club not found: "${clubHint}" → TM-Fallback`);
@@ -941,11 +964,18 @@ function findBestBeraterMatch(
     if (normalizedSearch === normalizedPlayer) {
       score = 200;
     } else {
-      // Nachname-Match (letztes Wort)
+      // Nachname-Match (flexibel fuer Doppelnamen)
       const searchLast = searchParts[searchParts.length - 1];
       const playerLast = playerParts[playerParts.length - 1];
       if (searchLast === playerLast) {
         score += 60;
+      } else if (searchParts.includes(playerLast)) {
+        // BeraterDB-Nachname kommt irgendwo im Suchname vor
+        // z.B. "massek" in ["ivan", "mathis", "massek", "bakotaken"]
+        score += 50;
+      } else if (playerParts.includes(searchLast)) {
+        // Suchname-Nachname kommt irgendwo im BeraterDB-Namen vor
+        score += 50;
       }
 
       // Vorname-Match (erstes Wort)

@@ -73,6 +73,8 @@ export interface PlayerRowProps {
   onFieldChange?: (playerId: string, field: keyof Player, value: string) => void;
   isEditMode: boolean;
   showPosition?: boolean;
+  isEvaluated?: boolean;
+  evalColor?: { bg: string; border: string } | null;
 }
 
 export const PlayerRow = memo<PlayerRowProps>(({
@@ -81,6 +83,8 @@ export const PlayerRow = memo<PlayerRowProps>(({
   onFieldChange,
   isEditMode,
   showPosition = false,
+  isEvaluated = false,
+  evalColor,
 }) => {
   const { colors } = useTheme();
 
@@ -107,7 +111,15 @@ export const PlayerRow = memo<PlayerRowProps>(({
 
   return (
     <TouchableOpacity
-      style={[styles.playerRow, { borderBottomColor: colors.border }]}
+      style={[
+        styles.playerRow,
+        { borderBottomColor: colors.border },
+        evalColor && {
+          backgroundColor: evalColor.bg,
+          borderLeftWidth: 3,
+          borderLeftColor: evalColor.border,
+        },
+      ]}
       onPress={handlePress}
       disabled={isEditMode}
       activeOpacity={isEditMode ? 1 : 0.7}
@@ -193,8 +205,8 @@ export const PlayerRow = memo<PlayerRowProps>(({
         )}
       </View>
 
-      {/* Badges: T (Torwart), C (Kapitän) */}
-      {!isEditMode && (player.isGoalkeeper || player.isCaptain) && (
+      {/* Badges: T (Torwart), C (Kapitän), ✓ (bewertet) */}
+      {!isEditMode && (player.isGoalkeeper || player.isCaptain || isEvaluated) && (
         <View style={styles.badgeContainer}>
           {player.isGoalkeeper && (
             <View style={styles.badge}>
@@ -205,6 +217,9 @@ export const PlayerRow = memo<PlayerRowProps>(({
             <View style={[styles.badge, styles.badgeCaptain]}>
               <Text style={styles.badgeText}>C</Text>
             </View>
+          )}
+          {isEvaluated && (
+            <Text style={styles.evalEmoji}>📝</Text>
           )}
         </View>
       )}
@@ -299,6 +314,10 @@ const styles = StyleSheet.create({
   },
   badgeCaptain: {
     backgroundColor: '#d4a017',
+  },
+  evalEmoji: {
+    fontSize: 14,
+    marginLeft: 2,
   },
   badgeText: {
     fontSize: 10,

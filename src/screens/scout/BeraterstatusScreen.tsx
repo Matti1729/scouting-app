@@ -29,6 +29,7 @@ import {
   AgentFilter,
   AgeFilter,
   PlayerStat,
+  PlayerEvaluation,
   loadAllPlayers,
   loadAgentChanges,
   loadWatchlist,
@@ -43,6 +44,11 @@ import {
   loadRankingsStats,
   refreshPlayerRankings,
   addStatPlayerToWatchlist,
+  loadAllEvaluations,
+  savePlayerEvaluation,
+  deletePlayerEvaluation,
+  updateEvaluationNotes,
+  updateEvaluationRating,
 } from '../../services/beraterService';
 
 function fuzzyMatch(query: string, ...fields: (string | null | undefined)[]): boolean {
@@ -122,6 +128,13 @@ export function BeraterstatusScreen() {
   const [playerHistory, setPlayerHistory] = useState<BeraterChange[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [isOnWatchlistState, setIsOnWatchlistState] = useState(false);
+
+  // Evaluations
+  const [evaluations, setEvaluations] = useState<Map<string, PlayerEvaluation>>(new Map());
+  const [modalRating, setModalRating] = useState<number | null>(null);
+  const [modalNotes, setModalNotes] = useState('');
+  const [modalEvalStatus, setModalEvalStatus] = useState<'interessant' | 'nicht_interessant' | null>(null);
+  const notesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ========== DATA LOADING ==========
 
@@ -278,9 +291,15 @@ export function BeraterstatusScreen() {
     setRefreshing(false);
   }, [loadStatus, loadPlayersTab, loadChangesTab, loadSuggestionsTab]);
 
+  const loadEvaluations = useCallback(async () => {
+    const evals = await loadAllEvaluations();
+    setEvaluations(evals);
+  }, []);
+
   useEffect(() => {
     loadStatus();
     loadLeagueList();
+    loadEvaluations();
     // Alle Tabs initial laden (für Badge-Counts)
     loadPlayersTab();
     loadChangesTab();
@@ -324,6 +343,12 @@ export function BeraterstatusScreen() {
     setSelectedPlayer(player);
     setPlayerHistory([]);
     setHistoryLoading(true);
+
+    // Bestehende Evaluation laden
+    const existingEval = evaluations.get(player.id);
+    setModalRating(existingEval?.rating ?? null);
+    setModalNotes(existingEval?.notes ?? '');
+    setModalEvalStatus(existingEval?.status ?? null);
 
     const [onWl, history] = await Promise.all([
       isOnWatchlist(player.id),
@@ -435,6 +460,72 @@ export function BeraterstatusScreen() {
       const query = encodeURIComponent(selectedPlayer.player_name);
       Linking.openURL(`https://www.transfermarkt.de/schnellsuche/ergebnis/schnellsuche?query=${query}`);
     }
+  };
+
+  const handleEvaluation = async (status: 'interessant' | 'nicht_interessant') => {
+    if (!selectedPlayer) return;
+    if (modalEvalStatus === status) {
+      // Toggle: gleicher Status nochmal → Bewertung entfernen
+      const success = await deletePlayerEvaluation(selectedPlayer.id);
+      if (success) {
+        setEvaluations(prev => {
+          const next = new Map(prev);
+          next.delete(selectedPlayer.id);
+          return next;
+        });
+        setModalEvalStatus(null);
+      }
+    } else {
+      const success = await savePlayerEvaluation(selectedPlayer.id, status, modalRating, modalNotes || null);
+      if (success) {
+        setEvaluations(prev => {
+          const next = new Map(prev);
+          next.set(selectedPlayer.id, {
+            id: '',
+            player_id: selectedPlayer.id,
+            status,
+            rating: modalRating,
+            notes: modalNotes || null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          });
+          return next;
+        });
+        setModalEvalStatus(status);
+      }
+    }
+    setSelectedPlayer(null);
+  };
+
+  const handleRatingChange = async (rating: number | null) => {
+    setModalRating(rating);
+    if (!selectedPlayer) return;
+    const existing = evaluations.get(selectedPlayer.id);
+    if (existing) {
+      await updateEvaluationRating(selectedPlayer.id, rating);
+      setEvaluations(prev => {
+        const next = new Map(prev);
+        next.set(selectedPlayer.id, { ...existing, rating, updated_at: new Date().toISOString() });
+        return next;
+      });
+    }
+  };
+
+  const handleNotesChange = (text: string) => {
+    setModalNotes(text);
+    if (!selectedPlayer) return;
+    if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
+    notesTimerRef.current = setTimeout(async () => {
+      const existing = evaluations.get(selectedPlayer.id);
+      if (existing) {
+        await updateEvaluationNotes(selectedPlayer.id, text || null);
+        setEvaluations(prev => {
+          const next = new Map(prev);
+          next.set(selectedPlayer.id, { ...existing, notes: text || null, updated_at: new Date().toISOString() });
+          return next;
+        });
+      }
+    }, 800);
   };
 
   // ========== HELPERS ==========
@@ -916,10 +1007,15 @@ export function BeraterstatusScreen() {
   const renderMobilePlayerCard = ({ item }: { item: BeraterPlayer }) => {
     const agentLabel = getAgentLabel(item);
     const age = calculateAge(item.birth_date);
+    const evalColor = getEvalColor(item.id);
 
     return (
       <TouchableOpacity
-        style={[styles.mobileCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+        style={[
+          styles.mobileCard,
+          { backgroundColor: evalColor?.bg || colors.surface, borderColor: colors.border },
+          evalColor && { borderLeftWidth: 3, borderLeftColor: evalColor.border },
+        ]}
         onPress={() => openPlayerDetail(item)}
         activeOpacity={0.7}
       >
@@ -1039,14 +1135,30 @@ export function BeraterstatusScreen() {
 
   // ========== LIST ROWS ==========
 
+  // Evaluation color helper
+  const getEvalColor = (playerId: string): { bg: string; border: string } | null => {
+    // Evaluation-Status hat Vorrang vor Watchlist-Farbe
+    const ev = evaluations.get(playerId);
+    if (ev?.status === 'interessant') return { bg: colors.success + '12', border: colors.success };
+    if (ev?.status === 'nicht_interessant') return { bg: colors.error + '12', border: colors.error };
+    const onWl = watchlist.some(w => w.player_id === playerId);
+    if (onWl) return { bg: colors.warning + '12', border: colors.warning };
+    return null;
+  };
+
   const renderPlayerRow = ({ item }: { item: BeraterPlayer }) => {
     const agentLabel = getAgentLabel(item);
     const age = calculateAge(item.birth_date);
     const agentPart = agentLabel.text;
+    const evalColor = getEvalColor(item.id);
 
     return (
       <TouchableOpacity
-        style={[styles.playerRow, { borderBottomColor: colors.border }]}
+        style={[
+          styles.playerRow,
+          { borderBottomColor: colors.border },
+          evalColor && { backgroundColor: evalColor.bg, borderLeftWidth: 3, borderLeftColor: evalColor.border },
+        ]}
         onPress={() => openPlayerDetail(item)}
         activeOpacity={0.7}
       >
@@ -1078,10 +1190,15 @@ export function BeraterstatusScreen() {
     const changeDate = new Date(item.detected_at).toLocaleDateString('de-DE');
     const playerMatch = players.find(p => p.id === item.player_id);
     const mv = playerMatch?.market_value || '-';
+    const evalColor = item.player_id ? getEvalColor(item.player_id) : null;
 
     return (
       <TouchableOpacity
-        style={[styles.playerRow, { borderBottomColor: colors.border }]}
+        style={[
+          styles.playerRow,
+          { borderBottomColor: colors.border },
+          evalColor && { backgroundColor: evalColor.bg, borderLeftWidth: 3, borderLeftColor: evalColor.border },
+        ]}
         onPress={() => openChangeDetail(item)}
         activeOpacity={0.7}
       >
@@ -1146,7 +1263,7 @@ export function BeraterstatusScreen() {
               <Text style={[styles.closeButtonText, { color: colors.textSecondary }]}>✕</Text>
             </TouchableOpacity>
 
-            <ScrollView bounces={false} showsVerticalScrollIndicator={false} contentContainerStyle={{ flexGrow: 1 }}>
+            <ScrollView bounces={false} showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
               {/* Top: Info links, Buttons rechts */}
               <View style={styles.detailTopRow}>
                 <View style={{ flex: 1, marginRight: 12 }}>
@@ -1175,20 +1292,6 @@ export function BeraterstatusScreen() {
                       style={styles.tmLogo}
                       resizeMode="contain"
                     />
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[
-                      styles.watchlistMini,
-                      {
-                        backgroundColor: isOnWatchlistState ? colors.error + '15' : colors.warning + '15',
-                        borderColor: isOnWatchlistState ? colors.error : colors.warning,
-                      },
-                    ]}
-                    onPress={handleToggleWatchlist}
-                  >
-                    <Text style={[styles.watchlistMiniText, { color: isOnWatchlistState ? colors.error : colors.warning }]}>
-                      {isOnWatchlistState ? 'Von Watchlist entfernen' : 'Zur Watchlist'}
-                    </Text>
                   </TouchableOpacity>
                 </View>
               </View>
@@ -1245,7 +1348,105 @@ export function BeraterstatusScreen() {
                 )}
               </View>
 
+              {/* Bewertung (1-10) */}
+              <View style={[styles.detailSection, { borderColor: colors.border }]}>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Bewertung</Text>
+                <View style={styles.ratingRow}>
+                  {([null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as (number | null)[]).map((val) => {
+                    const isActive = modalRating === val;
+                    return (
+                      <TouchableOpacity
+                        key={val === null ? 'none' : val}
+                        style={[
+                          styles.ratingButton,
+                          {
+                            backgroundColor: isActive ? colors.primary : colors.surfaceSecondary,
+                            borderColor: isActive ? colors.primary : colors.border,
+                          },
+                        ]}
+                        onPress={() => handleRatingChange(val)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[styles.ratingButtonText, { color: isActive ? '#fff' : colors.text }]}>
+                          {val === null ? '-' : val}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+
+              {/* Notizen */}
+              <View style={[styles.detailSection, { borderColor: colors.border }]}>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Notizen</Text>
+                <TextInput
+                  style={[
+                    styles.notesInput,
+                    {
+                      color: colors.text,
+                      backgroundColor: colors.surfaceSecondary,
+                      borderColor: colors.border,
+                    },
+                  ]}
+                  value={modalNotes}
+                  onChangeText={handleNotesChange}
+                  placeholder="Notizen zum Spieler..."
+                  placeholderTextColor={colors.textSecondary}
+                  multiline
+                  numberOfLines={3}
+                  textAlignVertical="top"
+                />
+              </View>
             </ScrollView>
+
+            {/* Eval-Buttons (fixiert am Bottom) */}
+            <View style={[styles.evalButtonRow, { borderTopColor: colors.border }]}>
+              <TouchableOpacity
+                style={[
+                  styles.evalButton,
+                  modalEvalStatus === 'nicht_interessant'
+                    ? { backgroundColor: colors.error }
+                    : { backgroundColor: colors.border },
+                ]}
+                onPress={() => handleEvaluation('nicht_interessant')}
+                activeOpacity={0.7}
+              >
+                <Text style={[
+                  styles.evalButtonText,
+                  { color: modalEvalStatus === 'nicht_interessant' ? '#fff' : colors.textSecondary },
+                ]}>Uninteressant</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.evalButton,
+                  modalEvalStatus === 'interessant'
+                    ? { backgroundColor: colors.success }
+                    : { backgroundColor: colors.border },
+                ]}
+                onPress={() => handleEvaluation('interessant')}
+                activeOpacity={0.7}
+              >
+                <Text style={[
+                  styles.evalButtonText,
+                  { color: modalEvalStatus === 'interessant' ? '#fff' : colors.textSecondary },
+                ]}>Interessant</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[
+                  styles.evalButton,
+                  isOnWatchlistState
+                    ? { backgroundColor: colors.warning }
+                    : { backgroundColor: colors.border },
+                ]}
+                onPress={handleToggleWatchlist}
+                activeOpacity={0.7}
+              >
+                <Text style={[
+                  styles.evalButtonText,
+                  { color: isOnWatchlistState ? '#fff' : colors.textSecondary },
+                ]}>{isOnWatchlistState ? 'Watchlist ✓' : 'Watchlist'}</Text>
+              </TouchableOpacity>
+            </View>
           </TouchableOpacity>
         </TouchableOpacity>
       </Modal>
@@ -2320,8 +2521,8 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     padding: 24,
     paddingTop: 50,
-    paddingBottom: 8,
-    maxHeight: '85%',
+    paddingBottom: 0,
+    maxHeight: '92%',
     minWidth: '100%',
   },
   modalOverlayDesktop: {
@@ -2331,8 +2532,8 @@ const styles = StyleSheet.create({
   detailSheetDesktop: {
     borderRadius: 16,
     minWidth: 0,
-    width: 480,
-    maxHeight: '80%',
+    width: 680,
+    maxHeight: '90%',
   },
   closeButton: {
     position: 'absolute',
@@ -2745,5 +2946,56 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textTransform: 'uppercase',
     letterSpacing: 0.3,
+  },
+
+  // Rating
+  ratingRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 8,
+  },
+  ratingButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ratingButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+
+  // Notizen
+  notesInput: {
+    marginTop: 8,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    fontSize: 14,
+    minHeight: 80,
+  },
+
+  // Eval-Buttons
+  evalButtonRow: {
+    flexDirection: 'row',
+    gap: 6,
+    paddingTop: 12,
+    paddingBottom: 16,
+    borderTopWidth: 1,
+    alignItems: 'center',
+  },
+  evalButton: {
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  evalButtonText: {
+    fontSize: 11,
+    fontWeight: '600',
   },
 });

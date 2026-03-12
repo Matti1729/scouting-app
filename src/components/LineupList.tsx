@@ -30,6 +30,8 @@ export interface LineupListProps {
   isEditMode: boolean;
   teamName?: string;  // Optional - if not provided, no title is rendered
   emptyMessage?: string;
+  evaluatedPlayerIds?: Set<string>;
+  evalColors?: Map<string, { bg: string; border: string }>;
 }
 
 const ITEM_HEIGHT = 32;
@@ -42,6 +44,8 @@ export const LineupList = memo<LineupListProps>(({
   isEditMode,
   teamName,
   emptyMessage = 'Keine Spieler vorhanden',
+  evaluatedPlayerIds,
+  evalColors,
 }) => {
   const { colors } = useTheme();
 
@@ -97,9 +101,11 @@ export const LineupList = memo<LineupListProps>(({
         onFieldChange={onFieldChange}
         isEditMode={isEditMode}
         showPosition={sortedSubs.some(s => s.id === player.id)}
+        isEvaluated={evaluatedPlayerIds?.has(player.id) ?? false}
+        evalColor={evalColors?.get(player.id)}
       />
     );
-  }, [colors.textSecondary, onPlayerPress, onFieldChange, isEditMode, sortedSubs]);
+  }, [colors.textSecondary, onPlayerPress, onFieldChange, isEditMode, sortedSubs, evaluatedPlayerIds, evalColors]);
 
   // Key extractor
   const keyExtractor = useCallback((item: typeof combinedData[0]) => {

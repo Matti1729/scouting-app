@@ -47,6 +47,7 @@ import {
   TransfermarktAgentInfo,
   enrichFromBeraterDB,
 } from '../../services/transfermarktService';
+import { supabase } from '../../config/supabase';
 import { Dropdown } from '../../components/Dropdown';
 import { LineupList } from '../../components/LineupList';
 import { Player as LineupPlayer } from '../../components/PlayerRow';
@@ -70,6 +71,7 @@ import {
   getLastUpdateDisplay,
 } from '../../services/dfbTermine';
 import { Ionicons } from '@expo/vector-icons';
+import { loadBeraterStatusForLineup, BeraterStatusResult } from '../../services/beraterService';
 
 // Dropdown Optionen
 const SPIELART_OPTIONS = [
@@ -426,12 +428,20 @@ export function MatchListScreen({ navigation }: any) {
   // Aufstellungen laden Modal
   const [lineupSourceModalVisible, setLineupSourceModalVisible] = useState(false);
 
+  // Bewertete Spieler (Set von lineup player IDs)
+  const [evaluatedPlayerIds, setEvaluatedPlayerIds] = useState<Set<string>>(new Set());
+
+  // Berater-Status für Lineup-Spieler (interessant/uninteressant/watchlist)
+  const [beraterStatusMap, setBeraterStatusMap] = useState<Map<string, BeraterStatusResult>>(new Map());
+
   // Modal wieder öffnen wenn man von PlayerEvaluation zurückkommt
   useFocusEffect(
     React.useCallback(() => {
       if (shouldReopenModal && selectedMatch) {
         setModalVisible(true);
         setShouldReopenModal(false);
+        // Bewertungs-Indikatoren neu laden
+        fetchLineupForMatch(selectedMatch.id);
       }
     }, [shouldReopenModal, selectedMatch])
   );
@@ -457,14 +467,68 @@ export function MatchListScreen({ navigation }: any) {
       setHomeSubs(homePlayers.filter(p => !p.is_starter).map(dbLineupToPlayer));
       setAwayLineup(awayPlayers.filter(p => p.is_starter).map(dbLineupToPlayer));
       setAwaySubs(awayPlayers.filter(p => !p.is_starter).map(dbLineupToPlayer));
+
+      // Bewertete Spieler laden - nur wenn echte Inhalte vorhanden (Körper, Athletik, Notiz, Rating)
+      const { data: evals } = await supabase
+        .from('player_evaluations')
+        .select('lineup_player_id, last_name, first_name, body_structure, speed_athleticism, notes, overall_rating')
+        .eq('match_id', matchId);
+      if (evals) {
+        const evalIds = new Set<string>();
+        const allLineupPlayers = result.data;
+        for (const ev of evals) {
+          // Nur als bewertet zählen wenn echte Inhalte vorhanden
+          const hasBodyContent = ev.body_structure && Object.values(ev.body_structure).some((v: any) => v !== null);
+          const hasSpeedContent = ev.speed_athleticism && Object.values(ev.speed_athleticism).some((v: any) => v !== null);
+          const hasContent = hasBodyContent || hasSpeedContent || !!ev.notes || (ev.overall_rating != null && ev.overall_rating > 0);
+          if (!hasContent) continue;
+
+          if (ev.lineup_player_id) {
+            evalIds.add(ev.lineup_player_id);
+          } else {
+            const match = allLineupPlayers.find(
+              p => p.name === ev.last_name && (p.vorname || '') === (ev.first_name || '')
+            );
+            if (match) evalIds.add(match.id);
+          }
+        }
+        setEvaluatedPlayerIds(evalIds);
+      }
+
+      // Berater-Status laden (interessant/uninteressant/watchlist)
+      const allLineupForBerater = result.data.map(p => ({
+        id: p.id,
+        name: p.name,
+        vorname: p.vorname || '',
+        transfermarkt_url: p.transfermarkt_url || undefined,
+      }));
+      const statusMap = await loadBeraterStatusForLineup(allLineupForBerater);
+      setBeraterStatusMap(statusMap);
     } else {
       // Keine Aufstellung vorhanden
       setHomeLineup([]);
       setHomeSubs([]);
       setAwayLineup([]);
       setAwaySubs([]);
+      setEvaluatedPlayerIds(new Set());
+      setBeraterStatusMap(new Map());
     }
   };
+
+  // Berater-Status Farben für Lineup berechnen
+  const evalColors = useMemo(() => {
+    const map = new Map<string, { bg: string; border: string }>();
+    for (const [playerId, entry] of beraterStatusMap) {
+      if (entry.status === 'interessant') {
+        map.set(playerId, { bg: colors.success + '12', border: colors.success });
+      } else if (entry.status === 'nicht_interessant') {
+        map.set(playerId, { bg: colors.error + '12', border: colors.error });
+      } else if (entry.status === 'watchlist') {
+        map.set(playerId, { bg: colors.warning + '12', border: colors.warning });
+      }
+    }
+    return map;
+  }, [beraterStatusMap, colors]);
 
   // OPTIMIERTE Transfermarkt-Suche: Findet Spieler UND holt Berater + Geburtsdatum in EINEM Durchgang
   const searchTransfermarktForLineup = async (matchId: string, homeTeam: string, awayTeam: string) => {
@@ -1056,6 +1120,7 @@ export function MatchListScreen({ navigation }: any) {
     setShouldReopenModal(true);
     navigation.navigate('PlayerEvaluation', {
       matchId: selectedMatch.id,
+      lineupPlayerId: player.id,
       matchName: selectedMatch.spiel,
       matchDate: selectedMatch.datum,
       mannschaft: selectedMatch.mannschaft,
@@ -1067,8 +1132,10 @@ export function MatchListScreen({ navigation }: any) {
       playerClub: playerClub || '', // Vereinsname aus Aufstellung
       transfermarktUrl: tmUrl,
       agentName: player.agent_name || undefined,
+      playerHeight: undefined,
+      beraterPlayerId: beraterStatusMap.get(player.id)?.beraterPlayerId || undefined,
     });
-  }, [selectedMatch, homeLineup, homeSubs, navigation]);
+  }, [selectedMatch, homeLineup, homeSubs, navigation, beraterStatusMap]);
 
   // Memoized handlers for field changes in edit mode (combined for lineup + subs)
   const handleHomeFieldChange = useCallback((playerId: string, field: keyof Player, value: string) => {
@@ -1603,20 +1670,27 @@ export function MatchListScreen({ navigation }: any) {
     setLineupSourceModalVisible(true);
   };
 
-  // Spiel archivieren (wenn beendet)
-  const archiveFinishedMatches = () => {
+  // Spiel archivieren (wenn beendet) - auch in DB persistieren
+  const archiveFinishedMatches = async () => {
+    const toArchive = matches.filter(m => !m.isArchived && isEventFinished(m.datum, m.datumEnde));
+    if (toArchive.length === 0) return;
+    for (const match of toArchive) {
+      await updateMatch(match.id, { is_archived: true });
+    }
     setMatches(prev => prev.map(match => {
-      if (!match.isArchived && isMatchFinished(match.datum)) {
+      if (toArchive.find(a => a.id === match.id)) {
         return { ...match, isArchived: true };
       }
       return match;
     }));
   };
 
-  // Archivierung beim Laden prüfen
+  // Archivierung beim Laden prüfen (nach fetchMatches)
   React.useEffect(() => {
-    archiveFinishedMatches();
-  }, []);
+    if (matches.length > 0) {
+      archiveFinishedMatches();
+    }
+  }, [matches.length]);
 
   // Filter-Logik
   const filteredMatches = useMemo(() => {
@@ -2339,6 +2413,8 @@ export function MatchListScreen({ navigation }: any) {
                           onFieldChange={isEditMode ? handleHomeFieldChange : undefined}
                           isEditMode={isEditMode}
                           emptyMessage="Keine Spieler vorhanden"
+                          evaluatedPlayerIds={evaluatedPlayerIds}
+                          evalColors={evalColors}
                         />
                       </View>
                     )}
@@ -2371,6 +2447,8 @@ export function MatchListScreen({ navigation }: any) {
                           onFieldChange={isEditMode ? handleAwayFieldChange : undefined}
                           isEditMode={isEditMode}
                           emptyMessage="Keine Spieler vorhanden"
+                          evaluatedPlayerIds={evaluatedPlayerIds}
+                          evalColors={evalColors}
                         />
                       </View>
                     )}
@@ -2381,37 +2459,38 @@ export function MatchListScreen({ navigation }: any) {
                 {isEditMode ? (
                   <View style={[styles.modalFooter, { borderTopColor: colors.border }]}>
                     <TouchableOpacity
-                      style={[styles.footerButton, { borderColor: colors.border }]}
-                      onPress={handleCancelEdit}
+                      style={[styles.footerButtonSmall, { backgroundColor: colors.error }]}
+                      onPress={handleDeleteMatch}
                     >
-                      <Text style={[styles.footerButtonText, { color: colors.text }]}>Abbrechen</Text>
+                      <Text style={[styles.footerButtonSmallText, { color: '#fff' }]}>Spiel löschen</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
-                      style={[styles.footerButton, { backgroundColor: colors.primary }]}
+                      style={[styles.footerButtonSmall, { backgroundColor: colors.primary }]}
+                      onPress={handleAddPlayer}
+                    >
+                      <Text style={[styles.footerButtonSmallText, { color: colors.primaryText }]}>Spieler hinzufügen</Text>
+                    </TouchableOpacity>
+                    <View style={{ flex: 1 }} />
+                    <TouchableOpacity
+                      style={[styles.footerButtonSmall, { backgroundColor: colors.border }]}
+                      onPress={handleCancelEdit}
+                    >
+                      <Text style={[styles.footerButtonSmallText, { color: colors.text }]}>Abbrechen</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.footerButtonSmall, { backgroundColor: colors.primary }]}
                       onPress={handleSaveEditedMatch}
                     >
-                      <Text style={[styles.footerButtonText, { color: colors.primaryText }]}>Speichern</Text>
+                      <Text style={[styles.footerButtonSmallText, { color: colors.primaryText }]}>Speichern</Text>
                     </TouchableOpacity>
                   </View>
                 ) : !isMobile ? (
-                  <View style={[styles.modalFooter, { borderTopColor: colors.border }]}>
+                  <View style={[styles.modalFooter, { borderTopColor: colors.border, justifyContent: 'flex-end' }]}>
                     <TouchableOpacity
-                      style={[styles.footerButton, { borderColor: colors.error }]}
-                      onPress={handleDeleteMatch}
-                    >
-                      <Text style={[styles.footerButtonText, { color: colors.error }]}>Spiel löschen</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.footerButton, { backgroundColor: colors.primary }]}
-                      onPress={handleAddPlayer}
-                    >
-                      <Text style={[styles.footerButtonText, { color: colors.primaryText }]}>Spieler hinzufügen</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.footerButton, { borderColor: colors.border }]}
+                      style={[styles.footerButtonSmall, { backgroundColor: colors.border }]}
                       onPress={handleEditMatch}
                     >
-                      <Text style={[styles.footerButtonText, { color: colors.text }]}>Bearbeiten</Text>
+                      <Text style={[styles.footerButtonSmallText, { color: colors.text }]}>Bearbeiten</Text>
                     </TouchableOpacity>
                   </View>
                 ) : null}
@@ -4047,6 +4126,17 @@ const styles = StyleSheet.create({
   },
   footerButtonText: {
     fontSize: 13,
+    fontWeight: '600',
+  },
+  footerButtonSmall: {
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  footerButtonSmallText: {
+    fontSize: 11,
     fontWeight: '600',
   },
   // Tab-Leiste Styles
