@@ -49,6 +49,7 @@ import {
   deletePlayerEvaluation,
   updateEvaluationNotes,
   updateEvaluationRating,
+  updateWatchlistEntry,
 } from '../../services/beraterService';
 
 function fuzzyMatch(query: string, ...fields: (string | null | undefined)[]): boolean {
@@ -344,10 +345,11 @@ export function BeraterstatusScreen() {
     setPlayerHistory([]);
     setHistoryLoading(true);
 
-    // Bestehende Evaluation laden
+    // Bestehende Evaluation laden, Watchlist als Fallback
     const existingEval = evaluations.get(player.id);
-    setModalRating(existingEval?.rating ?? null);
-    setModalNotes(existingEval?.notes ?? '');
+    const wlEntry = watchlist.find(w => w.player_id === player.id);
+    setModalRating(existingEval?.rating ?? wlEntry?.rating ?? null);
+    setModalNotes(existingEval?.notes ?? wlEntry?.notes ?? '');
     setModalEvalStatus(existingEval?.status ?? null);
 
     const [onWl, history] = await Promise.all([
@@ -494,7 +496,6 @@ export function BeraterstatusScreen() {
         setModalEvalStatus(status);
       }
     }
-    setSelectedPlayer(null);
   };
 
   const handleRatingChange = async (rating: number | null) => {
@@ -508,6 +509,10 @@ export function BeraterstatusScreen() {
         next.set(selectedPlayer.id, { ...existing, rating, updated_at: new Date().toISOString() });
         return next;
       });
+    } else {
+      // Keine Evaluation → Rating in Watchlist-Tabelle speichern
+      await updateWatchlistEntry(selectedPlayer.id, { rating });
+      setWatchlist(prev => prev.map(w => w.player_id === selectedPlayer.id ? { ...w, rating } : w));
     }
   };
 
@@ -524,6 +529,10 @@ export function BeraterstatusScreen() {
           next.set(selectedPlayer.id, { ...existing, notes: text || null, updated_at: new Date().toISOString() });
           return next;
         });
+      } else {
+        // Keine Evaluation → Notizen in Watchlist-Tabelle speichern
+        await updateWatchlistEntry(selectedPlayer.id, { notes: text || null });
+        setWatchlist(prev => prev.map(w => w.player_id === selectedPlayer.id ? { ...w, notes: text || null } : w));
       }
     }, 800);
   };
@@ -1008,6 +1017,10 @@ export function BeraterstatusScreen() {
     const agentLabel = getAgentLabel(item);
     const age = calculateAge(item.birth_date);
     const evalColor = getEvalColor(item.id);
+    const ev = evaluations.get(item.id);
+    const wlEntry = watchlist.find(w => w.player_id === item.id);
+    const rating = ev?.rating ?? wlEntry?.rating ?? null;
+    const hasNotes = !!(ev?.notes || wlEntry?.notes);
 
     return (
       <TouchableOpacity
@@ -1025,6 +1038,12 @@ export function BeraterstatusScreen() {
               {formatNameLastFirst(item.player_name)}
             </Text>
             {age ? <Text style={[styles.mobileCardAge, { color: colors.textSecondary }]}>{age}</Text> : null}
+            {rating != null && (
+              <View style={[styles.ratingBadge, { backgroundColor: rating >= 7 ? colors.success + '25' : rating >= 4 ? '#f5a623' + '25' : colors.error + '25' }]}>
+                <Text style={[styles.ratingBadgeText, { color: rating >= 7 ? colors.success : rating >= 4 ? '#f5a623' : colors.error }]}>{rating}</Text>
+              </View>
+            )}
+            {hasNotes && <Ionicons name="chatbubble-outline" size={12} color={colors.textSecondary} style={{ marginLeft: 4 }} />}
           </View>
           {item.market_value ? (
             <Text style={[styles.mobileCardMV, { color: colors.text }]}>{item.market_value}</Text>
@@ -1048,10 +1067,11 @@ export function BeraterstatusScreen() {
     const age = calculateAge(item.birth_date);
     const agentLabel = getStatAgentLabel(item);
     const statLabel = item.stat_type === 'goals' ? 'Tore' : 'Vorlagen';
+    const evalColor = item.player_id ? getEvalColor(item.player_id) : null;
 
     return (
       <TouchableOpacity
-        style={[styles.mobileCard, { backgroundColor: colors.surface, borderColor: colors.border }]}
+        style={[styles.mobileCard, { backgroundColor: colors.surface, borderColor: colors.border }, evalColor && { backgroundColor: evalColor.bg, borderLeftWidth: 3, borderLeftColor: evalColor.border }]}
         onPress={() => openStatDetail(item)}
         activeOpacity={0.7}
       >
@@ -1151,6 +1171,10 @@ export function BeraterstatusScreen() {
     const age = calculateAge(item.birth_date);
     const agentPart = agentLabel.text;
     const evalColor = getEvalColor(item.id);
+    const ev = evaluations.get(item.id);
+    const wlEntry = watchlist.find(w => w.player_id === item.id);
+    const rating = ev?.rating ?? wlEntry?.rating ?? null;
+    const hasNotes = !!(ev?.notes || wlEntry?.notes);
 
     return (
       <TouchableOpacity
@@ -1178,6 +1202,16 @@ export function BeraterstatusScreen() {
           <Text style={[styles.playerColAgent, { color: agentLabel.color }]} numberOfLines={1}>
             {agentPart}
           </Text>
+          <View style={styles.playerColNotes}>
+            {hasNotes && <Ionicons name="chatbubble-outline" size={13} color={colors.textSecondary} />}
+          </View>
+          <View style={styles.playerColRating}>
+            {rating != null && (
+              <View style={[styles.ratingBadge, { backgroundColor: rating >= 7 ? colors.success + '25' : rating >= 4 ? '#f5a623' + '25' : colors.error + '25' }]}>
+                <Text style={[styles.ratingBadgeText, { color: rating >= 7 ? colors.success : rating >= 4 ? '#f5a623' : colors.error }]}>{rating}</Text>
+              </View>
+            )}
+          </View>
         </View>
       </TouchableOpacity>
     );
@@ -1896,6 +1930,7 @@ export function BeraterstatusScreen() {
             renderItem={renderMobileListItem}
             renderSectionHeader={renderSectionHeader}
             keyExtractor={(item, index) => item.type === 'club_header' ? `club-${item.clubName}-${index}` : item.player.id}
+            extraData={[evaluations, watchlist]}
             ListEmptyComponent={!playersLoading ? renderEmptyState : null}
             contentContainerStyle={[
               styles.cardListContent,
@@ -1913,6 +1948,7 @@ export function BeraterstatusScreen() {
               renderItem={renderListItem}
               renderSectionHeader={renderSectionHeader}
               keyExtractor={(item, index) => item.type === 'club_header' ? `club-${item.clubName}-${index}` : item.player.id}
+              extraData={[evaluations, watchlist]}
               ListEmptyComponent={!playersLoading ? renderEmptyState : null}
               contentContainerStyle={players.length === 0 && !playersLoading ? styles.emptyContainer : undefined}
               stickySectionHeadersEnabled
@@ -1930,6 +1966,7 @@ export function BeraterstatusScreen() {
             data={filteredChanges}
             renderItem={renderMobileChangeCard}
             keyExtractor={(item) => item.id}
+            extraData={[evaluations]}
             ListEmptyComponent={renderEmptyState}
             contentContainerStyle={[
               styles.cardListContent,
@@ -1944,6 +1981,7 @@ export function BeraterstatusScreen() {
             <SectionList
               sections={[{ title: 'changes', data: filteredChanges }]}
               keyExtractor={(item) => item.id}
+              extraData={[evaluations]}
               stickySectionHeadersEnabled={true}
               renderSectionHeader={() => (
                 <View style={[styles.playerRow, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
@@ -2088,6 +2126,7 @@ export function BeraterstatusScreen() {
                 data: (collapsedSuggestionSections?.has(section.title) ?? true) ? [] : section.data,
               }))}
               keyExtractor={(item) => item.id}
+              extraData={[evaluations, watchlist]}
               stickySectionHeadersEnabled={true}
               refreshControl={
                 <RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={colors.primary} />
@@ -2118,12 +2157,14 @@ export function BeraterstatusScreen() {
               contentContainerStyle={styles.cardListContent}
             />
           ) : (
+            <View style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
             <SectionList
               sections={suggestionSections.map(section => ({
                 ...section,
                 data: (collapsedSuggestionSections?.has(section.title) ?? true) ? [] : section.data,
               }))}
               keyExtractor={(item) => item.id}
+              extraData={[evaluations, watchlist]}
               stickySectionHeadersEnabled={true}
               refreshControl={
                 <RefreshControl refreshing={refreshing} onRefresh={refreshAll} tintColor={colors.primary} />
@@ -2169,11 +2210,13 @@ export function BeraterstatusScreen() {
               renderItem={({ item, index }) => {
                 const age = calculateAge(item.birth_date);
                 const agentLabel = getStatAgentLabel(item);
+                const evalColor = item.player_id ? getEvalColor(item.player_id) : null;
                 return (
                   <TouchableOpacity
                     style={[
                       styles.playerRow,
-                      { borderBottomColor: colors.border, backgroundColor: colors.surface }
+                      { borderBottomColor: colors.border },
+                      evalColor && { backgroundColor: evalColor.bg, borderLeftWidth: 3, borderLeftColor: evalColor.border },
                     ]}
                     onPress={() => openStatDetail(item)}
                     activeOpacity={0.7}
@@ -2203,6 +2246,7 @@ export function BeraterstatusScreen() {
                 );
               }}
             />
+            </View>
           )}
         </View>
       )}
@@ -2468,7 +2512,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   playerColAgent: {
-    flex: 2,
+    flex: 1.5,
     fontSize: 11,
   },
   changeDate: {
@@ -2997,5 +3041,27 @@ const styles = StyleSheet.create({
   evalButtonText: {
     fontSize: 11,
     fontWeight: '600',
+  },
+  ratingBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    marginLeft: 6,
+  },
+  ratingBadgeText: {
+    fontSize: 10,
+    fontWeight: '700' as const,
+  },
+  playerColRating: {
+    flex: 0.5,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  playerColNotes: {
+    flex: 0.3,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
 });

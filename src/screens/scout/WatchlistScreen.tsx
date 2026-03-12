@@ -15,6 +15,7 @@ import {
   TextInput,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import {
@@ -31,6 +32,7 @@ import {
   deletePlayerEvaluation,
   updateEvaluationNotes,
   updateEvaluationRating,
+  updateWatchlistEntry,
 } from '../../services/beraterService';
 
 export function WatchlistScreen() {
@@ -197,8 +199,10 @@ export function WatchlistScreen() {
 
     // Bestehende Evaluation laden
     const existingEval = evaluations.get(player.id);
-    setModalRating(existingEval?.rating ?? null);
-    setModalNotes(existingEval?.notes ?? '');
+    // Watchlist-Entry als Fallback für Notes/Rating (wenn keine Evaluation existiert)
+    const wlEntry = watchlist.find(w => w.player_id === player.id);
+    setModalRating(existingEval?.rating ?? wlEntry?.rating ?? null);
+    setModalNotes(existingEval?.notes ?? wlEntry?.notes ?? '');
     setModalEvalStatus(existingEval?.status ?? null);
 
     const history = await loadPlayerHistory(player.id);
@@ -248,7 +252,6 @@ export function WatchlistScreen() {
         setModalEvalStatus(status);
       }
     }
-    setSelectedPlayer(null);
   };
 
   const handleRatingChange = async (rating: number | null) => {
@@ -262,6 +265,10 @@ export function WatchlistScreen() {
         next.set(selectedPlayer.id, { ...existing, rating, updated_at: new Date().toISOString() });
         return next;
       });
+    } else {
+      // Keine Evaluation → Rating in Watchlist-Tabelle speichern
+      await updateWatchlistEntry(selectedPlayer.id, { rating });
+      setWatchlist(prev => prev.map(w => w.player_id === selectedPlayer.id ? { ...w, rating } : w));
     }
   };
 
@@ -278,6 +285,10 @@ export function WatchlistScreen() {
           next.set(selectedPlayer.id, { ...existing, notes: text || null, updated_at: new Date().toISOString() });
           return next;
         });
+      } else {
+        // Keine Evaluation → Notizen in Watchlist-Tabelle speichern
+        await updateWatchlistEntry(selectedPlayer.id, { notes: text || null });
+        setWatchlist(prev => prev.map(w => w.player_id === selectedPlayer.id ? { ...w, notes: text || null } : w));
       }
     }, 800);
   };
@@ -309,6 +320,9 @@ export function WatchlistScreen() {
     const age = calculateAge(player.birth_date);
     const addedDate = formatDateDE(item.added_at);
     const evalColor = getEvalColor(player.id, true); // Watchlist items are always on watchlist
+    const ev = evaluations.get(player.id);
+    const rating = ev?.rating ?? item.rating ?? null;
+    const hasNotes = !!(ev?.notes || item.notes);
 
     return (
       <TouchableOpacity
@@ -326,6 +340,12 @@ export function WatchlistScreen() {
               {formatNameLastFirst(player.player_name)}
             </Text>
             {age ? <Text style={[styles.mobileCardAge, { color: colors.textSecondary }]}>{age}</Text> : null}
+            {rating != null && (
+              <View style={[styles.ratingBadge, { backgroundColor: rating >= 7 ? colors.success + '25' : rating >= 4 ? '#f5a623' + '25' : colors.error + '25' }]}>
+                <Text style={[styles.ratingBadgeText, { color: rating >= 7 ? colors.success : rating >= 4 ? '#f5a623' : colors.error }]}>{rating}</Text>
+              </View>
+            )}
+            {hasNotes && <Ionicons name="chatbubble-outline" size={12} color={colors.textSecondary} style={{ marginLeft: 4 }} />}
           </View>
           {player.market_value ? (
             <Text style={[styles.mobileCardMV, { color: colors.text }]}>{player.market_value}</Text>
@@ -358,6 +378,9 @@ export function WatchlistScreen() {
     const age = calculateAge(player.birth_date);
     const addedDate = formatDateDE(item.added_at);
     const evalColor = getEvalColor(player.id, true);
+    const ev = evaluations.get(player.id);
+    const rating = ev?.rating ?? item.rating ?? null;
+    const hasNotes = !!(ev?.notes || item.notes);
 
     return (
       <TouchableOpacity
@@ -385,6 +408,16 @@ export function WatchlistScreen() {
           <Text style={[styles.playerColAgent, { color: agentLabel.color }]} numberOfLines={1}>
             {agentLabel.text}
           </Text>
+          <View style={styles.playerColNotes}>
+            {hasNotes && <Ionicons name="chatbubble-outline" size={13} color={colors.textSecondary} />}
+          </View>
+          <View style={styles.playerColRating}>
+            {rating != null && (
+              <View style={[styles.ratingBadge, { backgroundColor: rating >= 7 ? colors.success + '25' : rating >= 4 ? '#f5a623' + '25' : colors.error + '25' }]}>
+                <Text style={[styles.ratingBadgeText, { color: rating >= 7 ? colors.success : rating >= 4 ? '#f5a623' : colors.error }]}>{rating}</Text>
+              </View>
+            )}
+          </View>
           <Text style={[styles.playerColAdded, { color: colors.textSecondary }]} numberOfLines={1}>
             {addedDate || '-'}
           </Text>
@@ -589,12 +622,12 @@ export function WatchlistScreen() {
                 <Text style={[styles.evalButtonText, { color: modalEvalStatus === 'interessant' ? '#fff' : colors.textSecondary }]}>Interessant</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.evalButton, { backgroundColor: colors.error }]}
+                style={[styles.evalButton, { backgroundColor: colors.warning }]}
                 onPress={handleRemoveFromWatchlist}
                 activeOpacity={0.7}
               >
                 <Text style={[styles.evalButtonText, { color: '#fff' }]}>
-                  Entfernen
+                  Von Watchlist entfernen
                 </Text>
               </TouchableOpacity>
             </View>
@@ -621,6 +654,7 @@ export function WatchlistScreen() {
           data={sortedWatchlist}
           renderItem={renderMobileCard}
           keyExtractor={(item) => item.id}
+          extraData={[evaluations, watchlist]}
           ListEmptyComponent={!loading ? renderEmpty : null}
           contentContainerStyle={[
             styles.mobileListContent,
@@ -650,12 +684,18 @@ export function WatchlistScreen() {
                     Verein{sortIndicator('club')}
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ flex: 2 }} onPress={() => toggleSort('agent')}>
+                <TouchableOpacity style={{ flex: 1.5 }} onPress={() => toggleSort('agent')}>
                   <Text style={[styles.desktopHeaderText, { color: sortKey === 'agent' ? colors.primary : colors.text }]}>
                     Berater{sortIndicator('agent')}
                   </Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={{ flex: 1 }} onPress={() => toggleSort('added')}>
+                <View style={styles.playerColNotes}>
+                  <Text style={[styles.desktopHeaderText, { color: colors.text }]}>Notiz</Text>
+                </View>
+                <View style={styles.playerColRating}>
+                  <Text style={[styles.desktopHeaderText, { color: colors.text }]}>Bew.</Text>
+                </View>
+                <TouchableOpacity style={{ flex: 0.7 }} onPress={() => toggleSort('added')}>
                   <Text style={[styles.desktopHeaderText, { color: sortKey === 'added' ? colors.primary : colors.text }]}>
                     Hinzugefügt{sortIndicator('added')}
                   </Text>
@@ -667,6 +707,7 @@ export function WatchlistScreen() {
             data={sortedWatchlist}
             renderItem={renderDesktopRow}
             keyExtractor={(item) => item.id}
+            extraData={[evaluations, watchlist]}
             ListEmptyComponent={!loading ? renderEmpty : null}
             contentContainerStyle={
               watchlist.length === 0 && !loading ? styles.emptyContainer : undefined
@@ -836,11 +877,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   playerColAgent: {
-    flex: 2,
+    flex: 1.5,
     fontSize: 11,
   },
   playerColAdded: {
-    flex: 1,
+    flex: 0.7,
     fontSize: 11,
   },
 
@@ -1039,5 +1080,27 @@ const styles = StyleSheet.create({
   evalButtonText: {
     fontSize: 11,
     fontWeight: '600',
+  },
+  ratingBadge: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+    marginLeft: 6,
+  },
+  ratingBadgeText: {
+    fontSize: 10,
+    fontWeight: '700' as const,
+  },
+  playerColRating: {
+    flex: 0.5,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  playerColNotes: {
+    flex: 0.3,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
   },
 });

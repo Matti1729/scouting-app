@@ -78,6 +78,7 @@ export interface WatchlistEntry {
   id: string;
   player_id: string;
   notes: string | null;
+  rating: number | null;
   added_at: string;
   // Joined player data
   player?: BeraterPlayer;
@@ -354,6 +355,22 @@ export async function removeFromWatchlist(playerId: string): Promise<boolean> {
 
   if (error) {
     console.error('Error removing from watchlist:', error);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Watchlist-Eintrag aktualisieren (Notizen und/oder Rating)
+ */
+export async function updateWatchlistEntry(playerId: string, updates: { notes?: string | null; rating?: number | null }): Promise<boolean> {
+  const { error } = await supabase
+    .from('berater_watchlist')
+    .update(updates)
+    .eq('player_id', playerId);
+
+  if (error) {
+    console.error('Error updating watchlist entry:', error);
     return false;
   }
   return true;
