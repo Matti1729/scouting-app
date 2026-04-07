@@ -614,7 +614,7 @@ function findBestPlayerMatch(
   if (players.length === 0) return null;
 
   const normalizedSearchName = normalizeName(searchName);
-  const nameParts = normalizedSearchName.split(' ');
+  const nameParts = normalizedSearchName.split(' ').filter(p => p.length > 0);
 
   let bestMatch: TransfermarktPlayer | null = null;
   let bestScore = 0;
@@ -629,17 +629,29 @@ function findBestPlayerMatch(
     if (normalizedPlayerName === normalizedSearchName) {
       score = 100;
     } else {
-      // Teilweise Matches
-      for (const part of nameParts) {
-        if (part.length >= 3 && normalizedPlayerName.includes(part)) {
-          score += 20;
+      // Substring-Match: Suchname im Spielernamen enthalten oder umgekehrt
+      if (normalizedPlayerName.includes(normalizedSearchName) || normalizedSearchName.includes(normalizedPlayerName)) {
+        score += 80;
+      } else {
+        // Teilweise Matches mit längen-gewichteter Bewertung
+        for (const part of nameParts) {
+          if (part.length >= 2 && normalizedPlayerName.includes(part)) {
+            // Längere Teile stärker gewichten
+            score += part.length >= 5 ? 30 : part.length >= 3 ? 20 : 10;
+          }
         }
-      }
 
-      // Nachname am Ende
-      const lastName = nameParts[nameParts.length - 1];
-      if (lastName && normalizedPlayerName.endsWith(lastName)) {
-        score += 30;
+        // Nachname am Ende
+        const lastName = nameParts[nameParts.length - 1];
+        if (lastName && lastName.length >= 3 && normalizedPlayerName.endsWith(lastName)) {
+          score += 30;
+        }
+
+        // Erster Namensteil (Vorname) matcht am Anfang
+        const firstName = nameParts[0];
+        if (firstName && firstName.length >= 3 && normalizedPlayerName.startsWith(firstName)) {
+          score += 15;
+        }
       }
     }
 
@@ -681,26 +693,47 @@ function findBestPlayerMatch(
 }
 
 /**
- * Normalisiert Namen für Vergleiche (Umlaute, Akzente entfernen).
+ * Berechnet die Levenshtein-Distanz (Edit Distance) zwischen zwei Strings.
+ * Gibt die minimale Anzahl an Einfügungen, Löschungen oder Ersetzungen zurück.
+ */
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp: number[] = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    let prev = i - 1;
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const temp = dp[j];
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1]);
+      prev = temp;
+    }
+  }
+  return dp[n];
+}
+
+/**
+ * Normalisiert Namen für Vergleiche.
+ * Nutzt Unicode NFD-Decomposition für robuste Diakritika-Entfernung.
  */
 function normalizeName(name: string): string {
-  const replacements: Record<string, string> = {
-    'ä': 'a', 'ö': 'o', 'ü': 'u', 'ß': 'ss',
-    'é': 'e', 'è': 'e', 'ê': 'e', 'ë': 'e',
-    'á': 'a', 'à': 'a', 'â': 'a', 'ã': 'a',
-    'í': 'i', 'ì': 'i', 'î': 'i', 'ï': 'i',
-    'ó': 'o', 'ò': 'o', 'ô': 'o', 'õ': 'o',
-    'ú': 'u', 'ù': 'u', 'û': 'u',
-    'ñ': 'n', 'ç': 'c',
-  };
-
-  let result = name.toLowerCase().trim();
-  for (const [char, replacement] of Object.entries(replacements)) {
-    result = result.replace(new RegExp(char, 'g'), replacement);
-  }
-  // Deutsche Digraphen normalisieren (fussball.de nutzt "oe"/"ae"/"ue" statt Umlaute)
-  result = result.replace(/oe/g, 'o').replace(/ae/g, 'a').replace(/ue/g, 'u');
-  return result;
+  return name
+    .toLowerCase()
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')  // Alle Diakritika entfernen (é→e, č→c, ñ→n etc.)
+    .replace(/ø/g, 'o')               // Dänisch/Norwegisch (nicht durch NFD abgedeckt)
+    .replace(/ð/g, 'd')               // Isländisch
+    .replace(/þ/g, 'th')              // Isländisch
+    .replace(/ł/g, 'l')               // Polnisch
+    .replace(/đ/g, 'd')               // Kroatisch/Serbisch
+    .replace(/ß/g, 'ss')              // Deutsch
+    .replace(/æ/g, 'ae')              // Dänisch/Norwegisch
+    .replace(/oe/g, 'o')              // Digraphen (TM-URL-Slugs nutzen oe/ae/ue)
+    .replace(/ue/g, 'u')
+    .replace(/[^a-z0-9\s-]/g, '')     // Restliche Sonderzeichen entfernen
+    .replace(/\s+/g, ' ');            // Whitespace normalisieren
 }
 
 /**
@@ -761,6 +794,7 @@ export interface BeraterDBResult {
   has_agent: boolean;
   birth_date: string | null;
   matched: boolean;  // true = aus DB gefunden, false = muss TM-Fallback nutzen
+  db_player_name?: string | null; // Originalname aus DB (mit korrekten Umlauten)
 }
 
 /**
@@ -912,6 +946,7 @@ export async function enrichFromBeraterDB(
           has_agent: match.has_agent || player.has_agent || false,
           birth_date: match.birth_date || player.birth_date || null,
           matched: true,
+          db_player_name: match.player_name,
         });
       } else {
         console.log(`[BeraterDB] ✗ ${fullName} → not found across ${matchedClubs.length} clubs`);
@@ -957,37 +992,66 @@ function findBestBeraterMatch(
   for (const bp of beraterPlayers) {
     const normalizedPlayer = normalizeName(bp.player_name);
     const playerParts = normalizedPlayer.split(' ').filter(p => p.length > 0);
+    const isKuenstlername = playerParts.length === 1; // DB hat nur 1 Name (z.B. "Bernardo")
 
     let score = 0;
 
     // Exakter Match
     if (normalizedSearch === normalizedPlayer) {
       score = 200;
-    } else {
-      // Nachname-Match (flexibel fuer Doppelnamen)
+    }
+
+    // Künstlername-Match: DB hat nur 1 Name, fussball.de hat mehrere
+    // z.B. DB: "Bernardo" ↔ fussball.de: "Fernandes da Silva Junior Bernardo"
+    else if (isKuenstlername && normalizedPlayer.length >= 3) {
+      if (searchParts.includes(normalizedPlayer)) {
+        score = 120; // Künstlername ist einer der Namensteile
+      } else if (normalizedSearch.includes(normalizedPlayer)) {
+        score = 100; // Künstlername ist Substring des Suchnamens
+      }
+    }
+
+    else {
+      // Nachname-Match
       const searchLast = searchParts[searchParts.length - 1];
       const playerLast = playerParts[playerParts.length - 1];
+      let hasLastNameMatch = false;
+
       if (searchLast === playerLast) {
         score += 60;
+        hasLastNameMatch = true;
       } else if (searchParts.includes(playerLast)) {
-        // BeraterDB-Nachname kommt irgendwo im Suchname vor
-        // z.B. "massek" in ["ivan", "mathis", "massek", "bakotaken"]
         score += 50;
+        hasLastNameMatch = true;
       } else if (playerParts.includes(searchLast)) {
-        // Suchname-Nachname kommt irgendwo im BeraterDB-Namen vor
         score += 50;
+        hasLastNameMatch = true;
       }
 
-      // Vorname-Match (erstes Wort)
-      if (searchParts.length > 1 && playerParts.length > 1) {
-        const searchFirst = searchParts[0];
-        const playerFirst = playerParts[0];
-        if (searchFirst === playerFirst) {
-          score += 40;
-        } else if (searchFirst.startsWith(playerFirst) || playerFirst.startsWith(searchFirst)) {
-          // Abkürzung: "Mo" vs "Mohamed"
-          score += 20;
+      // Vorname-Match: mindestens ein Vorname muss matchen
+      // Bei 2 Vornamen (z.B. "William Cole") oder Hyphen-Vornamen
+      // ("Mohammed-Elamine" = 2 Vornamen) reicht einer
+      if (hasLastNameMatch) {
+        // Hyphen-Vornamen direkt als separate Vornamen behandeln
+        const searchFirstNames = searchParts.slice(0, -1).flatMap(n => n.split('-')).filter(p => p.length >= 2);
+        const playerFirstNames = playerParts.slice(0, -1).flatMap(n => n.split('-')).filter(p => p.length >= 2);
+
+        let bestFirstNameScore = 0;
+        for (const sf of searchFirstNames) {
+          for (const pf of playerFirstNames) {
+            if (sf === pf) {
+              bestFirstNameScore = Math.max(bestFirstNameScore, 40);
+            } else if (sf.length >= 3 && pf.length >= 3 &&
+                       (sf.startsWith(pf) || pf.startsWith(sf))) {
+              // "Mo" vs "Mohamed", "Alex" vs "Alexander"
+              bestFirstNameScore = Math.max(bestFirstNameScore, 25);
+            } else if (sf.length >= 4 && pf.length >= 4 && levenshtein(sf, pf) <= 1) {
+              // "Mohammed" vs "Mohamed" (1 Buchstabe Differenz)
+              bestFirstNameScore = Math.max(bestFirstNameScore, 35);
+            }
+          }
         }
+        score += bestFirstNameScore;
       }
 
       // Teil-Wort-Matches für zusammengesetzte Namen
@@ -1006,7 +1070,37 @@ function findBestBeraterMatch(
     }
   }
 
-  // Mindestens Nachname + Vorname müssen matchen (Score >= 80)
-  // Oder exakter Match (200)
-  return bestScore >= 80 ? bestMatch : null;
+  // Mindestens Score 80 für Match (Nachname + Vorname oder Künstlername)
+  if (bestScore >= 80) return bestMatch;
+
+  // Fuzzy-Fallback: Levenshtein-Distanz für Tippfehler/Schreibfehler bei fussball.de
+  // z.B. "Mohammed-Elamine" vs "Mohamed-Elamine" (1 Buchstabe Differenz)
+  let fuzzyMatch: typeof beraterPlayers[0] | null = null;
+  let fuzzyBestDist = Infinity;
+
+  for (const bp of beraterPlayers) {
+    const normalizedPlayer = normalizeName(bp.player_name);
+    const playerParts = normalizedPlayer.split(' ').filter(p => p.length > 0);
+    const searchLast = searchParts[searchParts.length - 1];
+    const playerLast = playerParts[playerParts.length - 1];
+
+    // Nachname muss exakt oder fast exakt matchen (max 1 Edit)
+    const lastNameDist = levenshtein(searchLast, playerLast);
+    if (lastNameDist > 1) continue;
+
+    // Gesamtname: max 2 Edits bei kurzen Namen, max 3 bei langen
+    const maxDist = normalizedSearch.length > 15 ? 3 : 2;
+    const fullDist = levenshtein(normalizedSearch, normalizedPlayer);
+
+    if (fullDist <= maxDist && fullDist < fuzzyBestDist) {
+      fuzzyBestDist = fullDist;
+      fuzzyMatch = bp;
+    }
+  }
+
+  if (fuzzyMatch) {
+    console.log(`[BeraterDB] Fuzzy match (dist=${fuzzyBestDist}): "${searchName}" → "${fuzzyMatch.player_name}"`);
+  }
+
+  return fuzzyMatch;
 }

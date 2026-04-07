@@ -246,7 +246,7 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
     paddingHorizontal: 10,
     minHeight: 28,
-    minWidth: 100,
+    minWidth: 60,
   },
   buttonText: {
     fontSize: 15,

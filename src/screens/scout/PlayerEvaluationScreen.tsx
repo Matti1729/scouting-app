@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   Platform,
   Alert,
   useWindowDimensions,
+  BackHandler,
 } from 'react-native';
 import { supabase } from '../../config/supabase';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -90,6 +91,11 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
   // Felder die nicht mehr im UI sind, aber beim Laden erhalten bleiben
   const [preservedFields, setPreservedFields] = useState<Record<string, any>>({});
 
+  // Track ob Änderungen gemacht wurden seit dem Laden
+  const hasLoadedRef = useRef(false);
+  const [hasChanges, setHasChanges] = useState(false);
+  const hasChangesRef = useRef(false);
+
   // Berater-Evaluation + Watchlist Status
   const [beraterPlayerId, setBeraterPlayerId] = useState<string>(params.beraterPlayerId || '');
   const [beraterEvalStatus, setBeraterEvalStatus] = useState<'interessant' | 'nicht_interessant' | null>(null);
@@ -99,6 +105,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
   useEffect(() => {
     const loadExisting = async () => {
       if (!params.matchId || !parsedName.lastName) {
+        hasLoadedRef.current = true;
         setIsLoading(false);
         return;
       }
@@ -133,11 +140,81 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       } catch (err) {
         console.error('Error loading existing evaluation:', err);
       } finally {
+        hasLoadedRef.current = true;
         setIsLoading(false);
       }
     };
     loadExisting();
   }, []);
+
+  // Änderungen tracken nach initialem Laden
+  const changeCountRef = useRef(0);
+  useEffect(() => {
+    if (hasLoadedRef.current) {
+      // Ersten Trigger nach dem Laden ignorieren
+      changeCountRef.current++;
+      if (changeCountRef.current > 1) { setHasChanges(true); hasChangesRef.current = true; }
+    }
+  }, [positions, bodyStructure, speedAthleticism, overallRating, notes]);
+
+  // Bestätigungsdialog beim Schließen mit ungespeicherten Änderungen
+  const confirmClose = useCallback(() => {
+    if (!hasChanges) {
+      navigation.goBack();
+      return;
+    }
+    if (Platform.OS === 'web') {
+      if (window.confirm('Du hast ungespeicherte Änderungen. Möchtest du wirklich schließen?')) {
+        navigation.goBack();
+      }
+    } else {
+      Alert.alert(
+        'Ungespeicherte Änderungen',
+        'Du hast ungespeicherte Änderungen. Möchtest du wirklich schließen?',
+        [
+          { text: 'Abbrechen', style: 'cancel' },
+          { text: 'Verwerfen', style: 'destructive', onPress: () => navigation.goBack() },
+        ]
+      );
+    }
+  }, [hasChanges, navigation]);
+
+  // Hardware-Back-Button (Android) abfangen
+  useEffect(() => {
+    const onBackPress = () => {
+      if (hasChanges) {
+        confirmClose();
+        return true; // prevent default
+      }
+      return false;
+    };
+    const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => sub.remove();
+  }, [hasChanges, confirmClose]);
+
+  // Navigation beforeRemove abfangen (Web/iOS back gesture)
+  useEffect(() => {
+    const unsubscribe = navigation.addListener('beforeRemove', (e: any) => {
+      if (!hasChangesRef.current) return;
+      e.preventDefault();
+      if (Platform.OS === 'web') {
+        if (window.confirm('Du hast ungespeicherte Änderungen. Möchtest du wirklich schließen?')) {
+          hasChangesRef.current = false;
+          navigation.dispatch(e.data.action);
+        }
+      } else {
+        Alert.alert(
+          'Ungespeicherte Änderungen',
+          'Du hast ungespeicherte Änderungen. Möchtest du wirklich schließen?',
+          [
+            { text: 'Abbrechen', style: 'cancel' },
+            { text: 'Verwerfen', style: 'destructive', onPress: () => { hasChangesRef.current = false; navigation.dispatch(e.data.action); } },
+          ]
+        );
+      }
+    });
+    return unsubscribe;
+  }, [navigation, hasChanges]);
 
   // Berater-Status laden
   useEffect(() => {
@@ -170,17 +247,34 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       }
     }
 
-    // 2. Per Name suchen
+    // 2. Per Name suchen (mehrere Varianten: "Vorname Nachname" und "Nachname Vorname")
     const playerName = [firstName, lastName].filter(Boolean).join(' ');
-    if (playerName) {
+    const playerNameReversed = [lastName, firstName].filter(Boolean).join(' ');
+    const namesToTry = [...new Set([playerName, playerNameReversed].filter(Boolean))];
+
+    for (const name of namesToTry) {
+      if (!name) continue;
       const { data: byName } = await supabase
         .from('berater_players')
         .select('id')
-        .ilike('player_name', playerName)
+        .ilike('player_name', name)
         .maybeSingle();
       if (byName) {
         setBeraterPlayerId(byName.id);
         return byName.id;
+      }
+    }
+
+    // 2b. Fuzzy: Suche nach Nachname allein (wenn eindeutig im gleichen Verein)
+    if (lastName && currentClub) {
+      const { data: byLastName } = await supabase
+        .from('berater_players')
+        .select('id, player_name')
+        .ilike('player_name', `%${lastName}%`)
+        .limit(5);
+      if (byLastName?.length === 1) {
+        setBeraterPlayerId(byLastName[0].id);
+        return byLastName[0].id;
       }
     }
 
@@ -264,13 +358,26 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         overall_rating: overallRating || null,
         notes: notes || null,
       };
-      if (existingId) evalData.id = existingId;
-      const { error } = await supabase.from('player_evaluations').upsert(evalData, {
-        onConflict: 'match_id,last_name,first_name',
-      });
+      let error;
+      if (existingId) {
+        ({ error } = await supabase
+          .from('player_evaluations')
+          .update(evalData)
+          .eq('id', existingId));
+      } else {
+        const { data, error: insertError } = await supabase
+          .from('player_evaluations')
+          .insert(evalData)
+          .select('id')
+          .single();
+        error = insertError;
+        if (data) setExistingId(data.id);
+      }
       if (error) {
         Alert.alert('Fehler', error.message);
       } else {
+        hasChangesRef.current = false;
+        setHasChanges(false);
         navigation.goBack();
       }
     } catch (err: any) {
@@ -283,6 +390,17 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
   return (
     <View style={styles.modalOverlay}>
       <View style={[styles.modalContainer, { backgroundColor: colors.background, borderColor: colors.border }]}>
+        {/* Top-Bar im dunklen Rahmen mit Close-Button */}
+        <View style={styles.modalTopBar}>
+          <View style={{ flex: 1 }} />
+          <TouchableOpacity
+            style={[styles.modalCloseButton, { borderColor: colors.border }]}
+            onPress={confirmClose}
+            activeOpacity={0.7}
+          >
+            <Text style={[styles.modalCloseText, { color: colors.textSecondary }]}>✕</Text>
+          </TouchableOpacity>
+        </View>
         <KeyboardAvoidingView
           style={styles.flex}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -306,7 +424,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
               matchDate={matchDate}
               overallRating={overallRating}
               onRatingChange={setOverallRating}
-              onClose={() => navigation.goBack()}
+              onClose={confirmClose}
               transfermarktUrl={transfermarktUrl}
               agentName={agentName}
             />
@@ -493,6 +611,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     padding: 24,
+  },
+  modalTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseText: {
+    fontSize: 16,
+    fontWeight: '600',
   },
   modalContainer: {
     width: '95%',

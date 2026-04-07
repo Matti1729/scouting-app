@@ -267,7 +267,6 @@ const styles = StyleSheet.create({
   },
   cardsContainerWide: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
   },
   card: {
     borderRadius: 16,
@@ -277,8 +276,6 @@ const styles = StyleSheet.create({
   },
   cardWide: {
     flex: 1,
-    minWidth: 300,
-    maxWidth: 500,
   },
   cardLarge: {
     minHeight: 280,

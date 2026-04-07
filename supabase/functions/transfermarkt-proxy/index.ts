@@ -212,11 +212,20 @@ interface AgentInfo {
 function normalizeName(name: string): string {
   return name
     .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // Entferne Akzente
-    .replace(/[^a-z0-9\s]/g, '')     // Nur Buchstaben, Zahlen, Leerzeichen
-    .replace(/\s+/g, ' ')
     .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Alle Diakritika entfernen
+    .replace(/ø/g, 'o')              // Dänisch/Norwegisch (nicht durch NFD abgedeckt)
+    .replace(/ð/g, 'd')              // Isländisch
+    .replace(/þ/g, 'th')             // Isländisch
+    .replace(/ł/g, 'l')              // Polnisch
+    .replace(/đ/g, 'd')              // Kroatisch/Serbisch
+    .replace(/ß/g, 'ss')             // Deutsch
+    .replace(/æ/g, 'ae')             // Dänisch/Norwegisch
+    .replace(/oe/g, 'o')             // Digraphen (TM-URL-Slugs nutzen oe/ae/ue)
+    .replace(/ue/g, 'u')
+    .replace(/[^a-z0-9\s-]/g, '')    // Restliche Sonderzeichen entfernen
+    .replace(/\s+/g, ' ')
 }
 
 /**
@@ -230,7 +239,7 @@ function findBestPlayerMatch(
   if (players.length === 0) return null
 
   const normalizedSearchName = normalizeName(searchName)
-  const nameParts = normalizedSearchName.split(' ')
+  const nameParts = normalizedSearchName.split(' ').filter(p => p.length > 0)
 
   let bestMatch: TransfermarktPlayer | null = null
   let bestScore = 0
@@ -245,17 +254,28 @@ function findBestPlayerMatch(
     if (normalizedPlayerName === normalizedSearchName) {
       score = 100
     } else {
-      // Teilweise Matches
-      for (const part of nameParts) {
-        if (part.length >= 3 && normalizedPlayerName.includes(part)) {
-          score += 20
+      // Substring-Match: Suchname im Spielernamen enthalten oder umgekehrt
+      if (normalizedPlayerName.includes(normalizedSearchName) || normalizedSearchName.includes(normalizedPlayerName)) {
+        score += 80
+      } else {
+        // Teilweise Matches mit längen-gewichteter Bewertung
+        for (const part of nameParts) {
+          if (part.length >= 2 && normalizedPlayerName.includes(part)) {
+            score += part.length >= 5 ? 30 : part.length >= 3 ? 20 : 10
+          }
         }
-      }
 
-      // Nachname am Ende
-      const lastName = nameParts[nameParts.length - 1]
-      if (lastName && normalizedPlayerName.endsWith(lastName)) {
-        score += 30
+        // Nachname am Ende
+        const lastName = nameParts[nameParts.length - 1]
+        if (lastName && lastName.length >= 3 && normalizedPlayerName.endsWith(lastName)) {
+          score += 30
+        }
+
+        // Erster Namensteil (Vorname) matcht am Anfang
+        const firstName = nameParts[0]
+        if (firstName && firstName.length >= 3 && normalizedPlayerName.startsWith(firstName)) {
+          score += 15
+        }
       }
     }
 
@@ -407,6 +427,20 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
             console.log('Found birth date (ISO):', birthDate)
             break
           }
+        }
+      }
+    }
+
+    // Geburtsdatum validieren: Alter muss zwischen 13 und 45 liegen
+    if (birthDate) {
+      const parts = birthDate.split('.')
+      if (parts.length === 3) {
+        const bd = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]))
+        const now = new Date()
+        const age = now.getFullYear() - bd.getFullYear() - (now < new Date(now.getFullYear(), bd.getMonth(), bd.getDate()) ? 1 : 0)
+        if (age < 13 || age > 45 || isNaN(age)) {
+          console.log(`Birth date ${birthDate} rejected: age ${age} out of range (13-45)`)
+          birthDate = null
         }
       }
     }
@@ -609,8 +643,9 @@ async function searchViaClubSquadWithFullInfo(playerName: string, clubHint: stri
 
     console.log('Club hint after cleanup:', searchClubHint, shortSearchHint !== searchClubHint ? `(short: ${shortSearchHint})` : '')
 
-    // Jugendteams (U19, U17, U16, etc.) - behalte den Namen, TM hat diese als eigene "Vereine"
-    // z.B. "FC Bayern München U19" existiert als eigener Eintrag auf TM
+    // Jugendteams (U19, U17, U16, etc.) - Altersklasse entfernen um den Hauptverein zu finden
+    // z.B. "FC Schalke 04 U17" → suche nach "FC Schalke 04"
+    searchClubHint = searchClubHint.replace(/\s+U\d{2}(?:\s*2)?\b/gi, '').trim()
 
     // Schritt 1: Verein suchen - IMMER auch Kurzname versuchen falls verfügbar
     // z.B. "1. FC Saarbrücken" -> erst "1. FC Saarbrücken", dann "Saarbrücken"
@@ -738,7 +773,13 @@ async function searchViaClubSquadWithFullInfo(playerName: string, clubHint: stri
 
       if (matchingPlayer) {
         player = matchingPlayer
-        console.log('Found player via fallback search:', player.name, player.currentClub)
+        console.log('Found player via fallback search (club match):', player.name, player.currentClub)
+      }
+
+      // Letzter Fallback: Nimm den ersten Treffer der Namenssuche (ohne Club-Filter)
+      if (!player && searchResults.length > 0) {
+        player = searchResults[0]
+        console.log('Found player via fallback search (first result, no club filter):', player.name, player.currentClub)
       }
     }
 
@@ -782,33 +823,43 @@ function findPlayerInSquad(html: string, searchName: string, clubName: string): 
   let bestMatch: TransfermarktPlayer | null = null
   let bestScore = 0
 
-  // Pattern: Finde alle Spieler-Profile-Links (href enthält /profil/spieler/)
-  // Auf Kaderseiten haben Links oft kein title-Attribut, daher extrahieren wir den Namen aus der URL
-  const urlPattern = /href="(\/([^\/]+)\/profil\/spieler\/(\d+))"/gi
+  // Pattern: Finde alle Spieler-Profile-Links mit optionalem title-Attribut und Link-Text
+  // title oder Link-Text enthält den echten Namen mit korrekten Sonderzeichen (z.B. "Lindström")
+  const urlPattern = /href="(\/([^\/]+)\/profil\/spieler\/(\d+))"[^>]*?(?:title="([^"]*)")?[^>]*>([^<]*)</gi
 
   const seenUrls = new Set<string>()
 
   for (const match of html.matchAll(urlPattern)) {
     const relativeUrl = match[1]
     const urlSlug = match[2]
+    const titleAttr = match[4]?.trim()  // title="Jesper Lindström"
+    const linkText = match[5]?.trim()   // >Jesper Lindström<
 
     if (seenUrls.has(relativeUrl)) continue
     seenUrls.add(relativeUrl)
 
-    // Extrahiere Namen aus URL-Slug (z.B. "rafael-garcia" -> "rafael garcia")
+    // Für Matching: URL-Slug verwenden (normalisiert gut)
     const nameFromUrl = urlSlug.replace(/-/g, ' ')
-
     const score = calculateNameMatchScore(nameFromUrl, searchParts, normalizedSearch)
 
     if (score > bestScore) {
       bestScore = score
-      // Kapitalisiere den Namen für bessere Darstellung
-      const formattedName = nameFromUrl.split(' ')
-        .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-        .join(' ')
+
+      // Für Anzeige: Echten Namen aus title oder Link-Text nehmen (mit korrekten Umlauten)
+      // Fallback: URL-Slug kapitalisieren
+      let displayName = ''
+      if (titleAttr && titleAttr.length > 1) {
+        displayName = titleAttr
+      } else if (linkText && linkText.length > 1 && !linkText.includes('/')) {
+        displayName = linkText
+      } else {
+        displayName = nameFromUrl.split(' ')
+          .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+          .join(' ')
+      }
 
       bestMatch = {
-        name: formattedName,
+        name: displayName,
         profileUrl: `https://www.transfermarkt.de${relativeUrl}`,
         currentClub: clubName,
       }
@@ -817,8 +868,74 @@ function findPlayerInSquad(html: string, searchName: string, clubName: string): 
 
   console.log(`Squad search: best score ${bestScore} for "${searchName}"${bestMatch ? ` -> ${bestMatch.name}` : ''}`)
 
-  // Nur zurückgeben wenn ein guter Match gefunden wurde (mindestens 50 Punkte)
-  return bestScore >= 50 ? bestMatch : null
+  if (bestScore >= 50) return bestMatch
+
+  // Fallback: Nur Nachname suchen (für Compound-Namen wie "Campbell, William Cole")
+  if (searchParts.length > 1) {
+    const lastNameOnly = searchParts[searchParts.length - 1]
+    if (lastNameOnly.length >= 4) {
+      let fallbackMatch: TransfermarktPlayer | null = null
+      let fallbackScore = 0
+
+      for (const match of html.matchAll(urlPattern)) {
+        const relativeUrl = match[1]
+        const urlSlug = match[2]
+        const titleAttr = match[4]?.trim()
+        const linkText = match[5]?.trim()
+        const nameFromUrl = urlSlug.replace(/-/g, ' ')
+        const normalizedUrlName = normalizeName(nameFromUrl)
+
+        if (normalizedUrlName.includes(lastNameOnly)) {
+          const score = 55
+          if (score > fallbackScore) {
+            fallbackScore = score
+            let displayName = ''
+            if (titleAttr && titleAttr.length > 1) {
+              displayName = titleAttr
+            } else if (linkText && linkText.length > 1 && !linkText.includes('/')) {
+              displayName = linkText
+            } else {
+              displayName = nameFromUrl.split(' ')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ')
+            }
+            fallbackMatch = {
+              name: displayName,
+              profileUrl: `https://www.transfermarkt.de${relativeUrl}`,
+              currentClub: clubName,
+            }
+          }
+        }
+      }
+
+      if (fallbackMatch) {
+        console.log(`Squad search fallback (lastname "${lastNameOnly}"): ${fallbackMatch.name}`)
+        return fallbackMatch
+      }
+    }
+  }
+
+  return null
+}
+
+/**
+ * Levenshtein-Distanz (Edit Distance) zwischen zwei Strings.
+ */
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length
+  if (m === 0) return n
+  if (n === 0) return m
+  const dp: number[] = Array.from({ length: n + 1 }, (_, i) => i)
+  for (let i = 1; i <= m; i++) {
+    let prev = i - 1
+    dp[0] = i
+    for (let j = 1; j <= n; j++) {
+      const temp = dp[j]
+      dp[j] = a[i - 1] === b[j - 1] ? prev : 1 + Math.min(prev, dp[j], dp[j - 1])
+      prev = temp
+    }
+  }
+  return dp[n]
 }
 
 /**
@@ -830,19 +947,56 @@ function calculateNameMatchScore(playerName: string, searchParts: string[], norm
   // Exakter Match
   if (normalizedPlayer === normalizedSearch) return 100
 
+  // Substring-Match: Suchname im Spielernamen oder umgekehrt
+  if (normalizedPlayer.includes(normalizedSearch) || normalizedSearch.includes(normalizedPlayer)) {
+    return 80
+  }
+
   let score = 0
 
-  // Teilweise Matches
+  // Teilweise Matches mit längen-gewichteter Bewertung
   for (const part of searchParts) {
-    if (part.length >= 3 && normalizedPlayer.includes(part)) {
-      score += 25
+    if (part.length >= 2 && normalizedPlayer.includes(part)) {
+      score += part.length >= 5 ? 30 : part.length >= 3 ? 25 : 10
     }
   }
 
   // Nachname am Ende
   const lastName = searchParts[searchParts.length - 1]
-  if (lastName && normalizedPlayer.endsWith(lastName)) {
+  if (lastName && lastName.length >= 3 && normalizedPlayer.endsWith(lastName)) {
     score += 30
+  }
+
+  // Vorname am Anfang
+  const firstName = searchParts[0]
+  if (firstName && firstName.length >= 3 && normalizedPlayer.startsWith(firstName)) {
+    score += 15
+  }
+
+  // Subsequence-Match für korrupte Namen (fehlende Zeichen aus Scraping)
+  // z.B. "lindstrm" ist Subsequence von "lindstrom"
+  if (score < 50 && normalizedSearch.length >= 5) {
+    const isSubsequence = (short: string, long: string): boolean => {
+      let si = 0
+      for (let li = 0; li < long.length && si < short.length; li++) {
+        if (short[si] === long[li]) si++
+      }
+      return si === short.length
+    }
+    const searchNoSpaces = normalizedSearch.replace(/\s/g, '')
+    const playerNoSpaces = normalizedPlayer.replace(/\s/g, '')
+    if (isSubsequence(searchNoSpaces, playerNoSpaces) && searchNoSpaces.length >= playerNoSpaces.length * 0.7) {
+      score = Math.max(score, 60)
+    }
+  }
+
+  // Levenshtein-Fallback: Tippfehler/Schreibfehler tolerieren (max 2-3 Edits)
+  if (score < 50 && normalizedSearch.length >= 5) {
+    const maxDist = normalizedSearch.length > 15 ? 3 : 2
+    const dist = levenshtein(normalizedSearch, normalizedPlayer)
+    if (dist <= maxDist) {
+      score = Math.max(score, 70)
+    }
   }
 
   return score

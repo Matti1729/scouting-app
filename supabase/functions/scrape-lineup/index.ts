@@ -218,6 +218,20 @@ const GLYPH_NAME_TO_CHAR: Record<string, string> = {
   'scaron': 'š', 'Scaron': 'Š', 'zcaron': 'ž', 'Zcaron': 'Ž',
   'ntilde': 'ñ', 'Ntilde': 'Ñ', 'ccedilla': 'ç', 'Ccedilla': 'Ç',
   'lslash': 'ł', 'Lslash': 'Ł',
+  'rcaron': 'ř', 'Rcaron': 'Ř', 'dcaron': 'ď', 'Dcaron': 'Ď',
+  'tcaron': 'ť', 'Tcaron': 'Ť', 'ncaron': 'ň', 'Ncaron': 'Ň',
+  'sacute': 'ś', 'Sacute': 'Ś', 'zacute': 'ź', 'Zacute': 'Ź',
+  'zdotaccent': 'ż', 'Zdotaccent': 'Ż',
+  'aogonek': 'ą', 'Aogonek': 'Ą', 'eogonek': 'ę', 'Eogonek': 'Ę',
+  'dcroat': 'đ', 'Dcroat': 'Đ',
+  // Nordic
+  'oslash': 'ø', 'Oslash': 'Ø', 'aring': 'å', 'Aring': 'Å',
+  'eth': 'ð', 'Eth': 'Ð', 'thorn': 'þ', 'Thorn': 'Þ',
+  // Turkish
+  'gbreve': 'ğ', 'Gbreve': 'Ğ', 'scedilla': 'ş', 'Scedilla': 'Ş',
+  'idotless': 'ı',
+  // Additional accented
+  'yacute': 'ý', 'Yacute': 'Ý', 'ydieresis': 'ÿ',
   // Punctuation
   'hyphen': '-', 'period': '.', 'space': ' ',
   'quotesingle': "'", 'quoteright': '\u2019',
@@ -1743,14 +1757,23 @@ function extractGermanDate(dateStr: string): string {
 }
 
 function stripAgeGroup(teamName: string): string {
-  return teamName
-    .replace(/\s+U\d{2}\s*2?$/i, '')
+  let result = teamName
+    .replace(/\s+U\d{2}(?:\s*2)?\b/gi, '')
     .replace(/\s+2$/, '')
     .replace(/\s+II$/, '')
     .replace(/\s*\(2\)$/, '')
     .replace(/\s*\(II\)$/, '')
     .trim()
     .replace(/\.$/, '')
+
+  // Doppelte Vereinspräfixe entfernen (z.B. "FC Schalke 04 FC" → "FC Schalke 04")
+  const prefixes = ['FC', 'SC', 'SV', 'VfB', 'VfL', 'TSV', 'FSV', 'SpVgg', 'SG', 'TSG', 'RB', 'BV', 'RW', 'BW', 'SF']
+  for (const prefix of prefixes) {
+    const dupRegex = new RegExp(`^(${prefix}\\b.+?)\\s+${prefix}$`, 'i')
+    result = result.replace(dupRegex, '$1').trim()
+  }
+
+  return result
 }
 
 function detectAgeGroup(league: string, homeTeam: string, awayTeam: string): string {
@@ -1892,11 +1915,21 @@ function parseTeamsFromUrlSlug(urlOrPath: string): { home: string; away: string 
       if (idx > 3) candidates.push(idx + 1)
     }
     if (candidates.length > 0) {
-      // Pick the split that gives the most balanced team name lengths
-      const midpoint = slug.length / 2
-      splitIndex = candidates.reduce((best, pos) =>
-        Math.abs(pos - midpoint) < Math.abs(best - midpoint) ? pos : best
-      )
+      // Prefer splits that come right after age-group suffixes (u19, u17, u15, u23, ii, iii)
+      const ageSuffixes = ['-u19-', '-u17-', '-u15-', '-u23-', '-u21-', '-ii-', '-iii-']
+      const afterAgeSuffix = candidates.filter(pos => {
+        const before = slug.substring(0, pos)
+        return ageSuffixes.some(s => before.endsWith(s.slice(0, -1)))
+      })
+      if (afterAgeSuffix.length > 0) {
+        splitIndex = afterAgeSuffix[0]
+      } else {
+        // Pick the split that gives the most balanced team name lengths
+        const midpoint = slug.length / 2
+        splitIndex = candidates.reduce((best, pos) =>
+          Math.abs(pos - midpoint) < Math.abs(best - midpoint) ? pos : best
+        )
+      }
     }
   }
 
@@ -1922,6 +1955,8 @@ function parseTeamsFromUrlSlug(urlOrPath: string): { home: string; away: string 
     for (const [long, short] of Object.entries(abbreviations)) {
       f = f.replace(new RegExp(long, 'gi'), short)
     }
+    // Umlaut-Konvertierung (URL-Slugs haben keine Umlaute)
+    f = f.replace(/oe/g, 'ö').replace(/ae/g, 'ä').replace(/ue/g, 'ü')
     const upperAbbrevs = ['fc', 'sv', 'sc', 'vfb', 'vfl', 'tsg', 'fsv', 'bsc', 'rb', 'bv', 'tsv', 'rw', 'sw', 'bw', 'sf', 'sg', 'tv', 'ssc']
     return f.split('-').map(w => {
       if (upperAbbrevs.includes(w.toLowerCase())) return w.toUpperCase()
@@ -1979,6 +2014,26 @@ async function fetchMatchInfo(
     if (mainResponse.ok) {
       const mainHtml = await mainResponse.text()
       debugInfo.matchInfoMainPageLength = mainHtml.length
+
+      // Teamnamen aus JavaScript-Variablen (zuverlässigste Quelle)
+      const edHome = mainHtml.match(/edHeimmannschaftName='([^']+)'/)?.[1]
+      const edAway = mainHtml.match(/edGastmannschaftName='([^']+)'/)?.[1]
+      if (edHome && edAway) {
+        homeTeam = edHome
+        awayTeam = edAway
+        debugInfo.teamsSource = 'js-variables'
+        console.log('match-info: Teams from JS vars:', homeTeam, 'vs', awayTeam)
+      } else {
+        // Fallback: Title-Tag
+        const titleTag = mainHtml.match(/<title>([^<]+)<\/title>/i)?.[1] || ''
+        const teamsMatch = titleTag.match(/^(.+?)\s+-\s+(.+?)(?:\s+Ergebnis|\s*\|)/)
+        if (teamsMatch) {
+          homeTeam = teamsMatch[1].trim()
+          awayTeam = teamsMatch[2].trim()
+          debugInfo.teamsSource = 'title-tag'
+          console.log('match-info: Teams from title:', homeTeam, 'vs', awayTeam)
+        }
+      }
 
       // Liga aus Title-Tag: "Team1 - Team2 Ergebnis: Liga - Kategorie - DD.MM.YYYY"
       league = extractLeagueFromTitle(mainHtml)

@@ -70,6 +70,7 @@ function getSupabaseClient() {
 interface AgentInfo {
   agentName: string | null
   agentCompany: string | null
+  agentUrl: string | null
   birthDate: string | null
   isRetired: boolean
   currentClubName: string | null
@@ -142,7 +143,7 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
 
     if (!response || !response.ok) {
       console.error('Profile fetch failed for:', fullUrl)
-      return { agentName: null, agentCompany: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null }
+      return { agentName: null, agentCompany: null, agentUrl: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null }
     }
 
     const html = await response.text()
@@ -261,6 +262,20 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
       }
     }
 
+    // Geburtsdatum validieren: Alter muss zwischen 13 und 45 liegen
+    if (birthDate) {
+      const parts = birthDate.split('.')
+      if (parts.length === 3) {
+        const bd = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]))
+        const now = new Date()
+        const age = now.getFullYear() - bd.getFullYear() - (now < new Date(now.getFullYear(), bd.getMonth(), bd.getDate()) ? 1 : 0)
+        if (age < 13 || age > 45 || isNaN(age)) {
+          console.log(`Birth date ${birthDate} rejected: age ${age} out of range (13-45)`)
+          birthDate = null
+        }
+      }
+    }
+
     // ========== BERATER-INFO EXTRAHIEREN ==========
     // Position-based search to avoid issues with nested <span> inside agent section
     const beraterPos = html.search(/Spielerberater:/i)
@@ -299,7 +314,8 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
         // agentName: use company name if link text is abbreviated
         const agentName = (title || (linkText.endsWith('...') && agentCompany ? agentCompany : linkText)).trim()
 
-        if (agentName) return { agentName, agentCompany, birthDate, isRetired, currentClubName, marketValue }
+        const agentUrl = href ? `https://www.transfermarkt.de${href}` : null
+        if (agentName) return { agentName, agentCompany, agentUrl, birthDate, isRetired, currentClubName, marketValue }
       }
 
       // No link found - extract text from the bold span
@@ -309,7 +325,7 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
         : searchArea.replace(/<[^>]*>/g, '').replace(/Spielerberater:\s*/i, '').trim().split('\n')[0]?.trim()
 
       if (textContent && textContent !== '-' && textContent !== '---') {
-        return { agentName: textContent, agentCompany: null, birthDate, isRetired, currentClubName, marketValue }
+        return { agentName: textContent, agentCompany: null, agentUrl: null, birthDate, isRetired, currentClubName, marketValue }
       }
     }
 
@@ -336,7 +352,8 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
           }
         }
         if (!agentCompany || agentCompany.endsWith('...')) agentCompany = linkText
-        if (agentName) return { agentName, agentCompany, birthDate, isRetired, currentClubName, marketValue }
+        const agentUrl = href ? `https://www.transfermarkt.de${href}` : null
+        if (agentName) return { agentName, agentCompany, agentUrl, birthDate, isRetired, currentClubName, marketValue }
       }
     }
 
@@ -344,14 +361,14 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
     const isValidProfile = /data-header__headline-wrapper|class="[^"]*info-table/i.test(html)
     if (!isValidProfile) {
       console.log('Page does not appear to be a valid TM profile (captcha/error page?) - returning null')
-      return { agentName: null, agentCompany: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null }
+      return { agentName: null, agentCompany: null, agentUrl: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null }
     }
 
     // All patterns tried on a valid profile page → genuinely no agent listed
-    return { agentName: 'kein Beratereintrag', agentCompany: null, birthDate, isRetired, currentClubName, marketValue }
+    return { agentName: 'kein Beratereintrag', agentCompany: null, agentUrl: null, birthDate, isRetired, currentClubName, marketValue }
   } catch (error) {
     console.error('Error fetching agent info:', error)
-    return { agentName: null, agentCompany: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null }
+    return { agentName: null, agentCompany: null, agentUrl: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null }
   }
 }
 
@@ -748,6 +765,7 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
         position: sp.position || existingPlayer.position,
         current_agent_name: agentInfo.agentName,
         current_agent_company: agentInfo.agentCompany,
+        agent_url: agentInfo.agentUrl,
         market_value: agentInfo.marketValue,
         has_agent: hasAgent,
         agent_updated_at: now,
@@ -778,6 +796,7 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
           position: sp.position,
           current_agent_name: agentInfo.agentName,
           current_agent_company: agentInfo.agentCompany,
+        agent_url: agentInfo.agentUrl,
         market_value: agentInfo.marketValue,
           has_agent: hasAgent,
           agent_updated_at: now,
@@ -913,6 +932,7 @@ async function cleanupVereinslose(supabase: ReturnType<typeof createClient>, bat
         club_id: matchedClub?.id || player.club_id,
         current_agent_name: agentInfo.agentName,
         current_agent_company: agentInfo.agentCompany,
+        agent_url: agentInfo.agentUrl,
         market_value: agentInfo.marketValue,
         has_agent: hasAgent,
         birth_date: agentInfo.birthDate || player.birth_date,

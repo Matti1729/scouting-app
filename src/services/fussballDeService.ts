@@ -174,16 +174,23 @@ export function formatTeamName(name: string): string {
     formatted = formatted.replace(regex, short);
   }
 
-  // Entferne Mannschaftsnummern und Altersklassen am Ende
+  // Entferne Mannschaftsnummern und Altersklassen (überall im String, nicht nur am Ende)
   // Diese sind redundant wenn die Altersklasse separat angezeigt wird
   formatted = formatted
-    .replace(/\s+U\d{2}\s*2?$/i, '') // " U16", " U16 2", " U19" am Ende
+    .replace(/\s+U\d{2}(?:\s*2)?\b/gi, '') // " U16", " U16 2", " U19" überall
     .replace(/\s+2$/, '')            // " 2" am Ende
     .replace(/\s+II$/, '')           // " II" am Ende
     .replace(/\s*\(2\)$/, '')        // "(2)" am Ende
     .replace(/\s*\(II\)$/, '')       // "(II)" am Ende
     .trim()
     .replace(/\.$/, '');            // Trailing Punkt entfernen ("Mainz 05." → "Mainz 05")
+
+  // Doppelte Vereinspräfixe entfernen (z.B. "FC Schalke 04 FC" → "FC Schalke 04")
+  const prefixes = ['FC', 'SC', 'SV', 'VfB', 'VfL', 'TSV', 'FSV', 'SpVgg', 'SG', 'TSG', 'RB', 'BV', 'RW', 'BW', 'SF'];
+  for (const prefix of prefixes) {
+    const dupRegex = new RegExp(`^(${prefix}\\b.+?)\\s+${prefix}$`, 'i');
+    formatted = formatted.replace(dupRegex, '$1').trim();
+  }
 
   return formatted;
 }

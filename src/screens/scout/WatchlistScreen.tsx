@@ -18,6 +18,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { ColumnDef } from '../../types/tableColumns';
+import { useTableColumns } from '../../hooks/useTableColumns';
+import { TableHeader } from '../../components/table/TableHeader';
+import { TableRow } from '../../components/table/TableRow';
 import {
   loadWatchlist,
   WatchlistEntry,
@@ -33,7 +37,27 @@ import {
   updateEvaluationNotes,
   updateEvaluationRating,
   updateWatchlistEntry,
+  loadMatchEvaluationsForPlayer,
+  MatchEvaluation,
 } from '../../services/beraterService';
+import { RatingBar } from '../../components/evaluation/RatingBar';
+import { fetchAgentInfo } from '../../services/transfermarktService';
+
+const MATCH_EVAL_COLUMNS: ColumnDef[] = [
+  { key: 'date', label: 'Datum', defaultFlex: 0.8, minWidth: 70 },
+  { key: 'match', label: 'Beschreibung', defaultFlex: 2, minWidth: 120 },
+  { key: 'agegroup', label: 'Jahrgang', defaultFlex: 0.6, minWidth: 50 },
+];
+
+const WATCHLIST_COLUMNS: ColumnDef[] = [
+  { key: 'name', label: 'Name', defaultFlex: 1.5, minWidth: 100 },
+  { key: 'mv', label: 'Marktwert', defaultFlex: 1, minWidth: 60 },
+  { key: 'club', label: 'Verein', defaultFlex: 1.5, minWidth: 80 },
+  { key: 'agent', label: 'Berater', defaultFlex: 1.5, minWidth: 80 },
+  { key: 'notes', label: 'Notiz', defaultFlex: 0.3, minWidth: 30 },
+  { key: 'rating', label: 'Pot.', defaultFlex: 0.5, minWidth: 30 },
+  { key: 'added', label: 'Hinzugefügt', defaultFlex: 0.7, minWidth: 60 },
+];
 
 export function WatchlistScreen() {
   const navigation = useNavigation();
@@ -44,6 +68,11 @@ export function WatchlistScreen() {
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [tableWidth, setTableWidth] = useState(0);
+  const [detailTableWidth, setDetailTableWidth] = useState(0);
+
+  const table = useTableColumns(WATCHLIST_COLUMNS, tableWidth);
+  const matchEvalTable = useTableColumns(MATCH_EVAL_COLUMNS, detailTableWidth, 'watchlist_match_evals');
 
   // Sort
   type SortKey = 'name' | 'mv' | 'club' | 'agent' | 'added';
@@ -52,8 +81,10 @@ export function WatchlistScreen() {
 
   // Detail modal
   const [selectedPlayer, setSelectedPlayer] = useState<BeraterPlayer | null>(null);
+  const returnToPlayerRef = useRef<BeraterPlayer | null>(null);
   const [playerHistory, setPlayerHistory] = useState<BeraterChange[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [matchEvaluations, setMatchEvaluations] = useState<MatchEvaluation[]>([]);
 
   // Evaluations
   const [evaluations, setEvaluations] = useState<Map<string, PlayerEvaluation>>(new Map());
@@ -72,6 +103,11 @@ export function WatchlistScreen() {
   useFocusEffect(
     useCallback(() => {
       fetchData();
+      if (returnToPlayerRef.current) {
+        const player = returnToPlayerRef.current;
+        returnToPlayerRef.current = null;
+        setTimeout(() => openPlayerDetail(player), 100);
+      }
     }, [fetchData])
   );
 
@@ -195,19 +231,41 @@ export function WatchlistScreen() {
   const openPlayerDetail = async (player: BeraterPlayer) => {
     setSelectedPlayer(player);
     setPlayerHistory([]);
+    setMatchEvaluations([]);
     setHistoryLoading(true);
 
     // Bestehende Evaluation laden
     const existingEval = evaluations.get(player.id);
-    // Watchlist-Entry als Fallback für Notes/Rating (wenn keine Evaluation existiert)
     const wlEntry = watchlist.find(w => w.player_id === player.id);
     setModalRating(existingEval?.rating ?? wlEntry?.rating ?? null);
     setModalNotes(existingEval?.notes ?? wlEntry?.notes ?? '');
     setModalEvalStatus(existingEval?.status ?? null);
 
-    const history = await loadPlayerHistory(player.id);
+    const [history, matchEvals] = await Promise.all([
+      loadPlayerHistory(player.id),
+      loadMatchEvaluationsForPlayer(player.player_name, player.tm_profile_url),
+    ]);
     setPlayerHistory(history);
+    setMatchEvaluations(matchEvals);
     setHistoryLoading(false);
+
+    // Profildaten nachladen wenn TM-URL vorhanden aber Geburtsdatum fehlt
+    if (player.tm_profile_url && !player.birth_date) {
+      fetchAgentInfo(player.tm_profile_url).then(result => {
+        if (result.success && result.agentInfo) {
+          const updates: Partial<BeraterPlayer> = {};
+          if (result.agentInfo.birthDate) updates.birth_date = result.agentInfo.birthDate;
+          if (result.agentInfo.agentName && !player.current_agent_name) updates.current_agent_name = result.agentInfo.agentName;
+          if (result.agentInfo.agentCompany && !player.current_agent_company) updates.current_agent_company = result.agentInfo.agentCompany;
+          if (Object.keys(updates).length > 0) {
+            import('../../config/supabase').then(({ supabase }) => {
+              supabase.from('berater_players').update(updates).eq('id', player.id);
+            });
+            setSelectedPlayer(prev => prev?.id === player.id ? { ...prev, ...updates } as BeraterPlayer : prev);
+          }
+        }
+      });
+    }
   };
 
   const handleRemoveFromWatchlist = async () => {
@@ -383,46 +441,63 @@ export function WatchlistScreen() {
     const hasNotes = !!(ev?.notes || item.notes);
 
     return (
-      <TouchableOpacity
+      <TableRow
+        columnOrder={table.columnOrder}
+        getColumnWidth={table.getColumnWidth}
+        onPress={() => openPlayerDetail(player)}
         style={[
           styles.playerRow,
           { borderBottomColor: colors.border },
           evalColor && { backgroundColor: evalColor.bg, borderLeftWidth: 3, borderLeftColor: evalColor.border },
         ]}
-        onPress={() => openPlayerDetail(player)}
-        activeOpacity={0.7}
-      >
-        <View style={styles.playerRowColumns}>
-          <View style={styles.playerColNameWrap}>
-            <Text style={[styles.playerColName, { color: colors.text }]} numberOfLines={1}>
-              {formatNameLastFirst(player.player_name)}
-            </Text>
-            {age ? <Text style={[styles.playerColAge, { color: colors.textSecondary }]}>{age}</Text> : null}
-          </View>
-          <Text style={[styles.playerColMV, { color: colors.textSecondary }]} numberOfLines={1}>
-            {player.market_value || '-'}
-          </Text>
-          <Text style={[styles.playerColClub, { color: colors.textSecondary, fontStyle: player.is_vereinslos ? 'italic' : 'normal' }]} numberOfLines={1}>
-            {player.is_vereinslos ? `zuletzt: ${player.club_name || ''}` : (player.club_name || '')}
-          </Text>
-          <Text style={[styles.playerColAgent, { color: agentLabel.color }]} numberOfLines={1}>
-            {agentLabel.text}
-          </Text>
-          <View style={styles.playerColNotes}>
-            {hasNotes && <Ionicons name="chatbubble-outline" size={13} color={colors.textSecondary} />}
-          </View>
-          <View style={styles.playerColRating}>
-            {rating != null && (
-              <View style={[styles.ratingBadge, { backgroundColor: rating >= 7 ? colors.success + '25' : rating >= 4 ? '#f5a623' + '25' : colors.error + '25' }]}>
-                <Text style={[styles.ratingBadgeText, { color: rating >= 7 ? colors.success : rating >= 4 ? '#f5a623' : colors.error }]}>{rating}</Text>
-              </View>
-            )}
-          </View>
-          <Text style={[styles.playerColAdded, { color: colors.textSecondary }]} numberOfLines={1}>
-            {addedDate || '-'}
-          </Text>
-        </View>
-      </TouchableOpacity>
+        renderCell={(key) => {
+          switch (key) {
+            case 'name':
+              return (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                  <Text style={[styles.playerColName, { color: colors.text }]} numberOfLines={1}>
+                    {formatNameLastFirst(player.player_name)}
+                  </Text>
+                  {age ? <Text style={[styles.playerColAge, { color: colors.textSecondary }]}>{age}</Text> : null}
+                </View>
+              );
+            case 'mv':
+              return (
+                <Text style={[{ fontSize: 11, color: colors.textSecondary }]} numberOfLines={1}>
+                  {player.market_value || '-'}
+                </Text>
+              );
+            case 'club':
+              return (
+                <Text style={[{ fontSize: 11, color: colors.textSecondary, fontStyle: player.is_vereinslos ? 'italic' : 'normal' }]} numberOfLines={1}>
+                  {player.is_vereinslos ? `zuletzt: ${player.club_name || ''}` : (player.club_name || '')}
+                </Text>
+              );
+            case 'agent':
+              return (
+                <Text style={[{ fontSize: 11, color: agentLabel.color }]} numberOfLines={1}>
+                  {agentLabel.text}
+                </Text>
+              );
+            case 'notes':
+              return hasNotes ? <Ionicons name="chatbubble-outline" size={13} color={colors.textSecondary} /> : null;
+            case 'rating':
+              return rating != null ? (
+                <View style={[styles.ratingBadge, { backgroundColor: rating >= 7 ? colors.success + '25' : rating >= 4 ? '#f5a623' + '25' : colors.error + '25' }]}>
+                  <Text style={[styles.ratingBadgeText, { color: rating >= 7 ? colors.success : rating >= 4 ? '#f5a623' : colors.error }]}>{rating}</Text>
+                </View>
+              ) : null;
+            case 'added':
+              return (
+                <Text style={[{ fontSize: 11, color: colors.textSecondary }]} numberOfLines={1}>
+                  {addedDate || '-'}
+                </Text>
+              );
+            default:
+              return null;
+          }
+        }}
+      />
     );
   };
 
@@ -458,36 +533,29 @@ export function WatchlistScreen() {
         >
           <TouchableOpacity
             activeOpacity={1}
-            style={[styles.detailSheet, { backgroundColor: colors.surface }, !isMobile && styles.detailSheetDesktop]}
+            style={[styles.detailSheet, { backgroundColor: colors.background, borderColor: colors.border }, !isMobile && styles.detailSheetDesktop]}
             onPress={() => {}}
           >
-            <TouchableOpacity
-              style={[styles.closeButton, { borderColor: colors.border }]}
-              onPress={() => setSelectedPlayer(null)}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.closeButtonText, { color: colors.textSecondary }]}>✕</Text>
-            </TouchableOpacity>
+            {/* Top-Bar mit Close-Button */}
+            <View style={styles.detailTopBar}>
+              <View style={{ flex: 1 }} />
+              <TouchableOpacity
+                style={[styles.closeButton, { borderColor: colors.border }]}
+                onPress={() => setSelectedPlayer(null)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.closeButtonText, { color: colors.textSecondary }]}>✕</Text>
+              </TouchableOpacity>
+            </View>
 
-            <ScrollView bounces={false} showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
-              <View style={styles.detailTopRow}>
-                <View style={{ flex: 1, marginRight: 12 }}>
-                  <Text style={[styles.detailName, { color: colors.text }]}>
-                    {selectedPlayer.player_name}{'  '}
-                    <Text style={[styles.detailNameMeta, { color: colors.textSecondary }]}>
-                      {[selectedPlayer.birth_date, age ? `(${age})` : null].filter(Boolean).join(' ')}
-                    </Text>
+            <ScrollView bounces={false} showsVerticalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: 40 }}>
+              {/* Header Card */}
+              <View style={[styles.detailHeaderCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                <View style={styles.detailNameRow}>
+                  <Text style={[styles.detailName, { color: colors.text }]} numberOfLines={1}>
+                    {selectedPlayer.player_name}
                   </Text>
-                  <Text style={[styles.detailSub, { color: colors.textSecondary }]}>
-                    {[selectedPlayer.club_name, selectedPlayer.league_name].filter(Boolean).join(' · ')}
-                  </Text>
-                  {selectedPlayer.market_value ? (
-                    <Text style={[styles.detailSub, { color: colors.text, fontSize: 18, fontWeight: '600' }]}>
-                      {selectedPlayer.market_value}
-                    </Text>
-                  ) : null}
-                </View>
-                <View style={styles.detailButtonsCol}>
+                  <View style={{ flex: 1 }} />
                   <TouchableOpacity onPress={handleOpenProfile} activeOpacity={0.7}>
                     <Image
                       source={require('../../../assets/transfermarkt-logo.png')}
@@ -496,12 +564,44 @@ export function WatchlistScreen() {
                     />
                   </TouchableOpacity>
                 </View>
+                <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: -4 }}>
+                  {[selectedPlayer.club_name, selectedPlayer.league_name].filter(Boolean).join(' · ')}
+                </Text>
+                <View style={[styles.detailInfoBar, { borderTopColor: colors.border }]}>
+                  <View style={styles.detailInfoCell}>
+                    <Text style={[styles.detailInfoLabel, styles.detailInfoLabelPos, { color: colors.textSecondary }]}>MARKTWERT</Text>
+                    <View style={{ alignItems: 'center' }}>
+                      <Text style={[styles.detailInfoValue, { color: colors.text, fontSize: isMobile ? 24 : 36 }]} numberOfLines={1}>
+                        {selectedPlayer.market_value || '-'}
+                      </Text>
+                      <Text style={{ fontSize: isMobile ? 11 : 14, color: 'transparent', marginTop: 2 }}>{'\u00A0'}</Text>
+                    </View>
+                  </View>
+                  <View style={[styles.detailInfoDivider, { backgroundColor: colors.border }]} />
+                  <View style={styles.detailInfoCell}>
+                    <Text style={[styles.detailInfoLabel, styles.detailInfoLabelPos, { color: colors.textSecondary }]}>ALTER</Text>
+                    <View style={{ alignItems: 'center' }}>
+                      <Text style={[styles.detailInfoValue, { color: colors.text, fontSize: isMobile ? 24 : 36 }]}>
+                        {age || '-'}
+                      </Text>
+                      {selectedPlayer.birth_date ? (
+                        <Text style={{ fontSize: isMobile ? 11 : 14, color: colors.textSecondary, marginTop: 2 }}>
+                          {selectedPlayer.birth_date}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+                  <View style={[styles.detailInfoDivider, { backgroundColor: colors.border }]} />
+                  <View style={styles.detailInfoCell}>
+                    <Text style={[styles.detailInfoLabel, styles.detailInfoLabelPos, { color: colors.textSecondary }]}>POTENTIAL</Text>
+                    <RatingBar value={modalRating ?? 0} onChange={(v) => handleRatingChange(v || null)} compact compactSize={isMobile ? 36 : 52} />
+                  </View>
+                </View>
               </View>
 
-              {/* Beraterstatus Timeline */}
-              <View style={[styles.detailSection, { borderColor: colors.border }]}>
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Beraterstatus</Text>
-
+              {/* Beraterstatus */}
+              <View style={[styles.detailSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>BERATERSTATUS</Text>
                 {historyLoading ? (
                   <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 8 }} />
                 ) : (
@@ -510,7 +610,11 @@ export function WatchlistScreen() {
                       <Text style={[styles.hTimelineAgent, { color: agentLabel.color }]} numberOfLines={2}>
                         {agentLabel.text}
                       </Text>
-                      {selectedPlayer.current_agent_company && selectedPlayer.current_agent_company !== selectedPlayer.current_agent_name && (
+                      {selectedPlayer.current_agent_company && (() => {
+                        const name = (selectedPlayer.current_agent_name || '').toLowerCase().replace(/[-\s]/g, '');
+                        const company = selectedPlayer.current_agent_company.toLowerCase().replace(/[-\s]/g, '');
+                        return !company.includes(name) && !name.includes(company);
+                      })() && (
                         <Text style={[styles.hTimelineCompany, { color: colors.textSecondary }]} numberOfLines={1}>
                           {selectedPlayer.current_agent_company}
                         </Text>
@@ -519,25 +623,15 @@ export function WatchlistScreen() {
                         {sinceDate ? `seit ${sinceDate}` : 'aktuell'}
                       </Text>
                     </View>
-
                     {playerHistory.map((change, index) => {
                       const agentName = change.previous_agent_name || 'kein Berater';
                       const phaseEndDate = change.detected_at;
                       const phaseStartDate = playerHistory[index + 1]?.detected_at || null;
-                      const phaseDuration = phaseStartDate
-                        ? formatDurationBetween(phaseStartDate, phaseEndDate)
-                        : null;
-
+                      const phaseDuration = phaseStartDate ? formatDurationBetween(phaseStartDate, phaseEndDate) : null;
                       return (
                         <View key={change.id} style={[styles.hTimelineCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
-                          <Text style={[styles.hTimelineAgent, { color: colors.text }]} numberOfLines={2}>
-                            {agentName}
-                          </Text>
-                          {phaseDuration && (
-                            <Text style={[styles.hTimelineDuration, { color: colors.textSecondary }]}>
-                              {phaseDuration}
-                            </Text>
-                          )}
+                          <Text style={[styles.hTimelineAgent, { color: colors.text }]} numberOfLines={2}>{agentName}</Text>
+                          {phaseDuration && <Text style={[styles.hTimelineDuration, { color: colors.textSecondary }]}>{phaseDuration}</Text>}
                           <Text style={[styles.hTimelineDate, { color: colors.textSecondary }]}>
                             {phaseStartDate ? formatDateDE(phaseStartDate) : '?'} – {formatDateDE(phaseEndDate)}
                           </Text>
@@ -548,46 +642,11 @@ export function WatchlistScreen() {
                 )}
               </View>
 
-              {/* Bewertung (1-10) */}
-              <View style={[styles.detailSection, { borderColor: colors.border }]}>
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Bewertung</Text>
-                <View style={styles.ratingRow}>
-                  {ratingOptions.map((val) => {
-                    const isActive = modalRating === val;
-                    return (
-                      <TouchableOpacity
-                        key={val === null ? 'none' : val}
-                        style={[
-                          styles.ratingButton,
-                          {
-                            backgroundColor: isActive ? colors.primary : colors.surfaceSecondary,
-                            borderColor: isActive ? colors.primary : colors.border,
-                          },
-                        ]}
-                        onPress={() => handleRatingChange(val)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={[styles.ratingButtonText, { color: isActive ? '#fff' : colors.text }]}>
-                          {val === null ? '-' : val}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-
               {/* Notizen */}
-              <View style={[styles.detailSection, { borderColor: colors.border }]}>
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Notizen</Text>
+              <View style={[styles.detailSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>NOTIZEN</Text>
                 <TextInput
-                  style={[
-                    styles.notesInput,
-                    {
-                      color: colors.text,
-                      backgroundColor: colors.surfaceSecondary,
-                      borderColor: colors.border,
-                    },
-                  ]}
+                  style={[styles.notesInput, { color: colors.text, backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
                   value={modalNotes}
                   onChangeText={handleNotesChange}
                   placeholder="Notizen zum Spieler..."
@@ -597,25 +656,83 @@ export function WatchlistScreen() {
                   textAlignVertical="top"
                 />
               </View>
+
+              {/* Spielbewertungen */}
+              <View
+                style={[styles.detailSection, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                onLayout={(e) => setDetailTableWidth(e.nativeEvent.layout.width - 32)}
+              >
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>SPIELBEWERTUNGEN</Text>
+                {detailTableWidth > 0 && (
+                  <TableHeader
+                    columnDefs={MATCH_EVAL_COLUMNS}
+                    columnOrder={matchEvalTable.columnOrder}
+                    getColumnWidth={matchEvalTable.getColumnWidth}
+                    onResizeStart={matchEvalTable.onResizeStart}
+                    onDragStart={matchEvalTable.onDragStart}
+                    resizingKey={matchEvalTable.resizingKey}
+                    draggingKey={matchEvalTable.draggingKey}
+                    dragOverKey={matchEvalTable.dragOverKey}
+                    colors={colors}
+                    setHeaderRef={matchEvalTable.setHeaderRef}
+                  />
+                )}
+                {matchEvaluations.length === 0 ? (
+                  <Text style={{ fontSize: 13, color: colors.textSecondary, paddingVertical: 8 }}>-</Text>
+                ) : (
+                  matchEvaluations.map((ev) => (
+                    <TableRow
+                      key={ev.id}
+                      columnOrder={matchEvalTable.columnOrder}
+                      getColumnWidth={matchEvalTable.getColumnWidth}
+                      style={[styles.playerRow, { borderBottomColor: colors.border }]}
+                      onPress={() => {
+                        returnToPlayerRef.current = selectedPlayer;
+                        setSelectedPlayer(null);
+                        setTimeout(() => {
+                          (navigation as any).navigate('PlayerEvaluation', {
+                            matchId: ev.match_id,
+                            matchName: ev.match_name,
+                            matchDate: ev.match_date,
+                            mannschaft: ev.age_group,
+                            playerName: `${ev.last_name || ''}, ${ev.first_name || ''}`,
+                            playerNumber: ev.jersey_number,
+                            playerPosition: ev.positions?.split(', ')[0] || null,
+                            playerBirthDate: ev.birth_date,
+                            agentName: ev.agent_name,
+                            transfermarktUrl: ev.transfermarkt_url,
+                          });
+                        }, 300);
+                      }}
+                      renderCell={(key) => {
+                        switch (key) {
+                          case 'date':
+                            return <Text style={{ fontSize: 11, color: colors.textSecondary }} numberOfLines={1}>{ev.match_date || '-'}</Text>;
+                          case 'match':
+                            return <Text style={{ fontSize: 11, color: colors.text }} numberOfLines={1}>{ev.match_name || '-'}</Text>;
+                          case 'agegroup':
+                            return <Text style={{ fontSize: 11, color: colors.textSecondary }} numberOfLines={1}>{ev.age_group || '-'}</Text>;
+                          default:
+                            return null;
+                        }
+                      }}
+                    />
+                  ))
+                )}
+              </View>
             </ScrollView>
 
-            {/* Eval-Buttons (links unten) */}
+            {/* Eval-Buttons */}
             <View style={[styles.evalButtonRow, { borderTopColor: colors.border }]}>
               <TouchableOpacity
-                style={[styles.evalButton, modalEvalStatus === 'nicht_interessant'
-                  ? { backgroundColor: colors.error }
-                  : { backgroundColor: colors.border }
-                ]}
+                style={[styles.evalButton, modalEvalStatus === 'nicht_interessant' ? { backgroundColor: colors.error } : { backgroundColor: colors.border }]}
                 onPress={() => handleEvaluation('nicht_interessant')}
                 activeOpacity={0.7}
               >
                 <Text style={[styles.evalButtonText, { color: modalEvalStatus === 'nicht_interessant' ? '#fff' : colors.textSecondary }]}>Uninteressant</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                style={[styles.evalButton, modalEvalStatus === 'interessant'
-                  ? { backgroundColor: colors.success }
-                  : { backgroundColor: colors.border }
-                ]}
+                style={[styles.evalButton, modalEvalStatus === 'interessant' ? { backgroundColor: colors.success } : { backgroundColor: colors.border }]}
                 onPress={() => handleEvaluation('interessant')}
                 activeOpacity={0.7}
               >
@@ -626,9 +743,7 @@ export function WatchlistScreen() {
                 onPress={handleRemoveFromWatchlist}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.evalButtonText, { color: '#fff' }]}>
-                  Von Watchlist entfernen
-                </Text>
+                <Text style={[styles.evalButtonText, { color: '#fff' }]}>Von Watchlist entfernen</Text>
               </TouchableOpacity>
             </View>
           </TouchableOpacity>
@@ -665,43 +780,26 @@ export function WatchlistScreen() {
           }
         />
       ) : (
-        <View style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-          {watchlist.length > 0 && (
-            <View style={[styles.desktopHeader, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
-              <View style={styles.playerRowColumns}>
-                <TouchableOpacity style={styles.playerColNameWrap} onPress={() => toggleSort('name')}>
-                  <Text style={[styles.desktopHeaderText, { color: sortKey === 'name' ? colors.primary : colors.text }]}>
-                    Name{sortIndicator('name')}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={{ flex: 1 }} onPress={() => toggleSort('mv')}>
-                  <Text style={[styles.desktopHeaderText, { color: sortKey === 'mv' ? colors.primary : colors.text }]}>
-                    Marktwert{sortIndicator('mv')}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={{ flex: 1.5 }} onPress={() => toggleSort('club')}>
-                  <Text style={[styles.desktopHeaderText, { color: sortKey === 'club' ? colors.primary : colors.text }]}>
-                    Verein{sortIndicator('club')}
-                  </Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={{ flex: 1.5 }} onPress={() => toggleSort('agent')}>
-                  <Text style={[styles.desktopHeaderText, { color: sortKey === 'agent' ? colors.primary : colors.text }]}>
-                    Berater{sortIndicator('agent')}
-                  </Text>
-                </TouchableOpacity>
-                <View style={styles.playerColNotes}>
-                  <Text style={[styles.desktopHeaderText, { color: colors.text }]}>Notiz</Text>
-                </View>
-                <View style={styles.playerColRating}>
-                  <Text style={[styles.desktopHeaderText, { color: colors.text }]}>Bew.</Text>
-                </View>
-                <TouchableOpacity style={{ flex: 0.7 }} onPress={() => toggleSort('added')}>
-                  <Text style={[styles.desktopHeaderText, { color: sortKey === 'added' ? colors.primary : colors.text }]}>
-                    Hinzugefügt{sortIndicator('added')}
-                  </Text>
-                </TouchableOpacity>
-              </View>
-            </View>
+        <View
+          style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
+          onLayout={(e) => setTableWidth(e.nativeEvent.layout.width)}
+        >
+          {watchlist.length > 0 && tableWidth > 0 && (
+            <TableHeader
+              columnDefs={WATCHLIST_COLUMNS}
+              columnOrder={table.columnOrder}
+              getColumnWidth={table.getColumnWidth}
+              onResizeStart={table.onResizeStart}
+              onDragStart={table.onDragStart}
+              resizingKey={table.resizingKey}
+              draggingKey={table.draggingKey}
+              dragOverKey={table.dragOverKey}
+              onSort={(key) => toggleSort(key as SortKey)}
+              sortKey={sortKey}
+              sortAsc={sortAsc}
+              colors={colors}
+              setHeaderRef={table.setHeaderRef}
+            />
           )}
           <FlatList
             data={sortedWatchlist}
@@ -923,64 +1021,93 @@ const styles = StyleSheet.create({
   detailSheet: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    padding: 24,
-    paddingTop: 50,
     paddingBottom: 0,
     maxHeight: '92%',
     minWidth: '100%',
+    borderWidth: 1,
+    overflow: 'hidden',
   },
   detailSheetDesktop: {
     borderRadius: 16,
     minWidth: 0,
-    width: 680,
-    maxHeight: '90%',
+    width: '95%',
+    maxWidth: 1200,
+    maxHeight: '92%',
+  },
+  detailTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
   closeButton: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    zIndex: 1,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   closeButtonText: {
     fontSize: 16,
-    fontWeight: '400',
+    fontWeight: '600',
   },
-  detailTopRow: {
+  detailHeaderCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+    gap: 10,
+  },
+  detailNameRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  detailButtonsCol: {
-    alignItems: 'flex-end',
+    alignItems: 'center',
     gap: 8,
   },
   detailName: {
     fontSize: 20,
     fontWeight: '700',
-  },
-  detailNameMeta: {
-    fontSize: 13,
-    fontWeight: '400',
+    flexShrink: 1,
   },
   tmLogo: {
     height: 26,
     width: 65,
   },
-  detailSub: {
-    fontSize: 14,
+  detailInfoBar: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    paddingTop: 6,
     marginTop: 4,
   },
-  detailSection: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
+  detailInfoCell: {
     flex: 1,
+    alignItems: 'center',
     justifyContent: 'center',
+    paddingTop: 20,
+    paddingBottom: 8,
+    paddingHorizontal: 6,
+  },
+  detailInfoLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  detailInfoLabelPos: {
+    position: 'absolute',
+    top: 0,
+    left: 6,
+  },
+  detailInfoValue: {
+    fontWeight: '700',
+  },
+  detailInfoDivider: {
+    width: 1,
+    alignSelf: 'stretch',
+  },
+  detailSection: {
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16,
+    gap: 12,
   },
   detailLabel: {
     fontSize: 11,

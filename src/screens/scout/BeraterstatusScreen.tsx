@@ -15,11 +15,17 @@ import {
   Dimensions,
   Image,
   useWindowDimensions,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
+import { ColumnDef } from '../../types/tableColumns';
+import { useTableColumns } from '../../hooks/useTableColumns';
+import { TableHeader } from '../../components/table/TableHeader';
+import { TableRow } from '../../components/table/TableRow';
+import { RatingBar } from '../../components/evaluation/RatingBar';
 import {
   BeraterPlayer,
   BeraterChange,
@@ -50,7 +56,10 @@ import {
   updateEvaluationNotes,
   updateEvaluationRating,
   updateWatchlistEntry,
+  loadMatchEvaluationsForPlayer,
+  MatchEvaluation,
 } from '../../services/beraterService';
+import { fetchAgentInfo } from '../../services/transfermarktService';
 
 function fuzzyMatch(query: string, ...fields: (string | null | undefined)[]): boolean {
   const words = query.toLowerCase().split(/\s+/).filter(w => w.length > 0);
@@ -58,6 +67,48 @@ function fuzzyMatch(query: string, ...fields: (string | null | undefined)[]): bo
   const combined = fields.map(f => (f || '').toLowerCase()).join(' ');
   return words.every(word => combined.includes(word));
 }
+
+const PLAYER_COLUMNS: ColumnDef[] = [
+  { key: 'name', label: 'Name', defaultFlex: 1.2, minWidth: 80 },
+  { key: 'firstname', label: 'Vorname', defaultFlex: 1, minWidth: 60 },
+  { key: 'age', label: 'Alter', defaultFlex: 0.4, minWidth: 35 },
+  { key: 'mv', label: 'Marktwert', defaultFlex: 1, minWidth: 60 },
+  { key: 'club', label: 'Verein', defaultFlex: 1.5, minWidth: 80 },
+  { key: 'agent', label: 'Berater', defaultFlex: 1.5, minWidth: 80 },
+  { key: 'notes', label: 'Notiz', defaultFlex: 0.3, minWidth: 30 },
+  { key: 'rating', label: 'Pot.', defaultFlex: 0.5, minWidth: 30 },
+];
+
+const CHANGE_COLUMNS: ColumnDef[] = [
+  { key: 'name', label: 'Name', defaultFlex: 1.2, minWidth: 80 },
+  { key: 'firstname', label: 'Vorname', defaultFlex: 1, minWidth: 60 },
+  { key: 'age', label: 'Alter', defaultFlex: 0.4, minWidth: 35 },
+  { key: 'mv', label: 'MW', defaultFlex: 1, minWidth: 50 },
+  { key: 'club', label: 'Verein', defaultFlex: 1.5, minWidth: 80 },
+  { key: 'prev_agent', label: 'Ehem. Berater', defaultFlex: 1.5, minWidth: 80 },
+  { key: 'new_agent', label: 'Neuer Berater', defaultFlex: 1.5, minWidth: 80 },
+  { key: 'date', label: 'Datum', defaultFlex: 1, minWidth: 60 },
+  { key: 'notes', label: 'Notiz', defaultFlex: 0.3, minWidth: 30 },
+  { key: 'rating', label: 'Pot.', defaultFlex: 0.5, minWidth: 30 },
+];
+
+const SUGGESTION_COLUMNS: ColumnDef[] = [
+  { key: 'name', label: 'Name', defaultFlex: 1.2, minWidth: 80 },
+  { key: 'firstname', label: 'Vorname', defaultFlex: 1, minWidth: 60 },
+  { key: 'age', label: 'Alter', defaultFlex: 0.4, minWidth: 35 },
+  { key: 'club', label: 'Verein', defaultFlex: 1.5, minWidth: 80 },
+  { key: 'agent', label: 'Berater', defaultFlex: 1.5, minWidth: 80 },
+  { key: 'games', label: 'Spiele', defaultFlex: 0, minWidth: 40, fixedWidth: 40 },
+  { key: 'stat', label: 'Tore', defaultFlex: 0, minWidth: 50, fixedWidth: 50 },
+  { key: 'notes', label: 'Notiz', defaultFlex: 0.3, minWidth: 30 },
+  { key: 'rating', label: 'Pot.', defaultFlex: 0.5, minWidth: 30 },
+];
+
+const MATCH_EVAL_COLUMNS: ColumnDef[] = [
+  { key: 'date', label: 'Datum', defaultFlex: 0.8, minWidth: 70 },
+  { key: 'match', label: 'Beschreibung', defaultFlex: 2, minWidth: 120 },
+  { key: 'agegroup', label: 'Jahrgang', defaultFlex: 0.6, minWidth: 50 },
+];
 
 type TabKey = 'alle_spieler' | 'beraterwechsel' | 'vorschlaege';
 type PlayerListItem =
@@ -70,6 +121,18 @@ export function BeraterstatusScreen() {
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
+  // Table column state
+  const [beraterTableWidth, setBeraterTableWidth] = useState(0);
+  const [detailTableWidth, setDetailTableWidth] = useState(0);
+  const matchEvalTable = useTableColumns(MATCH_EVAL_COLUMNS, detailTableWidth, 'berater_match_evals');
+  const [suggestionsStatType, setSuggestionsStatType] = useState<'goals' | 'assists'>('goals');
+  const playerTable = useTableColumns(PLAYER_COLUMNS, beraterTableWidth, 'berater_players');
+  const changeTable = useTableColumns(CHANGE_COLUMNS, beraterTableWidth, 'berater_changes');
+  const suggestionColDefs = useMemo(() => SUGGESTION_COLUMNS.map(c =>
+    c.key === 'stat' ? { ...c, label: suggestionsStatType === 'goals' ? 'Tore' : 'Vorlagen' } : c
+  ), [suggestionsStatType]);
+  const suggestionTable = useTableColumns(suggestionColDefs, beraterTableWidth, 'berater_suggestions');
+
   // State
   const [activeTab, setActiveTab] = useState<TabKey>('alle_spieler');
   const [scanState, setScanState] = useState<ScanState | null>(null);
@@ -77,7 +140,7 @@ export function BeraterstatusScreen() {
   const [refreshing, setRefreshing] = useState(false);
 
   // Filters (Tab "Alle Spieler")
-  const [leagues, setLeagues] = useState<Array<{ id: string; name: string; is_active: boolean }>>([]);
+  const [leagues, setLeagues] = useState<Array<{ id: string; name: string; country: string; is_active: boolean }>>([]);
   const [selectedLeagues, setSelectedLeagues] = useState<string[]>([]);
   const [agentFilter, setAgentFilter] = useState<AgentFilter>('all');
   const [selectedAges, setSelectedAges] = useState<string[]>([]);
@@ -104,7 +167,6 @@ export function BeraterstatusScreen() {
 
   // Vorschläge (Spieler mit Top-Statistiken)
   const [suggestedPlayers, setSuggestedPlayers] = useState<PlayerStat[]>([]);
-  const [suggestionsStatType, setSuggestionsStatType] = useState<'goals' | 'assists'>('goals');
   const [suggestionsLoading, setSuggestionsLoading] = useState(false);
   const [rankingsRefreshing, setRankingsRefreshing] = useState(false);
   const [rankingsLastUpdate, setRankingsLastUpdate] = useState<string | null>(null);
@@ -126,9 +188,11 @@ export function BeraterstatusScreen() {
 
   // Detail sheet
   const [selectedPlayer, setSelectedPlayer] = useState<BeraterPlayer | null>(null);
+  const returnToPlayerRef = useRef<BeraterPlayer | null>(null);
   const [playerHistory, setPlayerHistory] = useState<BeraterChange[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [isOnWatchlistState, setIsOnWatchlistState] = useState(false);
+  const [matchEvaluations, setMatchEvaluations] = useState<MatchEvaluation[]>([]);
 
   // Evaluations
   const [evaluations, setEvaluations] = useState<Map<string, PlayerEvaluation>>(new Map());
@@ -166,7 +230,10 @@ export function BeraterstatusScreen() {
       const realLeagueNames = selectedLeagues.filter(l => l !== 'Vereinslos');
 
       let leagueIds = realLeagueNames.length > 0
-        ? leagues.filter(l => realLeagueNames.includes(l.name)).map(l => l.id)
+        ? leagues.filter(l => {
+            const displayName = l.country !== 'DE' ? `${l.name} (${l.country})` : l.name;
+            return realLeagueNames.includes(displayName);
+          }).map(l => l.id)
         : undefined;
 
       // Vereinslose Spieler haben league_id ihrer letzten Liga (L1/L2/L3)
@@ -326,7 +393,14 @@ export function BeraterstatusScreen() {
   // Beim ersten Laden: alle Sections zugeklappt
   useEffect(() => {
     if (collapsedSections === null && players.length > 0) {
-      const allLeagues = new Set(players.map(p => p.is_vereinslos ? 'Vereinslos' : (p.league_name || 'Sonstige')));
+      const leagueCountry = new Map<string, string>();
+      for (const l of leagues) leagueCountry.set(l.id, l.country);
+      const allLeagues = new Set(players.map(p => {
+        if (p.is_vereinslos) return 'Vereinslos';
+        const name = p.league_name || 'Sonstige';
+        const country = leagueCountry.get(p.league_id || '') || 'DE';
+        return country !== 'DE' ? `${name} (${country})` : name;
+      }));
       setCollapsedSections(allLeagues);
     }
   }, [players, collapsedSections]);
@@ -338,11 +412,23 @@ export function BeraterstatusScreen() {
     }
   }, [selectedLeagues, agentFilter, selectedAges]);
 
+  // Nach Rückkehr vom PlayerEvaluation-Screen: Modal wieder öffnen
+  useFocusEffect(
+    useCallback(() => {
+      if (returnToPlayerRef.current) {
+        const player = returnToPlayerRef.current;
+        returnToPlayerRef.current = null;
+        setTimeout(() => openPlayerDetail(player), 100);
+      }
+    }, [])
+  );
+
   // ========== PLAYER DETAIL SHEET ==========
 
   const openPlayerDetail = async (player: BeraterPlayer) => {
     setSelectedPlayer(player);
     setPlayerHistory([]);
+    setMatchEvaluations([]);
     setHistoryLoading(true);
 
     // Bestehende Evaluation laden, Watchlist als Fallback
@@ -352,13 +438,34 @@ export function BeraterstatusScreen() {
     setModalNotes(existingEval?.notes ?? wlEntry?.notes ?? '');
     setModalEvalStatus(existingEval?.status ?? null);
 
-    const [onWl, history] = await Promise.all([
+    const [onWl, history, matchEvals] = await Promise.all([
       isOnWatchlist(player.id),
       loadPlayerHistory(player.id),
+      loadMatchEvaluationsForPlayer(player.player_name, player.tm_profile_url),
     ]);
     setIsOnWatchlistState(onWl);
     setPlayerHistory(history);
+    setMatchEvaluations(matchEvals);
     setHistoryLoading(false);
+
+    // Profildaten nachladen wenn TM-URL vorhanden aber Geburtsdatum fehlt
+    if (player.tm_profile_url && !player.birth_date) {
+      fetchAgentInfo(player.tm_profile_url).then(result => {
+        if (result.success && result.agentInfo) {
+          const updates: Partial<BeraterPlayer> = {};
+          if (result.agentInfo.birthDate) updates.birth_date = result.agentInfo.birthDate;
+          if (result.agentInfo.agentName && !player.current_agent_name) updates.current_agent_name = result.agentInfo.agentName;
+          if (result.agentInfo.agentCompany && !player.current_agent_company) updates.current_agent_company = result.agentInfo.agentCompany;
+          if (Object.keys(updates).length > 0) {
+            // Update in DB via beraterService
+            import('../../config/supabase').then(({ supabase }) => {
+              supabase.from('berater_players').update(updates).eq('id', player.id);
+            });
+            setSelectedPlayer(prev => prev?.id === player.id ? { ...prev, ...updates } as BeraterPlayer : prev);
+          }
+        }
+      });
+    }
   };
 
   const openChangeDetail = (change: BeraterChange) => {
@@ -456,11 +563,15 @@ export function BeraterstatusScreen() {
   };
 
   const handleOpenProfile = () => {
-    if (selectedPlayer?.tm_profile_url) {
-      Linking.openURL(selectedPlayer.tm_profile_url);
-    } else if (selectedPlayer?.player_name) {
-      const query = encodeURIComponent(selectedPlayer.player_name);
-      Linking.openURL(`https://www.transfermarkt.de/schnellsuche/ergebnis/schnellsuche?query=${query}`);
+    const url = selectedPlayer?.tm_profile_url
+      || (selectedPlayer?.player_name
+        ? `https://www.transfermarkt.de/schnellsuche/ergebnis/schnellsuche?query=${encodeURIComponent(selectedPlayer.player_name)}`
+        : null);
+    if (!url) return;
+    if (Platform.OS === 'web') {
+      window.open(url, '_blank');
+    } else {
+      Linking.openURL(url);
     }
   };
 
@@ -558,6 +669,17 @@ export function BeraterstatusScreen() {
     return `${lastName}, ${firstName}`;
   };
 
+  const getLastName = (fullName: string): string => {
+    const parts = fullName.trim().split(/\s+/);
+    return parts[parts.length - 1] || fullName;
+  };
+
+  const getFirstName = (fullName: string): string => {
+    const parts = fullName.trim().split(/\s+/);
+    if (parts.length <= 1) return '';
+    return parts.slice(0, -1).join(' ');
+  };
+
   const getAgentLabel = (player: BeraterPlayer): { text: string; color: string } => {
     if (!player.current_agent_name || player.current_agent_name === 'kein Beratereintrag') {
       return { text: 'kein Beratereintrag', color: colors.success };
@@ -579,15 +701,21 @@ export function BeraterstatusScreen() {
   };
 
   const calculateAge = (birthDate: string | null): string | null => {
-    if (!birthDate) return null;
+    if (!birthDate || !birthDate.trim()) return null;
     const parts = birthDate.split('.');
     if (parts.length !== 3) return null;
-    const birth = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+    const day = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10);
+    const year = parseInt(parts[2], 10);
+    if (!day || !month || !year || year < 1970) return null;
+    const birth = new Date(year, month - 1, day);
+    if (isNaN(birth.getTime())) return null;
     const now = new Date();
     let age = now.getFullYear() - birth.getFullYear();
     if (now.getMonth() < birth.getMonth() || (now.getMonth() === birth.getMonth() && now.getDate() < birth.getDate())) {
       age--;
     }
+    if (age < 13 || age > 45) return null;
     return `${age} J.`;
   };
 
@@ -814,7 +942,7 @@ export function BeraterstatusScreen() {
   const renderMultiDropdown = (
     visible: boolean,
     onClose: () => void,
-    options: { value: string; label: string }[],
+    options: { value: string; label: string; isHeader?: boolean }[],
     selected: string[],
     onToggle: (v: string) => void,
     onClear: () => void,
@@ -833,6 +961,15 @@ export function BeraterstatusScreen() {
               </TouchableOpacity>
             )}
             {options.map(opt => {
+              if (opt.isHeader) {
+                return (
+                  <View key={opt.value} style={[styles.dropdownItem, { paddingVertical: 6, paddingTop: 10 }]}>
+                    <Text style={[styles.dropdownItemText, { color: colors.textSecondary, fontWeight: '700', fontSize: 10, letterSpacing: 1 }]}>
+                      {opt.label}
+                    </Text>
+                  </View>
+                );
+              }
               const isSelected = selected.includes(opt.value);
               return (
                 <TouchableOpacity
@@ -1177,43 +1314,42 @@ export function BeraterstatusScreen() {
     const hasNotes = !!(ev?.notes || wlEntry?.notes);
 
     return (
-      <TouchableOpacity
+      <TableRow
+        columnOrder={playerTable.columnOrder}
+        getColumnWidth={playerTable.getColumnWidth}
+        onPress={() => openPlayerDetail(item)}
         style={[
           styles.playerRow,
           { borderBottomColor: colors.border },
           evalColor && { backgroundColor: evalColor.bg, borderLeftWidth: 3, borderLeftColor: evalColor.border },
         ]}
-        onPress={() => openPlayerDetail(item)}
-        activeOpacity={0.7}
-      >
-        <View style={styles.playerRowColumns}>
-          <View style={styles.playerColNameWrap}>
-            <Text style={[styles.playerColName, { color: colors.text }]} numberOfLines={1}>
-              {formatNameLastFirst(item.player_name)}
-            </Text>
-            {age ? <Text style={[styles.playerColAge, { color: colors.textSecondary }]}>{age}</Text> : null}
-          </View>
-          <Text style={[styles.playerColMV, { color: colors.textSecondary }]} numberOfLines={1}>
-            {item.market_value || '-'}
-          </Text>
-          <Text style={[styles.playerColClub, { color: colors.textSecondary, fontStyle: item.is_vereinslos ? 'italic' : 'normal' }]} numberOfLines={1}>
-            {item.is_vereinslos ? `zuletzt: ${item.club_name || ''}` : (item.club_name || '')}
-          </Text>
-          <Text style={[styles.playerColAgent, { color: agentLabel.color }]} numberOfLines={1}>
-            {agentPart}
-          </Text>
-          <View style={styles.playerColNotes}>
-            {hasNotes && <Ionicons name="chatbubble-outline" size={13} color={colors.textSecondary} />}
-          </View>
-          <View style={styles.playerColRating}>
-            {rating != null && (
-              <View style={[styles.ratingBadge, { backgroundColor: rating >= 7 ? colors.success + '25' : rating >= 4 ? '#f5a623' + '25' : colors.error + '25' }]}>
-                <Text style={[styles.ratingBadgeText, { color: rating >= 7 ? colors.success : rating >= 4 ? '#f5a623' : colors.error }]}>{rating}</Text>
-              </View>
-            )}
-          </View>
-        </View>
-      </TouchableOpacity>
+        renderCell={(key) => {
+          switch (key) {
+            case 'name':
+              return <Text style={[styles.playerColName, { color: colors.text }]} numberOfLines={1}>{getLastName(item.player_name)}</Text>;
+            case 'firstname':
+              return <Text style={[{ fontSize: 11, color: colors.text }]} numberOfLines={1}>{getFirstName(item.player_name)}</Text>;
+            case 'age':
+              return age ? <Text style={[{ fontSize: 11, color: colors.textSecondary }]}>{age}</Text> : null;
+            case 'mv':
+              return <Text style={[{ fontSize: 11, color: colors.textSecondary }]} numberOfLines={1}>{item.market_value || '-'}</Text>;
+            case 'club':
+              return <Text style={[{ fontSize: 11, color: colors.textSecondary, fontStyle: item.is_vereinslos ? 'italic' : 'normal' }]} numberOfLines={1}>{item.is_vereinslos ? `zuletzt: ${item.club_name || ''}` : (item.club_name || '')}</Text>;
+            case 'agent':
+              return <Text style={[{ fontSize: 11, color: agentLabel.color }]} numberOfLines={1}>{agentPart}</Text>;
+            case 'notes':
+              return hasNotes ? <Ionicons name="chatbubble-outline" size={13} color={colors.textSecondary} /> : null;
+            case 'rating':
+              return rating != null ? (
+                <View style={[styles.ratingBadge, { backgroundColor: rating >= 7 ? colors.success + '25' : rating >= 4 ? '#f5a623' + '25' : colors.error + '25' }]}>
+                  <Text style={[styles.ratingBadgeText, { color: rating >= 7 ? colors.success : rating >= 4 ? '#f5a623' : colors.error }]}>{rating}</Text>
+                </View>
+              ) : null;
+            default:
+              return null;
+          }
+        }}
+      />
     );
   };
 
@@ -1225,41 +1361,52 @@ export function BeraterstatusScreen() {
     const playerMatch = players.find(p => p.id === item.player_id);
     const mv = playerMatch?.market_value || '-';
     const evalColor = item.player_id ? getEvalColor(item.player_id) : null;
+    const ev = item.player_id ? evaluations.get(item.player_id) : null;
+    const wlEntry = item.player_id ? watchlist.find(w => w.player_id === item.player_id) : null;
+    const rating = ev?.rating ?? wlEntry?.rating ?? null;
+    const hasNotes = !!(ev?.notes || wlEntry?.notes);
 
     return (
-      <TouchableOpacity
+      <TableRow
+        columnOrder={changeTable.columnOrder}
+        getColumnWidth={changeTable.getColumnWidth}
+        onPress={() => openChangeDetail(item)}
         style={[
           styles.playerRow,
           { borderBottomColor: colors.border },
           evalColor && { backgroundColor: evalColor.bg, borderLeftWidth: 3, borderLeftColor: evalColor.border },
         ]}
-        onPress={() => openChangeDetail(item)}
-        activeOpacity={0.7}
-      >
-        <View style={styles.playerRowColumns}>
-          <View style={styles.playerColNameWrap}>
-            <Text style={[styles.playerColName, { color: colors.text }]} numberOfLines={1}>
-              {formatNameLastFirst(item.player_name)}
-            </Text>
-            {age ? <Text style={[styles.playerColAge, { color: colors.textSecondary }]}>{age}</Text> : null}
-          </View>
-          <Text style={[styles.playerColMV, { color: colors.textSecondary }]} numberOfLines={1}>
-            {mv}
-          </Text>
-          <Text style={[styles.playerColClub, { color: colors.textSecondary }]} numberOfLines={1}>
-            {item.club_name || ''}
-          </Text>
-          <Text style={[styles.playerColClub, { color: colors.textSecondary }]} numberOfLines={1}>
-            {prevLabel}
-          </Text>
-          <Text style={[styles.playerColAgent, { color: colors.success }]} numberOfLines={1}>
-            {newLabel}
-          </Text>
-          <Text style={[styles.changeDate, { color: colors.textSecondary }]} numberOfLines={1}>
-            {changeDate}
-          </Text>
-        </View>
-      </TouchableOpacity>
+        renderCell={(key) => {
+          switch (key) {
+            case 'name':
+              return <Text style={[styles.playerColName, { color: colors.text }]} numberOfLines={1}>{getLastName(item.player_name)}</Text>;
+            case 'firstname':
+              return <Text style={[{ fontSize: 11, color: colors.text }]} numberOfLines={1}>{getFirstName(item.player_name)}</Text>;
+            case 'age':
+              return age ? <Text style={[{ fontSize: 11, color: colors.textSecondary }]}>{age}</Text> : null;
+            case 'mv':
+              return <Text style={[{ fontSize: 11, color: colors.textSecondary }]} numberOfLines={1}>{mv}</Text>;
+            case 'club':
+              return <Text style={[{ fontSize: 11, color: colors.textSecondary }]} numberOfLines={1}>{item.club_name || ''}</Text>;
+            case 'prev_agent':
+              return <Text style={[{ fontSize: 11, color: colors.textSecondary }]} numberOfLines={1}>{prevLabel}</Text>;
+            case 'new_agent':
+              return <Text style={[{ fontSize: 11, color: colors.success }]} numberOfLines={1}>{newLabel}</Text>;
+            case 'date':
+              return <Text style={[{ fontSize: 11, color: colors.textSecondary }]} numberOfLines={1}>{changeDate}</Text>;
+            case 'notes':
+              return hasNotes ? <Ionicons name="chatbubble-outline" size={13} color={colors.textSecondary} /> : null;
+            case 'rating':
+              return rating != null ? (
+                <View style={[styles.ratingBadge, { backgroundColor: rating >= 7 ? colors.success + '25' : rating >= 4 ? '#f5a623' + '25' : colors.error + '25' }]}>
+                  <Text style={[styles.ratingBadgeText, { color: rating >= 7 ? colors.success : rating >= 4 ? '#f5a623' : colors.error }]}>{rating}</Text>
+                </View>
+              ) : null;
+            default:
+              return null;
+          }
+        }}
+      />
     );
   };
 
@@ -1285,41 +1432,30 @@ export function BeraterstatusScreen() {
         >
           <TouchableOpacity
             activeOpacity={1}
-            style={[styles.detailSheet, { backgroundColor: colors.surface }, !isMobile && styles.detailSheetDesktop]}
+            style={[styles.detailSheet, { backgroundColor: colors.background, borderColor: colors.border }, !isMobile && styles.detailSheetDesktop]}
             onPress={() => {}}
           >
-            {/* Close ✕ oben rechts — außerhalb ScrollView */}
-            <TouchableOpacity
-              style={[styles.closeButton, { borderColor: colors.border }]}
-              onPress={() => setSelectedPlayer(null)}
-              activeOpacity={0.7}
-            >
-              <Text style={[styles.closeButtonText, { color: colors.textSecondary }]}>✕</Text>
-            </TouchableOpacity>
+            {/* Top-Bar im dunklen Rahmen mit Close-Button */}
+            <View style={styles.detailTopBar}>
+              <View style={{ flex: 1 }} />
+              <TouchableOpacity
+                style={[styles.closeButton, { borderColor: colors.border }]}
+                onPress={() => setSelectedPlayer(null)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.closeButtonText, { color: colors.textSecondary }]}>✕</Text>
+              </TouchableOpacity>
+            </View>
 
-            <ScrollView bounces={false} showsVerticalScrollIndicator={false} style={{ flex: 1 }}>
-              {/* Top: Info links, Buttons rechts */}
-              <View style={styles.detailTopRow}>
-                <View style={{ flex: 1, marginRight: 12 }}>
-                  {/* Name + Geburtsdatum */}
-                  <Text style={[styles.detailName, { color: colors.text }]}>
-                    {selectedPlayer.player_name}{'  '}
-                    <Text style={[styles.detailNameMeta, { color: colors.textSecondary }]}>
-                      {[selectedPlayer.birth_date, age ? `(${age})` : null].filter(Boolean).join(' ')}
-                    </Text>
+            <ScrollView bounces={false} showsVerticalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: 40 }}>
+              {/* Header Card — identisch zum EvalHeader */}
+              <View style={[styles.detailHeaderCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
+                {/* Row 1: Name + TM logo */}
+                <View style={styles.detailNameRow}>
+                  <Text style={[styles.detailName, { color: colors.text }]} numberOfLines={1}>
+                    {selectedPlayer.player_name}
                   </Text>
-                  {/* Verein · Liga */}
-                  <Text style={[styles.detailSub, { color: colors.textSecondary }]}>
-                    {[selectedPlayer.club_name, selectedPlayer.league_name].filter(Boolean).join(' · ')}
-                  </Text>
-                  {/* Marktwert */}
-                  {selectedPlayer.market_value ? (
-                    <Text style={[styles.detailSub, { color: colors.text, fontSize: 18, fontWeight: '600' }]}>
-                      {selectedPlayer.market_value}
-                    </Text>
-                  ) : null}
-                </View>
-                <View style={styles.detailButtonsCol}>
+                  <View style={{ flex: 1 }} />
                   <TouchableOpacity onPress={handleOpenProfile} activeOpacity={0.7}>
                     <Image
                       source={require('../../../assets/transfermarkt-logo.png')}
@@ -1328,10 +1464,49 @@ export function BeraterstatusScreen() {
                     />
                   </TouchableOpacity>
                 </View>
+
+                {/* Row 2: Verein · Liga */}
+                <Text style={[{ fontSize: 13, color: colors.textSecondary, marginTop: -4 }]}>
+                  {[selectedPlayer.club_name, selectedPlayer.league_name].filter(Boolean).join(' · ')}
+                </Text>
+
+                {/* Row 3: Marktwert | Alter | Rating */}
+                <View style={[styles.detailInfoBar, { borderTopColor: colors.border }]}>
+                  <View style={styles.detailInfoCell}>
+                    <Text style={[styles.detailInfoLabel, styles.detailInfoLabelPos, { color: colors.textSecondary }]}>MARKTWERT</Text>
+                    <View style={{ alignItems: 'center' }}>
+                      <Text style={[styles.detailInfoValue, { color: colors.text, fontSize: isMobile ? 24 : 36 }]} numberOfLines={1}>
+                        {selectedPlayer.market_value || '-'}
+                      </Text>
+                      <Text style={{ fontSize: isMobile ? 11 : 14, color: 'transparent', marginTop: 2 }}>
+                        {'\u00A0'}
+                      </Text>
+                    </View>
+                  </View>
+                  <View style={[styles.detailInfoDivider, { backgroundColor: colors.border }]} />
+                  <View style={styles.detailInfoCell}>
+                    <Text style={[styles.detailInfoLabel, styles.detailInfoLabelPos, { color: colors.textSecondary }]}>ALTER</Text>
+                    <View style={{ alignItems: 'center' }}>
+                      <Text style={[styles.detailInfoValue, { color: colors.text, fontSize: isMobile ? 24 : 36 }]}>
+                        {age || '-'}
+                      </Text>
+                      {selectedPlayer.birth_date ? (
+                        <Text style={{ fontSize: isMobile ? 11 : 14, color: colors.textSecondary, marginTop: 2 }}>
+                          {selectedPlayer.birth_date}
+                        </Text>
+                      ) : null}
+                    </View>
+                  </View>
+                  <View style={[styles.detailInfoDivider, { backgroundColor: colors.border }]} />
+                  <View style={styles.detailInfoCell}>
+                    <Text style={[styles.detailInfoLabel, styles.detailInfoLabelPos, { color: colors.textSecondary }]}>POTENTIAL</Text>
+                    <RatingBar value={modalRating ?? 0} onChange={(v) => handleRatingChange(v || null)} compact compactSize={isMobile ? 36 : 52} />
+                  </View>
+                </View>
               </View>
 
               {/* Beraterstatus (horizontal: aktuell links → Vergangenheit rechts) */}
-              <View style={[styles.detailSection, { borderColor: colors.border }]}>
+              <View style={[styles.detailSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                 <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Beraterstatus</Text>
 
                 {historyLoading ? (
@@ -1339,19 +1514,36 @@ export function BeraterstatusScreen() {
                 ) : (
                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hTimeline}>
                     {/* Aktueller Status — immer ganz links */}
-                    <View style={[styles.hTimelineCard, styles.hTimelineCardCurrent, { backgroundColor: agentLabel.color + '15', borderColor: agentLabel.color }]}>
-                      <Text style={[styles.hTimelineAgent, { color: agentLabel.color }]} numberOfLines={2}>
+                    <TouchableOpacity
+                      style={[styles.hTimelineCard, styles.hTimelineCardCurrent, { backgroundColor: agentLabel.color + '15', borderColor: agentLabel.color }]}
+                      onPress={() => {
+                        const agentName = selectedPlayer.current_agent_name;
+                        if (selectedPlayer.agent_url) {
+                          Linking.openURL(selectedPlayer.agent_url);
+                        } else if (agentName && agentName !== 'kein Beratereintrag' && agentName !== 'Familienangehörige') {
+                          // Fallback: TM-Suche für Agentur öffnen
+                          Linking.openURL(`https://www.transfermarkt.de/schnellsuche/ergebnis/schnellsuche?query=${encodeURIComponent(agentName)}`);
+                        }
+                      }}
+                      disabled={!selectedPlayer.current_agent_name || selectedPlayer.current_agent_name === 'kein Beratereintrag'}
+                      activeOpacity={selectedPlayer.current_agent_name && selectedPlayer.current_agent_name !== 'kein Beratereintrag' ? 0.7 : 1}
+                    >
+                      <Text style={[styles.hTimelineAgent, { color: agentLabel.color }]}>
                         {agentLabel.text}
                       </Text>
-                      {selectedPlayer.current_agent_company && selectedPlayer.current_agent_company !== selectedPlayer.current_agent_name && (
-                        <Text style={[styles.hTimelineCompany, { color: colors.textSecondary }]} numberOfLines={1}>
+                      {selectedPlayer.current_agent_company && (() => {
+                        const name = (selectedPlayer.current_agent_name || '').toLowerCase().replace(/[-\s]/g, '');
+                        const company = selectedPlayer.current_agent_company.toLowerCase().replace(/[-\s]/g, '');
+                        return !company.includes(name) && !name.includes(company);
+                      })() && (
+                        <Text style={[styles.hTimelineCompany, { color: colors.textSecondary }]}>
                           {selectedPlayer.current_agent_company}
                         </Text>
                       )}
                       <Text style={[styles.hTimelineDuration, { color: colors.textSecondary }]}>
                         {sinceDate ? `seit ${sinceDate}` : 'aktuell'}
                       </Text>
-                    </View>
+                    </TouchableOpacity>
 
                     {/* Vergangene Berater — neueste links, älteste rechts */}
                     {playerHistory.map((change, index) => {
@@ -1364,7 +1556,7 @@ export function BeraterstatusScreen() {
 
                       return (
                         <View key={change.id} style={[styles.hTimelineCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
-                          <Text style={[styles.hTimelineAgent, { color: colors.text }]} numberOfLines={2}>
+                          <Text style={[styles.hTimelineAgent, { color: colors.text }]}>
                             {agentName}
                           </Text>
                           {phaseDuration && (
@@ -1382,37 +1574,9 @@ export function BeraterstatusScreen() {
                 )}
               </View>
 
-              {/* Bewertung (1-10) */}
-              <View style={[styles.detailSection, { borderColor: colors.border }]}>
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Bewertung</Text>
-                <View style={styles.ratingRow}>
-                  {([null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as (number | null)[]).map((val) => {
-                    const isActive = modalRating === val;
-                    return (
-                      <TouchableOpacity
-                        key={val === null ? 'none' : val}
-                        style={[
-                          styles.ratingButton,
-                          {
-                            backgroundColor: isActive ? colors.primary : colors.surfaceSecondary,
-                            borderColor: isActive ? colors.primary : colors.border,
-                          },
-                        ]}
-                        onPress={() => handleRatingChange(val)}
-                        activeOpacity={0.7}
-                      >
-                        <Text style={[styles.ratingButtonText, { color: isActive ? '#fff' : colors.text }]}>
-                          {val === null ? '-' : val}
-                        </Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </View>
-              </View>
-
               {/* Notizen */}
-              <View style={[styles.detailSection, { borderColor: colors.border }]}>
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Notizen</Text>
+              <View style={[styles.detailSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>NOTIZEN</Text>
                 <TextInput
                   style={[
                     styles.notesInput,
@@ -1430,6 +1594,70 @@ export function BeraterstatusScreen() {
                   numberOfLines={3}
                   textAlignVertical="top"
                 />
+              </View>
+
+              {/* Spielbewertungen */}
+              <View
+                style={[styles.detailSection, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                onLayout={(e) => setDetailTableWidth(e.nativeEvent.layout.width - 32)}
+              >
+                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>SPIELBEWERTUNGEN</Text>
+                {detailTableWidth > 0 && (
+                  <TableHeader
+                    columnDefs={MATCH_EVAL_COLUMNS}
+                    columnOrder={matchEvalTable.columnOrder}
+                    getColumnWidth={matchEvalTable.getColumnWidth}
+                    onResizeStart={matchEvalTable.onResizeStart}
+                    onDragStart={matchEvalTable.onDragStart}
+                    resizingKey={matchEvalTable.resizingKey}
+                    draggingKey={matchEvalTable.draggingKey}
+                    dragOverKey={matchEvalTable.dragOverKey}
+                    colors={colors}
+                    setHeaderRef={matchEvalTable.setHeaderRef}
+                  />
+                )}
+                {matchEvaluations.length === 0 ? (
+                  <Text style={{ fontSize: 13, color: colors.textSecondary, paddingVertical: 8 }}>-</Text>
+                ) : (
+                  matchEvaluations.map((ev) => (
+                    <TableRow
+                      key={ev.id}
+                      columnOrder={matchEvalTable.columnOrder}
+                      getColumnWidth={matchEvalTable.getColumnWidth}
+                      style={[styles.playerRow, { borderBottomColor: colors.border }]}
+                      onPress={() => {
+                        returnToPlayerRef.current = selectedPlayer;
+                        setSelectedPlayer(null);
+                        setTimeout(() => {
+                          (navigation as any).navigate('PlayerEvaluation', {
+                            matchId: ev.match_id,
+                            matchName: ev.match_name,
+                            matchDate: ev.match_date,
+                            mannschaft: ev.age_group,
+                            playerName: `${ev.last_name || ''}, ${ev.first_name || ''}`,
+                            playerNumber: ev.jersey_number,
+                            playerPosition: ev.positions?.split(', ')[0] || null,
+                            playerBirthDate: ev.birth_date,
+                            agentName: ev.agent_name,
+                            transfermarktUrl: ev.transfermarkt_url,
+                          });
+                        }, 300);
+                      }}
+                      renderCell={(key) => {
+                        switch (key) {
+                          case 'date':
+                            return <Text style={{ fontSize: 11, color: colors.textSecondary }} numberOfLines={1}>{ev.match_date || '-'}</Text>;
+                          case 'match':
+                            return <Text style={{ fontSize: 11, color: colors.text }} numberOfLines={1}>{ev.match_name || '-'}</Text>;
+                          case 'agegroup':
+                            return <Text style={{ fontSize: 11, color: colors.textSecondary }} numberOfLines={1}>{ev.age_group || '-'}</Text>;
+                          default:
+                            return null;
+                        }
+                      }}
+                    />
+                  ))
+                )}
               </View>
             </ScrollView>
 
@@ -1489,13 +1717,26 @@ export function BeraterstatusScreen() {
 
   // ========== DROPDOWN OPTIONS ==========
 
+  const COUNTRY_LABELS: Record<string, string> = { DE: 'Deutschland', AT: 'Österreich', NL: 'Niederlande' };
+  const COUNTRY_ORDER = ['DE', 'AT', 'NL'];
+
   const leagueOptions = useMemo(() => {
-    const opts: { value: string; label: string }[] = [];
-    const seen = new Set<string>();
-    for (const l of leagues.filter(l => l.is_active)) {
-      if (!seen.has(l.name)) {
-        seen.add(l.name);
-        opts.push({ value: l.name, label: l.name });
+    const opts: { value: string; label: string; isHeader?: boolean }[] = [];
+    const activeLeagues = leagues.filter(l => l.is_active);
+    const countries = COUNTRY_ORDER.filter(c => activeLeagues.some(l => l.country === c));
+    const needsHeaders = countries.length > 1;
+
+    for (const country of countries) {
+      if (needsHeaders) {
+        opts.push({ value: `__header_${country}`, label: `── ${COUNTRY_LABELS[country] || country} ──`, isHeader: true });
+      }
+      const seen = new Set<string>();
+      for (const l of activeLeagues.filter(l => l.country === country)) {
+        const displayName = country !== 'DE' ? `${l.name} (${country})` : l.name;
+        if (!seen.has(displayName)) {
+          seen.add(displayName);
+          opts.push({ value: displayName, label: displayName });
+        }
       }
     }
     opts.push({ value: 'Vereinslos', label: 'Vereinslos' });
@@ -1540,6 +1781,10 @@ export function BeraterstatusScreen() {
       : players;
 
     const TOP_LEAGUES = ['L1', 'L2', 'L3'];
+    // Mapping: league_id → country
+    const leagueCountryMap = new Map<string, string>();
+    for (const l of leagues) leagueCountryMap.set(l.id, l.country);
+
     const grouped = new Map<string, BeraterPlayer[]>();
     for (const player of filteredPlayers) {
       let league: string;
@@ -1548,7 +1793,9 @@ export function BeraterstatusScreen() {
         if (!TOP_LEAGUES.includes(player.league_id || '')) continue;
         league = 'Vereinslos';
       } else {
-        league = player.league_name || 'Sonstige';
+        const name = player.league_name || 'Sonstige';
+        const country = leagueCountryMap.get(player.league_id || '') || 'DE';
+        league = country !== 'DE' ? `${name} (${country})` : name;
       }
       if (!grouped.has(league)) grouped.set(league, []);
       grouped.get(league)!.push(player);
@@ -1558,9 +1805,10 @@ export function BeraterstatusScreen() {
     const leagueOrder = new Map<string, number>();
     const seenNames = new Set<string>();
     for (const l of leagues) {
-      if (!seenNames.has(l.name)) {
-        seenNames.add(l.name);
-        leagueOrder.set(l.name, leagueOrder.size);
+      const displayName = l.country !== 'DE' ? `${l.name} (${l.country})` : l.name;
+      if (!seenNames.has(displayName)) {
+        seenNames.add(displayName);
+        leagueOrder.set(displayName, leagueOrder.size);
       }
     }
 
@@ -1730,7 +1978,10 @@ export function BeraterstatusScreen() {
 
   const selectedLeagueIds = useMemo(() => {
     if (selectedLeagues.length === 0) return null;
-    return new Set(leagues.filter(l => selectedLeagues.includes(l.name)).map(l => l.id));
+    return new Set(leagues.filter(l => {
+      const displayName = l.country !== 'DE' ? `${l.name} (${l.country})` : l.name;
+      return selectedLeagues.includes(displayName);
+    }).map(l => l.id));
   }, [selectedLeagues, leagues]);
 
   const filteredChanges = useMemo(() => {
@@ -1942,7 +2193,24 @@ export function BeraterstatusScreen() {
             }
           />
         ) : (
-          <View style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+          <View
+            style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
+            onLayout={(e) => setBeraterTableWidth(e.nativeEvent.layout.width)}
+          >
+            {beraterTableWidth > 0 && (
+              <TableHeader
+                columnDefs={PLAYER_COLUMNS}
+                columnOrder={playerTable.columnOrder}
+                getColumnWidth={playerTable.getColumnWidth}
+                onResizeStart={playerTable.onResizeStart}
+                onDragStart={playerTable.onDragStart}
+                resizingKey={playerTable.resizingKey}
+                draggingKey={playerTable.draggingKey}
+                dragOverKey={playerTable.dragOverKey}
+                colors={colors}
+                setHeaderRef={playerTable.setHeaderRef}
+              />
+            )}
             <SectionList
               sections={displaySections}
               renderItem={renderListItem}
@@ -1977,48 +2245,31 @@ export function BeraterstatusScreen() {
             }
           />
         ) : (
-          <View style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-            <SectionList
-              sections={[{ title: 'changes', data: filteredChanges }]}
+          <View
+            style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
+            onLayout={(e) => setBeraterTableWidth(e.nativeEvent.layout.width)}
+          >
+            {beraterTableWidth > 0 && (
+              <TableHeader
+                columnDefs={CHANGE_COLUMNS}
+                columnOrder={changeTable.columnOrder}
+                getColumnWidth={changeTable.getColumnWidth}
+                onResizeStart={changeTable.onResizeStart}
+                onDragStart={changeTable.onDragStart}
+                resizingKey={changeTable.resizingKey}
+                draggingKey={changeTable.draggingKey}
+                dragOverKey={changeTable.dragOverKey}
+                onSort={(key) => toggleChangeSort(key as any)}
+                sortKey={changeSortKey}
+                sortAsc={changeSortAsc}
+                colors={colors}
+                setHeaderRef={changeTable.setHeaderRef}
+              />
+            )}
+            <FlatList
+              data={filteredChanges}
               keyExtractor={(item) => item.id}
               extraData={[evaluations]}
-              stickySectionHeadersEnabled={true}
-              renderSectionHeader={() => (
-                <View style={[styles.playerRow, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
-                  <View style={styles.playerRowColumns}>
-                    <TouchableOpacity style={styles.playerColNameWrap} onPress={() => toggleChangeSort('name')}>
-                      <Text style={[styles.changeHeaderText, { color: changeSortKey === 'name' ? colors.primary : colors.text }]}>
-                        Name{changeSortKey === 'name' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.playerColMV} onPress={() => toggleChangeSort('mv')}>
-                      <Text style={[styles.changeHeaderText, { color: changeSortKey === 'mv' ? colors.primary : colors.text }]}>
-                        MW{changeSortKey === 'mv' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.playerColClub} onPress={() => toggleChangeSort('club')}>
-                      <Text style={[styles.changeHeaderText, { color: changeSortKey === 'club' ? colors.primary : colors.text }]}>
-                        Verein{changeSortKey === 'club' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.playerColClub} onPress={() => toggleChangeSort('prev_agent')}>
-                      <Text style={[styles.changeHeaderText, { color: changeSortKey === 'prev_agent' ? colors.primary : colors.text }]}>
-                        Ehem. Berater{changeSortKey === 'prev_agent' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.playerColAgent} onPress={() => toggleChangeSort('new_agent')}>
-                      <Text style={[styles.changeHeaderText, { color: changeSortKey === 'new_agent' ? colors.primary : colors.text }]}>
-                        Neuer Berater{changeSortKey === 'new_agent' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
-                      </Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity style={styles.changeDate} onPress={() => toggleChangeSort('date')}>
-                      <Text style={[styles.changeHeaderText, { color: changeSortKey === 'date' ? colors.primary : colors.text }]}>
-                        Datum{changeSortKey === 'date' ? (changeSortAsc ? ' \u25B2' : ' \u25BC') : ''}
-                      </Text>
-                    </TouchableOpacity>
-                  </View>
-                </View>
-              )}
               renderItem={renderChangeRow}
               ListEmptyComponent={renderEmptyState}
               contentContainerStyle={filteredChanges.length === 0 ? styles.emptyContainer : undefined}
@@ -2157,7 +2408,10 @@ export function BeraterstatusScreen() {
               contentContainerStyle={styles.cardListContent}
             />
           ) : (
-            <View style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+            <View
+              style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
+              onLayout={(e) => setBeraterTableWidth(e.nativeEvent.layout.width)}
+            >
             <SectionList
               sections={suggestionSections.map(section => ({
                 ...section,
@@ -2191,18 +2445,19 @@ export function BeraterstatusScreen() {
                       </View>
                     </TouchableOpacity>
 
-                    {!isCollapsed && (
-                      <View style={[styles.playerRow, { borderBottomColor: colors.border, backgroundColor: colors.surfaceSecondary }]}>
-                        <View style={styles.playerRowColumns}>
-                          <Text style={[styles.playerColNameWrap, styles.columnHeader, { color: colors.textSecondary }]}>Name</Text>
-                          <Text style={[styles.playerColClub, styles.columnHeader, { color: colors.textSecondary }]}>Verein</Text>
-                          <Text style={[styles.playerColAgent, styles.columnHeader, { color: colors.textSecondary }]}>Berater</Text>
-                          <Text style={[styles.suggestionColGames, styles.columnHeader, { color: colors.textSecondary }]}>Spiele</Text>
-                          <Text style={[styles.suggestionColStat, styles.columnHeader, { color: colors.textSecondary }]}>
-                            {suggestionsStatType === 'goals' ? 'Tore' : 'Vorlagen'}
-                          </Text>
-                        </View>
-                      </View>
+                    {!isCollapsed && beraterTableWidth > 0 && (
+                      <TableHeader
+                        columnDefs={suggestionColDefs}
+                        columnOrder={suggestionTable.columnOrder}
+                        getColumnWidth={suggestionTable.getColumnWidth}
+                        onResizeStart={suggestionTable.onResizeStart}
+                        onDragStart={suggestionTable.onDragStart}
+                        resizingKey={suggestionTable.resizingKey}
+                        draggingKey={suggestionTable.draggingKey}
+                        dragOverKey={suggestionTable.dragOverKey}
+                        colors={colors}
+                        setHeaderRef={suggestionTable.setHeaderRef}
+                      />
                     )}
                   </View>
                 );
@@ -2211,38 +2466,54 @@ export function BeraterstatusScreen() {
                 const age = calculateAge(item.birth_date);
                 const agentLabel = getStatAgentLabel(item);
                 const evalColor = item.player_id ? getEvalColor(item.player_id) : null;
+                const ev = item.player_id ? evaluations.get(item.player_id) : null;
+                const wlEntry = item.player_id ? watchlist.find(w => w.player_id === item.player_id) : null;
+                const rating = ev?.rating ?? wlEntry?.rating ?? null;
+                const hasNotes = !!(ev?.notes || wlEntry?.notes);
                 return (
-                  <TouchableOpacity
+                  <TableRow
+                    columnOrder={suggestionTable.columnOrder}
+                    getColumnWidth={suggestionTable.getColumnWidth}
+                    onPress={() => openStatDetail(item)}
                     style={[
                       styles.playerRow,
                       { borderBottomColor: colors.border },
                       evalColor && { backgroundColor: evalColor.bg, borderLeftWidth: 3, borderLeftColor: evalColor.border },
                     ]}
-                    onPress={() => openStatDetail(item)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={styles.playerRowColumns}>
-                      <View style={styles.playerColNameWrap}>
-                        <Text style={[styles.playerColName, { color: colors.text }]} numberOfLines={1}>
-                          <Text style={{ color: colors.textSecondary }}>{index + 1}. </Text>
-                          {formatNameLastFirst(item.player_name)}
-                        </Text>
-                        {age ? <Text style={[styles.playerColAge, { color: colors.textSecondary }]}>{age}</Text> : null}
-                      </View>
-                      <Text style={[styles.playerColClub, { color: colors.textSecondary }]} numberOfLines={1}>
-                        {item.club_name || '-'}
-                      </Text>
-                      <Text style={[styles.playerColAgent, { color: agentLabel.color }]} numberOfLines={1}>
-                        {agentLabel.text}
-                      </Text>
-                      <Text style={[styles.suggestionColGames, { color: colors.textSecondary }]}>
-                        {item.games_played ?? '-'}
-                      </Text>
-                      <Text style={[styles.suggestionColStat, { color: colors.primary, fontWeight: '600' }]}>
-                        {item.stat_value}
-                      </Text>
-                    </View>
-                  </TouchableOpacity>
+                    renderCell={(key) => {
+                      switch (key) {
+                        case 'name':
+                          return (
+                            <Text style={[styles.playerColName, { color: colors.text }]} numberOfLines={1}>
+                              <Text style={{ color: colors.textSecondary }}>{index + 1}. </Text>
+                              {getLastName(item.player_name)}
+                            </Text>
+                          );
+                        case 'firstname':
+                          return <Text style={[{ fontSize: 11, color: colors.text }]} numberOfLines={1}>{getFirstName(item.player_name)}</Text>;
+                        case 'age':
+                          return age ? <Text style={[{ fontSize: 11, color: colors.textSecondary }]}>{age}</Text> : null;
+                        case 'club':
+                          return <Text style={[{ fontSize: 11, color: colors.textSecondary }]} numberOfLines={1}>{item.club_name || '-'}</Text>;
+                        case 'agent':
+                          return <Text style={[{ fontSize: 11, color: agentLabel.color }]} numberOfLines={1}>{agentLabel.text}</Text>;
+                        case 'games':
+                          return <Text style={[{ fontSize: 11, color: colors.textSecondary, textAlign: 'center' }]}>{item.games_played ?? '-'}</Text>;
+                        case 'stat':
+                          return <Text style={[{ fontSize: 12, color: colors.primary, fontWeight: '600', textAlign: 'center' }]}>{item.stat_value}</Text>;
+                        case 'notes':
+                          return hasNotes ? <Ionicons name="chatbubble-outline" size={13} color={colors.textSecondary} /> : null;
+                        case 'rating':
+                          return rating != null ? (
+                            <View style={[styles.ratingBadge, { backgroundColor: rating >= 7 ? colors.success + '25' : rating >= 4 ? '#f5a623' + '25' : colors.error + '25' }]}>
+                              <Text style={[styles.ratingBadgeText, { color: rating >= 7 ? colors.success : rating >= 4 ? '#f5a623' : colors.error }]}>{rating}</Text>
+                            </View>
+                          ) : null;
+                        default:
+                          return null;
+                      }
+                    }}
+                  />
                 );
               }}
             />
@@ -2496,7 +2767,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   playerColName: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '500',
     flexShrink: 1,
   },
@@ -2563,11 +2834,11 @@ const styles = StyleSheet.create({
   detailSheet: {
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
-    padding: 24,
-    paddingTop: 50,
     paddingBottom: 0,
     maxHeight: '92%',
     minWidth: '100%',
+    borderWidth: 1,
+    overflow: 'hidden',
   },
   modalOverlayDesktop: {
     justifyContent: 'center',
@@ -2576,40 +2847,74 @@ const styles = StyleSheet.create({
   detailSheetDesktop: {
     borderRadius: 16,
     minWidth: 0,
-    width: 680,
-    maxHeight: '90%',
+    width: '95%',
+    maxWidth: 1200,
+    maxHeight: '92%',
+  },
+  detailTopBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
   },
   closeButton: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    zIndex: 1,
-    width: 30,
-    height: 30,
-    borderRadius: 15,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
     borderWidth: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
   closeButtonText: {
     fontSize: 16,
-    fontWeight: '400',
+    fontWeight: '600',
   },
-  detailTopRow: {
+  detailHeaderCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    padding: 16,
+    gap: 10,
+  },
+  detailNameRow: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-  },
-  detailButtonsCol: {
-    alignItems: 'flex-end',
+    alignItems: 'center',
     gap: 8,
   },
   detailName: {
     fontSize: 20,
     fontWeight: '700',
+    flexShrink: 1,
   },
-  detailNameMeta: {
-    fontSize: 13,
-    fontWeight: '400',
+  detailInfoBar: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    paddingTop: 6,
+    marginTop: 4,
+  },
+  detailInfoCell: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 20,
+    paddingBottom: 8,
+    paddingHorizontal: 6,
+  },
+  detailInfoLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  detailInfoLabelPos: {
+    position: 'absolute',
+    top: 0,
+    left: 6,
+  },
+  detailInfoValue: {
+    fontWeight: '700',
+  },
+  detailInfoDivider: {
+    width: 1,
+    alignSelf: 'stretch',
   },
   tmLogo: {
     height: 26,
@@ -2620,11 +2925,10 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   detailSection: {
-    marginTop: 16,
-    paddingTop: 16,
-    borderTopWidth: 1,
-    flex: 1,
-    justifyContent: 'center',
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16,
+    gap: 12,
   },
   detailLabel: {
     fontSize: 11,
@@ -2648,8 +2952,10 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   hTimelineCard: {
-    width: 120,
-    padding: 8,
+    width: 160,
+    paddingHorizontal: 10,
+    paddingTop: 7,
+    paddingBottom: 10,
     borderRadius: 8,
     borderWidth: 1,
     marginRight: 8,
@@ -2658,16 +2964,17 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   hTimelineAgent: {
-    fontSize: 13,
+    fontSize: 10,
     fontWeight: '600',
   },
   hTimelineCompany: {
-    fontSize: 10,
+    fontSize: 9,
     marginTop: 2,
   },
   hTimelineDuration: {
-    fontSize: 10,
-    marginTop: 2,
+    fontSize: 9,
+    marginTop: 4,
+    fontStyle: 'italic',
   },
   hTimelineDate: {
     fontSize: 10,

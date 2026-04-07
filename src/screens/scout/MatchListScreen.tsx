@@ -35,6 +35,10 @@ import {
   ScrapedPlayer,
 } from '../../services/lineupScraperService';
 import {
+  searchAndScrapeKickerLineup,
+  isProLeague,
+} from '../../services/kickerService';
+import {
   pickAndExtractLineups,
   MediaSource,
 } from '../../services/visionLineupService';
@@ -72,6 +76,10 @@ import {
 } from '../../services/dfbTermine';
 import { Ionicons } from '@expo/vector-icons';
 import { loadBeraterStatusForLineup, BeraterStatusResult } from '../../services/beraterService';
+import { ColumnDef } from '../../types/tableColumns';
+import { useTableColumns } from '../../hooks/useTableColumns';
+import { TableHeader } from '../../components/table/TableHeader';
+import { TableRow } from '../../components/table/TableRow';
 
 // Dropdown Optionen
 const SPIELART_OPTIONS = [
@@ -327,12 +335,23 @@ const dbLineupToPlayer = (dbLineup: DbLineup): Player => ({
   isCaptain: dbLineup.is_captain ?? false,
 });
 
+const MATCH_COLUMNS: ColumnDef[] = [
+  { key: 'datum', label: 'DATUM', defaultFlex: 1, minWidth: 70 },
+  { key: 'zeit', label: 'ZEIT', defaultFlex: 1, minWidth: 50 },
+  { key: 'art', label: 'ART', defaultFlex: 1, minWidth: 60 },
+  { key: 'spiel', label: 'BESCHREIBUNG', defaultFlex: 2.5, minWidth: 120 },
+  { key: 'mannschaft', label: 'JAHRGANG', defaultFlex: 1.5, minWidth: 70 },
+  { key: 'ort', label: 'ORT', defaultFlex: 1.5, minWidth: 80 },
+];
+
 export function MatchListScreen({ navigation }: any) {
   const { colors, isDark } = useTheme();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedMatches, setSelectedMatches] = useState<string[]>([]);
+  const [matchTableWidth, setMatchTableWidth] = useState(0);
+  const matchTable = useTableColumns(MATCH_COLUMNS, matchTableWidth > 40 ? matchTableWidth - 40 : 0); // subtract checkbox width
   const [modalVisible, setModalVisible] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState<Match | null>(null);
   const [shouldReopenModal, setShouldReopenModal] = useState(false);
@@ -409,6 +428,11 @@ export function MatchListScreen({ navigation }: any) {
   // Sortierung
   const [sortField, setSortField] = useState<SortField>('datum');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
+
+  // Archiv: aktuellste zuerst, Anstehend: nächste zuerst
+  useEffect(() => {
+    setSortDirection(showArchive ? 'desc' : 'asc');
+  }, [showArchive]);
 
   // DFB-Sync State
   const [dfbSyncLoading, setDfbSyncLoading] = useState(false);
@@ -566,17 +590,32 @@ export function MatchListScreen({ navigation }: any) {
         })),
       );
 
-      // DB-Treffer sofort speichern
+      // DB-Treffer sofort speichern + DB-Namen in Aufstellung übernehmen
       const dbMatched = dbResults.filter(r => r.matched);
       for (const dbResult of dbMatched) {
-        if (dbResult.transfermarkt_url || dbResult.agent_name || dbResult.birth_date) {
-          await updatePlayer(dbResult.id, {
-            transfermarkt_url: dbResult.transfermarkt_url ?? undefined,
-            agent_name: dbResult.agent_name ?? undefined,
-            agent_company: dbResult.agent_company ?? undefined,
-            has_agent: dbResult.has_agent,
-            birth_date: dbResult.birth_date ?? undefined,
-          });
+        const updates: Record<string, any> = {};
+        if (dbResult.transfermarkt_url) updates.transfermarkt_url = dbResult.transfermarkt_url;
+        if (dbResult.agent_name) updates.agent_name = dbResult.agent_name;
+        if (dbResult.agent_company) updates.agent_company = dbResult.agent_company;
+        updates.has_agent = dbResult.has_agent;
+        if (dbResult.birth_date) updates.birth_date = dbResult.birth_date;
+
+        // DB-Spielernamen übernehmen (korrekte Umlaute, TM-Schreibweise)
+        if (dbResult.db_player_name) {
+          const nameParts = dbResult.db_player_name.split(' ');
+          if (nameParts.length === 1) {
+            // Künstlername (z.B. "Bernardo")
+            updates.name = nameParts[0];
+            updates.vorname = '';
+          } else {
+            // Nachname = letztes Wort, Vorname = Rest
+            updates.name = nameParts[nameParts.length - 1];
+            updates.vorname = nameParts.slice(0, -1).join(' ');
+          }
+        }
+
+        if (Object.keys(updates).length > 0) {
+          await updatePlayer(dbResult.id, updates);
         }
       }
 
@@ -1519,9 +1558,32 @@ export function MatchListScreen({ navigation }: any) {
       const result = await fetchLineupsFromUrl(selectedMatch.fussballDeUrl);
       console.log('AJAX result:', JSON.stringify(result, null, 2));
 
+      // Liga-Info aus Scraper oder AJAX sammeln
+      const detectedLeague = scraperResult.data?.league || result.data?.league || '';
+
       if (result.success && result.data) {
+        // Metadaten immer speichern (auch wenn keine Aufstellung)
+        const ajaxMeta: Record<string, string | undefined> = {};
+        if (result.data.matchDate) ajaxMeta.match_date = result.data.matchDate;
+        if (result.data.matchTime) ajaxMeta.match_time = result.data.matchTime;
+        if (result.data.location) ajaxMeta.location = result.data.location;
+        if (result.data.result) ajaxMeta.result = result.data.result;
+
+        if (Object.keys(ajaxMeta).length > 0) {
+          await updateMatch(selectedMatch.id, ajaxMeta);
+          const matchUpdates: Partial<Match> = {};
+          if (result.data.matchDate) matchUpdates.datum = result.data.matchDate;
+          if (result.data.matchTime) matchUpdates.zeit = result.data.matchTime;
+          if (result.data.location) matchUpdates.ort = result.data.location;
+          if (result.data.result) matchUpdates.ergebnis = result.data.result;
+          setMatches(prev => prev.map(m =>
+            m.id === selectedMatch.id ? { ...m, ...matchUpdates } : m
+          ));
+          setSelectedMatch(prev => prev ? { ...prev, ...matchUpdates } : prev);
+        }
+
         if (result.data.available) {
-          // In Supabase speichern
+          // Aufstellung von fussball.de verfügbar
           const allPlayers = [
             ...preparePlayersForDb(result.data.homeStarters, 'home', true),
             ...preparePlayersForDb(result.data.homeSubs, 'home', false),
@@ -1532,60 +1594,62 @@ export function MatchListScreen({ navigation }: any) {
           const saveResult = await replaceLineup(selectedMatch.id, allPlayers);
 
           if (saveResult.success) {
-            // Aufstellung neu laden (mit korrekten IDs aus DB)
             await fetchLineupForMatch(selectedMatch.id);
-
-            // Transfermarkt-Links automatisch suchen
             const [homeTeam, awayTeam] = selectedMatch.spiel.split(' - ');
             searchTransfermarktForLineup(selectedMatch.id, homeTeam || '', awayTeam || '');
           }
 
-          // Metadaten (Datum, Uhrzeit, Ort) speichern wenn vorhanden
-          const ajaxMeta: Record<string, string | undefined> = {};
-          if (result.data.matchDate) ajaxMeta.match_date = result.data.matchDate;
-          if (result.data.matchTime) ajaxMeta.match_time = result.data.matchTime;
-          if (result.data.location) ajaxMeta.location = result.data.location;
-          if (result.data.result) ajaxMeta.result = result.data.result;
+          setLineupStatus('available');
+          return;
+        }
+      }
 
-          if (Object.keys(ajaxMeta).length > 0) {
-            await updateMatch(selectedMatch.id, ajaxMeta);
-            const matchUpdates: Partial<Match> = {};
-            if (result.data.matchDate) matchUpdates.datum = result.data.matchDate;
-            if (result.data.matchTime) matchUpdates.zeit = result.data.matchTime;
-            if (result.data.location) matchUpdates.ort = result.data.location;
-            if (result.data.result) matchUpdates.ergebnis = result.data.result;
+      // 3. Kicker.de Fallback für Profi-Ligen (1./2./3. Liga)
+      if (isProLeague(detectedLeague)) {
+        console.log(`Pro-Liga erkannt (${detectedLeague}), versuche Kicker.de...`);
+        const [homeTeam, awayTeam] = selectedMatch.spiel.split(' - ');
+
+        const kickerResult = await searchAndScrapeKickerLineup(
+          homeTeam || '',
+          awayTeam || '',
+          detectedLeague
+        );
+
+        if (kickerResult.success && kickerResult.data?.available) {
+          console.log('Aufstellung von Kicker.de geladen!');
+          const data = kickerResult.data;
+
+          const allPlayers = [
+            ...preparePlayersForDb(data.homeStarters, 'home', true),
+            ...preparePlayersForDb(data.homeSubs, 'home', false),
+            ...preparePlayersForDb(data.awayStarters, 'away', true),
+            ...preparePlayersForDb(data.awaySubs, 'away', false),
+          ];
+
+          const saveResult = await replaceLineup(selectedMatch.id, allPlayers);
+
+          if (saveResult.success) {
+            await fetchLineupForMatch(selectedMatch.id);
+            searchTransfermarktForLineup(selectedMatch.id, homeTeam || '', awayTeam || '');
+          }
+
+          if (data.result) {
+            await updateMatch(selectedMatch.id, { result: data.result });
             setMatches(prev => prev.map(m =>
-              m.id === selectedMatch.id ? { ...m, ...matchUpdates } : m
+              m.id === selectedMatch.id ? { ...m, ergebnis: data.result } : m
             ));
-            setSelectedMatch(prev => prev ? { ...prev, ...matchUpdates } : prev);
+            setSelectedMatch(prev => prev ? { ...prev, ergebnis: data.result } : prev);
           }
 
           setLineupStatus('available');
+          Alert.alert('Kicker.de', `Aufstellung aus Kicker.de geladen (${detectedLeague}).`);
+          return;
         } else {
-          // Metadaten auch speichern wenn keine Aufstellungen verfügbar
-          const noLineupMeta: Record<string, string | undefined> = {};
-          if (result.data.matchDate) noLineupMeta.match_date = result.data.matchDate;
-          if (result.data.matchTime) noLineupMeta.match_time = result.data.matchTime;
-          if (result.data.location) noLineupMeta.location = result.data.location;
-          if (result.data.result) noLineupMeta.result = result.data.result;
-
-          if (Object.keys(noLineupMeta).length > 0) {
-            await updateMatch(selectedMatch.id, noLineupMeta);
-            const matchUpdates: Partial<Match> = {};
-            if (result.data.matchDate) matchUpdates.datum = result.data.matchDate;
-            if (result.data.matchTime) matchUpdates.zeit = result.data.matchTime;
-            if (result.data.location) matchUpdates.ort = result.data.location;
-            if (result.data.result) matchUpdates.ergebnis = result.data.result;
-            setMatches(prev => prev.map(m =>
-              m.id === selectedMatch.id ? { ...m, ...matchUpdates } : m
-            ));
-            setSelectedMatch(prev => prev ? { ...prev, ...matchUpdates } : prev);
-          }
-          setLineupStatus('unavailable');
+          console.log('Kicker.de Fallback fehlgeschlagen:', kickerResult.error);
         }
-      } else {
-        setLineupStatus('unavailable');
       }
+
+      setLineupStatus('unavailable');
     } catch (err) {
       console.error('Fehler beim Importieren:', err);
       setLineupStatus('unavailable');
@@ -1751,68 +1815,67 @@ export function MatchListScreen({ navigation }: any) {
         </Pressable>
 
         {/* Row content - clickable to open modal */}
-        <TouchableOpacity
-          style={styles.rowContent}
+        <TableRow
+          columnOrder={matchTable.columnOrder}
+          getColumnWidth={matchTable.getColumnWidth}
           onPress={() => handleMatchPress(item)}
-          activeOpacity={0.7}
-        >
-          {/* Datum */}
-        <View style={styles.cellDatum}>
-          <Text style={[styles.cellText, styles.datumText, { color: colors.text }]} numberOfLines={1}>
-            {formatDateGerman(item.datum, item.datumEnde)}
-          </Text>
-        </View>
-
-        {/* Zeit */}
-        <View style={styles.cell}>
-          <Text style={[styles.cellText, { color: colors.textSecondary }]}>
-            {item.zeit || '-'}
-          </Text>
-        </View>
-
-        {/* Art mit Badge */}
-        <View style={styles.cellArt}>
-          <View style={[styles.artBadge, { backgroundColor: badgeStyle.backgroundColor }]}>
-            <Text style={[styles.artBadgeText, { color: badgeStyle.color }]}>
-              {item.art}
-            </Text>
-          </View>
-        </View>
-
-        {/* Spiel + Ergebnis */}
-        <View style={styles.cellSpiel}>
-          <View style={styles.spielCell}>
-            <Text style={[styles.cellText, { color: colors.text }]} numberOfLines={1}>
-              {item.spiel}
-            </Text>
-            {item.ergebnis && (
-              <Text style={[styles.ergebnisText, { color: colors.primary }]}>
-                {item.ergebnis}
-              </Text>
-            )}
-          </View>
-        </View>
-
-        {/* Mannschaft */}
-        <View style={styles.cellMannschaft}>
-          <Text style={[styles.cellText, { color: colors.text }]}>
-            {item.mannschaft}
-          </Text>
-        </View>
-
-        {/* Ort (klickbar) */}
-        <View style={styles.cellOrt}>
-          {item.ort ? (
-            <TouchableOpacity onPress={() => openLocationInMaps(item.ort || '')}>
-              <Text style={[styles.cellText, { color: colors.accent }]} numberOfLines={1}>
-                📍 {item.ort}
-              </Text>
-            </TouchableOpacity>
-          ) : (
-            <Text style={[styles.cellText, { color: colors.textSecondary }]} numberOfLines={1}>-</Text>
-          )}
-        </View>
-        </TouchableOpacity>
+          style={{ flex: 1 }}
+          renderCell={(key) => {
+            switch (key) {
+              case 'datum':
+                return (
+                  <Text style={[styles.cellText, styles.datumText, { color: colors.text }]} numberOfLines={1}>
+                    {formatDateGerman(item.datum, item.datumEnde)}
+                  </Text>
+                );
+              case 'zeit':
+                return (
+                  <Text style={[styles.cellText, { color: colors.textSecondary }]}>
+                    {item.zeit || '-'}
+                  </Text>
+                );
+              case 'art':
+                return (
+                  <View style={[styles.artBadge, { backgroundColor: badgeStyle.backgroundColor }]}>
+                    <Text style={[styles.artBadgeText, { color: badgeStyle.color }]}>
+                      {item.art}
+                    </Text>
+                  </View>
+                );
+              case 'spiel':
+                return (
+                  <View style={styles.spielCell}>
+                    <Text style={[styles.cellText, { color: colors.text }]} numberOfLines={1}>
+                      {item.spiel}
+                    </Text>
+                    {item.ergebnis && (
+                      <Text style={[styles.ergebnisText, { color: colors.primary }]}>
+                        {item.ergebnis}
+                      </Text>
+                    )}
+                  </View>
+                );
+              case 'mannschaft':
+                return (
+                  <Text style={[styles.cellText, { color: colors.text }]}>
+                    {item.mannschaft}
+                  </Text>
+                );
+              case 'ort':
+                return item.ort ? (
+                  <TouchableOpacity onPress={() => openLocationInMaps(item.ort || '')}>
+                    <Text style={[styles.cellText, { color: colors.accent }]} numberOfLines={1}>
+                      📍 {item.ort}
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={[styles.cellText, { color: colors.textSecondary }]} numberOfLines={1}>-</Text>
+                );
+              default:
+                return null;
+            }
+          }}
+        />
       </View>
     );
   };
@@ -2097,7 +2160,10 @@ export function MatchListScreen({ navigation }: any) {
 
       {/* Desktop: Tabellen-Layout */}
       {!isMobile ? (
-        <View style={[styles.tableContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}>
+        <View
+          style={[styles.tableContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}
+          onLayout={(e) => setMatchTableWidth(e.nativeEvent.layout.width)}
+        >
           {/* Tabellen-Header */}
           <View style={[styles.tableHeader, { backgroundColor: colors.surfaceSecondary, borderBottomColor: colors.border }]}>
             <TouchableOpacity style={styles.checkboxCell} onPress={toggleSelectAll}>
@@ -2113,24 +2179,24 @@ export function MatchListScreen({ navigation }: any) {
                 )}
               </View>
             </TouchableOpacity>
-            <TouchableOpacity style={styles.cellDatum} onPress={() => handleSort('datum')}>
-              <Text style={[styles.headerText, { color: colors.textSecondary }]}>DATUM{getSortIndicator('datum')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.cell} onPress={() => handleSort('zeit')}>
-              <Text style={[styles.headerText, { color: colors.textSecondary }]}>ZEIT{getSortIndicator('zeit')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.cellArt} onPress={() => handleSort('art')}>
-              <Text style={[styles.headerText, { color: colors.textSecondary }]}>ART{getSortIndicator('art')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.cellSpiel} onPress={() => handleSort('spiel')}>
-              <Text style={[styles.headerText, { color: colors.textSecondary }]}>BESCHREIBUNG{getSortIndicator('spiel')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.cellMannschaft} onPress={() => handleSort('mannschaft')}>
-              <Text style={[styles.headerText, { color: colors.textSecondary }]}>JAHRGANG{getSortIndicator('mannschaft')}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.cellOrt} onPress={() => handleSort('ort')}>
-              <Text style={[styles.headerText, { color: colors.textSecondary }]}>ORT{getSortIndicator('ort')}</Text>
-            </TouchableOpacity>
+            {matchTableWidth > 0 && (
+              <TableHeader
+                columnDefs={MATCH_COLUMNS}
+                columnOrder={matchTable.columnOrder}
+                getColumnWidth={matchTable.getColumnWidth}
+                onResizeStart={matchTable.onResizeStart}
+                onDragStart={matchTable.onDragStart}
+                resizingKey={matchTable.resizingKey}
+                draggingKey={matchTable.draggingKey}
+                dragOverKey={matchTable.dragOverKey}
+                onSort={(key) => handleSort(key as SortField)}
+                sortKey={sortField}
+                sortAsc={sortDirection === 'asc'}
+                colors={colors}
+                style={{ flex: 1, borderBottomWidth: 0, paddingHorizontal: 0 }}
+                setHeaderRef={matchTable.setHeaderRef}
+              />
+            )}
           </View>
 
           {/* Tabellen-Inhalt */}
@@ -2204,7 +2270,7 @@ export function MatchListScreen({ navigation }: any) {
         onRequestClose={() => setModalVisible(false)}
       >
         <View style={[styles.modalOverlay, isMobile && styles.modalOverlayMobile]}>
-          <View style={[styles.modalContent, isMobile && styles.modalContentMobile, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+          <View style={[styles.modalContent, isMobile && styles.modalContentMobile, { backgroundColor: colors.background, borderColor: colors.border }]}>
             {selectedMatch && (
               <>
                 {/* Modal Header */}
@@ -2261,8 +2327,12 @@ export function MatchListScreen({ navigation }: any) {
                               placeholderTextColor={colors.textSecondary}
                             />
                           </View>
-                          <TouchableOpacity onPress={() => { setIsEditMode(false); setModalVisible(false); }}>
-                            <Text style={[styles.modalClose, { color: colors.textSecondary }]}>✕</Text>
+                          <TouchableOpacity
+                            style={[styles.modalCloseButton, { borderColor: colors.border }]}
+                            onPress={() => { setIsEditMode(false); setModalVisible(false); }}
+                            activeOpacity={0.7}
+                          >
+                            <Text style={[styles.modalCloseButtonText, { color: colors.textSecondary }]}>✕</Text>
                           </TouchableOpacity>
                         </View>
                       </View>
@@ -2284,8 +2354,12 @@ export function MatchListScreen({ navigation }: any) {
                             </Text>
                           )}
                         </TouchableOpacity>
-                        <TouchableOpacity onPress={() => { setIsEditMode(false); setActionMenuVisible(false); setModalVisible(false); }}>
-                          <Text style={[styles.modalClose, { color: colors.textSecondary }]}>✕</Text>
+                        <TouchableOpacity
+                          style={[styles.modalCloseButton, { borderColor: colors.border }]}
+                          onPress={() => { setIsEditMode(false); setActionMenuVisible(false); setModalVisible(false); }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.modalCloseButtonText, { color: colors.textSecondary }]}>✕</Text>
                         </TouchableOpacity>
                       </View>
                       {/* Centered info: age group, match type, date, time */}
@@ -2390,7 +2464,7 @@ export function MatchListScreen({ navigation }: any) {
                   <View style={[styles.lineupsContainer, isMobile && styles.lineupsContainerMobile]}>
                     {/* Heimmannschaft - Desktop oder wenn auf Mobile activeTeam === 'home' */}
                     {(!isMobile || activeTeam === 'home') && (
-                      <View style={[styles.lineupColumn, isMobile && styles.lineupColumnMobile]}>
+                      <View style={[styles.lineupColumn, isMobile && styles.lineupColumnMobile, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                         {!isMobile && (
                           isEditMode ? (
                             <TextInput
@@ -2420,11 +2494,11 @@ export function MatchListScreen({ navigation }: any) {
                     )}
 
                     {/* Trennlinie - nur auf Desktop */}
-                    {!isMobile && <View style={[styles.lineupDivider, { backgroundColor: colors.border }]} />}
+                    {!isMobile && <View style={[styles.lineupDivider, { backgroundColor: 'transparent' }]} />}
 
                     {/* Auswärtsmannschaft - Desktop oder wenn auf Mobile activeTeam === 'away' */}
                     {(!isMobile || activeTeam === 'away') && (
-                      <View style={[styles.lineupColumn, isMobile && styles.lineupColumnMobile]}>
+                      <View style={[styles.lineupColumn, isMobile && styles.lineupColumnMobile, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                         {!isMobile && (
                           isEditMode ? (
                             <TextInput
@@ -3800,6 +3874,18 @@ const styles = StyleSheet.create({
     fontWeight: '300',
     padding: 4,
   },
+  modalCloseButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCloseButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
   // Edit Mode Styles
   editHeaderCenter: {
     flexDirection: 'row',
@@ -3967,9 +4053,13 @@ const styles = StyleSheet.create({
   lineupsContainer: {
     flexDirection: 'row',
     flex: 1,
+    gap: 12,
+    paddingHorizontal: 16,
+    paddingBottom: 16,
   },
   lineupsContainerMobile: {
     flexDirection: 'column',
+    paddingHorizontal: 12,
   },
   teamTabsContainer: {
     flexDirection: 'row',
@@ -3993,10 +4083,13 @@ const styles = StyleSheet.create({
   },
   lineupColumn: {
     flex: 1,
-    paddingHorizontal: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderRadius: 16,
   },
   lineupColumnMobile: {
-    paddingHorizontal: 0,
+    paddingHorizontal: 12,
   },
   lineupDivider: {
     width: 1,

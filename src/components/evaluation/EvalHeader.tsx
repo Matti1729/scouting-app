@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, Image, Linking, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, Image, Linking, StyleSheet, Platform, useWindowDimensions } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
 import { Position, POSITION_LABELS } from '../../types';
 import { Dropdown } from '../Dropdown';
@@ -26,6 +26,14 @@ const calculateAge = (birthDate: string): number | null => {
     age--;
   }
   return age >= 10 && age <= 50 ? age : null;
+};
+
+const openUrl = (url: string) => {
+  if (Platform.OS === 'web') {
+    window.open(url, '_blank');
+  } else {
+    Linking.openURL(url);
+  }
 };
 
 interface EvalHeaderProps {
@@ -64,113 +72,86 @@ export function EvalHeader({
   agentName,
 }: EvalHeaderProps) {
   const { colors } = useTheme();
-
+  const { width } = useWindowDimensions();
+  const isDesktop = width >= 768;
   const displayName = [firstName, lastName].filter(Boolean).join(' ') || 'Spieler';
   const age = useMemo(() => birthDate ? calculateAge(birthDate) : null, [birthDate]);
-  const positionDisplay = positions.length > 0
-    ? positions.map(p => POSITION_LABELS[p] || p).join(', ')
-    : '';
-
   const matchDisplay = [ageGroup, matchName, matchDate].filter(Boolean).join(' · ');
+
+  const birthYear = birthDate ? birthDate.split('.')[2]?.slice(-2) : null;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
-      {/* Top row: Match info (center) + Close (right) */}
-      <View style={styles.topRow}>
-        <View style={styles.topSpacer} />
-        {matchDisplay ? (
-          <Text style={[styles.matchInfo, { color: colors.text }]} numberOfLines={1}>
-            {matchDisplay}
-          </Text>
-        ) : null}
-        <View style={styles.topCloseWrap}>
-          <TouchableOpacity
-            onPress={onClose}
-            style={[styles.closeButton, { borderColor: colors.border }]}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.closeText, { color: colors.textSecondary }]}>✕</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+      {/* Row 1: Match info */}
+      {matchDisplay ? (
+        <Text style={[styles.matchInfo, { color: colors.text }]} numberOfLines={1}>
+          {matchDisplay}
+        </Text>
+      ) : null}
 
-      {/* Main row: Number + Info + Rating */}
-      <View style={styles.mainRow}>
-        <View style={[styles.numberCircle, { backgroundColor: colors.primary }]}>
-          <Text style={[styles.numberText, { color: colors.primaryText }]}>
+      {/* Row 2: #Number + Name + TM logo */}
+      <View style={styles.mobileNameRow}>
+        <View style={[styles.mobileJerseyBadge, { borderColor: colors.border }]}>
+          <Text style={[styles.mobileJerseyText, { color: colors.text }]}>
             #{jerseyNumber || '?'}
           </Text>
         </View>
-
-        <View style={styles.infoContainer}>
-          <View style={styles.nameRow}>
-            <Text style={[styles.playerName, { color: colors.text }]} numberOfLines={1}>
-              {displayName}
-            </Text>
-            {birthDate ? (
-              <Text style={[styles.ageText, { color: colors.textSecondary }]}>
-                {birthDate}{age !== null ? ` (${age} J.)` : ''}
-              </Text>
-            ) : null}
-          </View>
-          <View style={styles.metaRow}>
-            {currentClub ? (
-              <View style={[styles.clubBadge, { backgroundColor: colors.primary + '20' }]}>
-                <Text style={[styles.clubText, { color: colors.primary }]} numberOfLines={1}>
-                  {currentClub}
-                </Text>
-              </View>
-            ) : null}
-            {ageGroup ? (
-              <Text style={[styles.metaText, { color: colors.textSecondary }]}>
-                {currentClub ? ' \u2022 ' : ''}{ageGroup}
-              </Text>
-            ) : null}
-            {positionDisplay ? (
-              <Text style={[styles.metaText, { color: colors.textSecondary }]}>
-                {' \u2022 '}{positionDisplay}
-              </Text>
-            ) : null}
-          </View>
-        </View>
-
-        <View style={styles.ratingWrap}>
-          <RatingBar value={overallRating} onChange={onRatingChange} />
-        </View>
-
-        {(transfermarktUrl || (agentName && agentName !== 'kein Beratereintrag')) ? (
-          <View style={styles.rightInfo}>
-            {transfermarktUrl ? (
-              <TouchableOpacity
-                onPress={() => Linking.openURL(transfermarktUrl)}
-                activeOpacity={0.7}
-              >
-                <Image
-                  source={require('../../../assets/transfermarkt-logo.png')}
-                  style={styles.tmLogo}
-                  resizeMode="contain"
-                />
-              </TouchableOpacity>
-            ) : null}
-            {agentName && agentName !== 'kein Beratereintrag' ? (
-              <Text style={[styles.agentText, { color: colors.textSecondary }]} numberOfLines={1}>
-                {agentName}
-              </Text>
-            ) : null}
-          </View>
+        <Text style={[styles.playerNameMobile, { color: colors.text }]} numberOfLines={1}>
+          {displayName}
+        </Text>
+        <View style={{ flex: 1 }} />
+        {transfermarktUrl ? (
+          <TouchableOpacity onPress={() => openUrl(transfermarktUrl)} activeOpacity={0.7}>
+            <Image
+              source={require('../../../assets/transfermarkt-logo.png')}
+              style={styles.tmLogo}
+              resizeMode="contain"
+            />
+          </TouchableOpacity>
         ) : null}
       </View>
 
-      {/* Position Dropdown - compact */}
-      <View style={styles.positionWrap}>
-        <Dropdown
-          options={POSITION_OPTIONS}
-          value={positions as string[]}
-          onChange={(val) => onPositionsChange(val as Position[])}
-          placeholder="Position wählen"
-          multiSelect
-          compact
-        />
+      {/* Row 3: Club */}
+      <View style={styles.mobileMetaRow}>
+        <Text style={[styles.mobileClubText, { color: colors.textSecondary }]} numberOfLines={1}>
+          {[currentClub, ageGroup].filter(Boolean).join(' ')}
+        </Text>
+      </View>
+
+      {/* Row 4: Position | Alter | Rating — tabellarisch mit Trennlinien */}
+      <View style={[styles.mobileInfoBar, { borderTopColor: colors.border }]}>
+        <View style={styles.mobileInfoCell}>
+          <Text style={[styles.mobileInfoLabel, styles.mobileInfoLabelWrap, { color: colors.textSecondary }]}>POSITION</Text>
+          <View style={[styles.mobilePositionWrap, isDesktop && { transform: [{ scale: 1.6 }] }]}>
+            <Dropdown
+              options={POSITION_OPTIONS}
+              value={positions as string[]}
+              onChange={(val) => onPositionsChange(val as Position[])}
+              placeholder="Pos."
+              multiSelect
+              compact
+            />
+          </View>
+        </View>
+        <View style={[styles.mobileInfoDivider, { backgroundColor: colors.border }]} />
+        <View style={styles.mobileInfoCell}>
+          <Text style={[styles.mobileInfoLabel, styles.mobileInfoLabelWrap, { color: colors.textSecondary }]}>ALTER</Text>
+          <View style={{ alignItems: 'center' }}>
+            <Text style={[styles.mobileInfoValue, { color: colors.text, fontSize: isDesktop ? 36 : 24 }]}>
+              {age !== null ? `${age} J.` : '-'}
+            </Text>
+            {birthDate ? (
+              <Text style={{ fontSize: isDesktop ? 14 : 11, color: colors.textSecondary, marginTop: 2 }}>
+                {birthDate}
+              </Text>
+            ) : null}
+          </View>
+        </View>
+        <View style={[styles.mobileInfoDivider, { backgroundColor: colors.border }]} />
+        <View style={styles.mobileInfoCell}>
+          <Text style={[styles.mobileInfoLabel, styles.mobileInfoLabelWrap, { color: colors.textSecondary }]}>POTENTIAL</Text>
+          <RatingBar value={overallRating} onChange={onRatingChange} compact compactSize={isDesktop ? 52 : 36} />
+        </View>
       </View>
     </View>
   );
@@ -183,6 +164,7 @@ const styles = StyleSheet.create({
     padding: 16,
     gap: 10,
   },
+  // === Top row (shared) ===
   topRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -211,73 +193,73 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
-  mainRow: {
+  // === Mobile layout ===
+  mobileNameRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
-  },
-  numberCircle: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  numberText: {
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  infoContainer: {
-    flex: 1,
-    gap: 4,
-  },
-  nameRow: {
-    flexDirection: 'row',
-    alignItems: 'baseline',
     gap: 8,
   },
-  playerName: {
-    fontSize: 18,
+  mobileJerseyBadge: {
+    borderWidth: 1,
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  mobileJerseyText: {
+    fontSize: 13,
     fontWeight: '700',
   },
-  ageText: {
-    fontSize: 14,
+  playerNameMobile: {
+    fontSize: 20,
+    fontWeight: '700',
+    flexShrink: 1,
   },
-  metaRow: {
+  mobileMetaRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
+    marginTop: -4,
   },
-  clubBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 4,
+  mobileClubText: {
+    fontSize: 13,
   },
-  clubText: {
-    fontSize: 12,
-    fontWeight: '600',
+  mobileInfoBar: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    paddingTop: 6,
+    marginTop: 4,
   },
-  metaText: {
-    fontSize: 12,
-  },
-  ratingWrap: {
+  mobileInfoCell: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 16,
+    paddingBottom: 2,
+    paddingHorizontal: 6,
   },
-  rightInfo: {
-    alignItems: 'flex-end',
-    gap: 4,
+  mobileInfoLabelWrap: {
+    position: 'absolute',
+    top: -4,
+    left: 6,
+  },
+  mobileInfoLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  mobileInfoValue: {
+    fontSize: 24,
+    fontWeight: '700',
+  },
+  mobileInfoDivider: {
+    width: 1,
+    alignSelf: 'stretch',
+  },
+  mobilePositionWrap: {
+    alignSelf: 'center',
+    marginTop: 4,
   },
   tmLogo: {
     height: 22,
     width: 55,
-  },
-  agentText: {
-    fontSize: 10,
-    maxWidth: 80,
-  },
-  positionWrap: {
-    alignSelf: 'flex-start',
-    flexShrink: 0,
   },
 });

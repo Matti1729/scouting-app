@@ -26,6 +26,7 @@ export interface BeraterPlayer {
   position: string | null;
   current_agent_name: string | null;
   current_agent_company: string | null;
+  agent_url: string | null;
   has_agent: boolean;
   agent_updated_at: string | null;
   agent_since: string | null;
@@ -500,10 +501,12 @@ export async function scanClub(clubId: string) {
 // LIGEN
 // ============================================================================
 
-export async function loadLeagues(): Promise<Array<{ id: string; name: string; is_active: boolean }>> {
+const COUNTRY_ORDER = ['DE', 'AT', 'NL'];
+
+export async function loadLeagues(): Promise<Array<{ id: string; name: string; country: string; is_active: boolean }>> {
   const { data, error } = await supabase
     .from('berater_leagues')
-    .select('id, name, is_active')
+    .select('id, name, country, is_active')
     .order('tier', { ascending: true });
 
   if (error) {
@@ -511,7 +514,74 @@ export async function loadLeagues(): Promise<Array<{ id: string; name: string; i
     return [];
   }
 
-  return data || [];
+  return (data || []).sort((a, b) => {
+    const ca = COUNTRY_ORDER.indexOf(a.country);
+    const cb = COUNTRY_ORDER.indexOf(b.country);
+    return (ca === -1 ? 99 : ca) - (cb === -1 ? 99 : cb);
+  });
+}
+
+// ============================================================================
+// SPIELBEWERTUNGEN (aus Spiele-Screen)
+// ============================================================================
+
+export interface MatchEvaluation {
+  id: string;
+  match_id: string | null;
+  match_name: string | null;
+  match_date: string | null;
+  age_group: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  jersey_number: number | null;
+  current_club: string | null;
+  positions: string | null;
+  transfermarkt_url: string | null;
+  agent_name: string | null;
+  birth_date: string | null;
+  overall_rating: number | null;
+  notes: string | null;
+  body_structure: any | null;
+  speed_athleticism: any | null;
+}
+
+export async function loadMatchEvaluationsForPlayer(
+  playerName: string,
+  tmProfileUrl?: string | null
+): Promise<MatchEvaluation[]> {
+  // Spielername aufteilen für Suche
+  const parts = playerName.trim().split(/\s+/);
+  const lastName = parts[parts.length - 1];
+  const firstName = parts.length > 1 ? parts.slice(0, -1).join(' ') : null;
+
+  let results: MatchEvaluation[] = [];
+
+  // 1. Per TM-URL suchen (zuverlässigste Methode)
+  if (tmProfileUrl) {
+    const { data } = await supabase
+      .from('player_evaluations')
+      .select('id, match_id, match_name, match_date, age_group, first_name, last_name, jersey_number, current_club, positions, transfermarkt_url, agent_name, birth_date, overall_rating, notes, body_structure, speed_athleticism')
+      .eq('transfermarkt_url', tmProfileUrl)
+      .order('match_date', { ascending: false });
+    if (data && data.length > 0) return data;
+  }
+
+  // 2. Per Name suchen
+  if (lastName) {
+    let query = supabase
+      .from('player_evaluations')
+      .select('id, match_id, match_name, match_date, age_group, first_name, last_name, jersey_number, current_club, positions, transfermarkt_url, agent_name, birth_date, overall_rating, notes, body_structure, speed_athleticism')
+      .ilike('last_name', lastName);
+
+    if (firstName) {
+      query = query.ilike('first_name', firstName);
+    }
+
+    const { data } = await query.order('match_date', { ascending: false });
+    if (data) results = data;
+  }
+
+  return results;
 }
 
 // ============================================================================
