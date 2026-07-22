@@ -7,7 +7,7 @@ interface AuthContextType {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, name: string) => Promise<{ error: Error | null }>;
-  signUpWithInvitation: (email: string, password: string, name: string, code: string) => Promise<{ error: Error | null }>;
+  signUpWithInvitation: (email: string, password: string, firstName: string, lastName: string, code: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -86,16 +86,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Registrierung per Einladungs-Code: Konto anlegen, Einladung einlösen
   // (setzt Rolle + App-Zugriff serverseitig), danach abmelden — die Person
   // meldet sich anschließend regulär an.
-  const signUpWithInvitation = async (email: string, password: string, name: string, code: string) => {
+  const signUpWithInvitation = async (email: string, password: string, firstName: string, lastName: string, code: string) => {
     registering.current = true;
     try {
       const { error } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { name } },
+        options: { data: { name: `${firstName} ${lastName}`.trim() } },
       });
       if (error) return { error: error as Error | null };
-      const { error: consumeError } = await supabase.rpc('consume_staff_invitation', { p_code: code });
+      const { error: consumeError } = await supabase.rpc('consume_staff_invitation', {
+        p_code: code,
+        p_first_name: firstName,
+        p_last_name: lastName,
+      });
       await supabase.auth.signOut();
       if (consumeError) return { error: consumeError as Error | null };
       return { error: null };

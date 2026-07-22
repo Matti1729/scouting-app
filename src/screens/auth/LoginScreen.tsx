@@ -89,7 +89,7 @@ export function LoginScreen() {
       return;
     }
     setRegLoading(true);
-    const { error } = await signUpWithInvitation(regEmail, regPassword, `${regFirst} ${regLast}`, verifiedCode);
+    const { error } = await signUpWithInvitation(regEmail, regPassword, regFirst.trim(), regLast.trim(), verifiedCode);
     setRegLoading(false);
     if (error) {
       showAlert('Fehler', error.message);
