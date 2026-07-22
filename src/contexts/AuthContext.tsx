@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../config/supabase';
 
@@ -7,6 +7,7 @@ interface AuthContextType {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, name: string) => Promise<{ error: Error | null }>;
+  signUpWithInvitation: (email: string, password: string, name: string, code: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
 }
 
@@ -33,6 +34,9 @@ const NO_ACCESS_MESSAGE =
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  // Während einer Code-Registrierung Session-Änderungen ignorieren,
+  // damit die App nicht kurz aufgeht, bevor die Einladung eingelöst ist.
+  const registering = useRef(false);
 
   useEffect(() => {
     // Initiale Session holen — aber nur akzeptieren, wenn Scouting-Zugang besteht.
@@ -48,6 +52,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Auth-Änderungen überwachen
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (registering.current) return;
       setSession(session);
     });
 
@@ -78,12 +83,33 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return { error: error as Error | null };
   };
 
+  // Registrierung per Einladungs-Code: Konto anlegen, Einladung einlösen
+  // (setzt Rolle + App-Zugriff serverseitig), danach abmelden — die Person
+  // meldet sich anschließend regulär an.
+  const signUpWithInvitation = async (email: string, password: string, name: string, code: string) => {
+    registering.current = true;
+    try {
+      const { error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: { data: { name } },
+      });
+      if (error) return { error: error as Error | null };
+      const { error: consumeError } = await supabase.rpc('consume_staff_invitation', { p_code: code });
+      await supabase.auth.signOut();
+      if (consumeError) return { error: consumeError as Error | null };
+      return { error: null };
+    } finally {
+      registering.current = false;
+    }
+  };
+
   const signOut = async () => {
     await supabase.auth.signOut();
   };
 
   return (
-    <AuthContext.Provider value={{ session, loading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ session, loading, signIn, signUp, signUpWithInvitation, signOut }}>
       {children}
     </AuthContext.Provider>
   );
