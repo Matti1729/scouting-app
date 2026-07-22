@@ -12,14 +12,37 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Prüft, ob das Konto für die Scouting-App freigeschaltet ist.
+// Freigabe wird zentral in der KMH-Admin-Verwaltung gesetzt (advisors.access_scouting).
+async function hasScoutingAccess(userId: string): Promise<boolean> {
+  const { data, error } = await supabase
+    .from('advisors')
+    .select('access_scouting')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) {
+    console.warn('Zugriffsprüfung fehlgeschlagen:', error);
+    return false;
+  }
+  return data?.access_scouting === true;
+}
+
+const NO_ACCESS_MESSAGE =
+  'Kein Zugang zur Suchmaschine. Bitte wende dich an einen Administrator.';
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Initiale Session holen
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
+    // Initiale Session holen — aber nur akzeptieren, wenn Scouting-Zugang besteht.
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
+      if (session?.user && !(await hasScoutingAccess(session.user.id))) {
+        await supabase.auth.signOut();
+        setSession(null);
+      } else {
+        setSession(session);
+      }
       setLoading(false);
     });
 
@@ -32,8 +55,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return { error: error as Error | null };
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) return { error: error as Error | null };
+
+    // Zugriff auf die Scouting-App prüfen — sonst sofort wieder abmelden.
+    if (data.user && !(await hasScoutingAccess(data.user.id))) {
+      await supabase.auth.signOut();
+      setSession(null);
+      return { error: new Error(NO_ACCESS_MESSAGE) };
+    }
+    return { error: null };
   };
 
   const signUp = async (email: string, password: string, name: string) => {

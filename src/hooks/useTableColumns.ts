@@ -29,7 +29,13 @@ export function useTableColumns(defs: ColumnDef[], containerWidth: number, persi
       if (raw) {
         try {
           const saved = JSON.parse(raw);
-          if (saved.order) setColumnOrder(saved.order);
+          if (saved.order) {
+            // Entfernte Spalten rauswerfen, neue hinten anhängen
+            const defKeys = defs.map(d => d.key);
+            const known = (saved.order as string[]).filter(k => defKeys.includes(k));
+            const missing = defKeys.filter(k => !known.includes(k));
+            setColumnOrder([...known, ...missing]);
+          }
           if (saved.widths) setColumnWidths(new Map(Object.entries(saved.widths) as [string, number][]));
         } catch {}
       }
@@ -69,9 +75,18 @@ export function useTableColumns(defs: ColumnDef[], containerWidth: number, persi
     const fixedTotal = defs.reduce((sum, d) => sum + (d.fixedWidth || 0), 0);
     const available = containerWidth - fixedTotal;
 
-    // If we have existing widths, scale them proportionally to fit new container
-    if (loaded && columnWidths.size > 0 && defs.every(d => columnWidths.has(d.key)) && prevContainerWidthRef.current > 0) {
-      const prevAvailable = prevContainerWidthRef.current - fixedTotal;
+    // If we have existing widths, scale them proportionally to fit new container.
+    // Beim ersten Mount (kein prevContainerWidth) dient die Summe der gespeicherten
+    // Breiten als Basis — sonst bleiben in einem schmalen Layout persistierte
+    // Breiten dauerhaft zu schmal.
+    if (loaded && columnWidths.size > 0 && defs.every(d => columnWidths.has(d.key))) {
+      const storedNonFixedTotal = defs.reduce(
+        (sum, d) => sum + (d.fixedWidth ? 0 : (columnWidths.get(d.key) || 0)),
+        0
+      );
+      const prevAvailable = prevContainerWidthRef.current > 0
+        ? prevContainerWidthRef.current - fixedTotal
+        : storedNonFixedTotal;
       if (prevAvailable > 0 && Math.abs(prevAvailable - available) > 1) {
         const scale = available / prevAvailable;
         const newWidths = new Map<string, number>();

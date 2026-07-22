@@ -14,4 +14,6 @@ export type RootStackParamList = {
   };
   Beraterstatus: undefined;
   Watchlist: undefined;
+  Sportstipendium: undefined;
+  Suchmaschine: undefined;
 };

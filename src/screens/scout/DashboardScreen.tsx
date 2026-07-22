@@ -31,6 +31,7 @@ export function DashboardScreen() {
   const isWide = width > 900;
 
   const [upcomingMatches, setUpcomingMatches] = useState(0);
+  const [stipendiumCount, setStipendiumCount] = useState(0);
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [beraterData, setBeraterData] = useState<BeraterDashboardData>({ stats: null, scanState: null });
 
@@ -56,6 +57,16 @@ export function DashboardScreen() {
       setWatchlist(result);
     } catch (e) {
       console.error('Error loading watchlist:', e);
+    }
+
+    // Lade Sportstipendium-Count aus Supabase
+    try {
+      const { count } = await supabase
+        .from('stipendium_entries')
+        .select('*', { count: 'exact', head: true });
+      setStipendiumCount(count || 0);
+    } catch (e) {
+      console.error('Error loading stipendium count:', e);
     }
 
     // Lade Beraterstatus-Tracker Daten von Supabase
@@ -216,6 +227,59 @@ export function DashboardScreen() {
             <View style={[styles.cardDivider, { backgroundColor: colors.border }]} />
             <Text style={[styles.cardAction, { color: colors.primary }]}>
               Watchlist anzeigen →
+            </Text>
+          </TouchableOpacity>
+
+          {/* Suchmaschine Karte */}
+          <TouchableOpacity
+            style={[
+              styles.card,
+              isWide && styles.cardWide,
+              { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder },
+            ]}
+            onPress={() => navigation.navigate('Suchmaschine')}
+          >
+            <View style={styles.cardHeader}>
+              <View style={[styles.cardIconContainer, { backgroundColor: colors.success + '20' }]}>
+                <Text style={styles.cardIcon}>🔍</Text>
+              </View>
+              <Text style={[styles.cardTitle, { color: colors.text }]}>Suchmaschine</Text>
+            </View>
+            <View style={styles.cardStats}>
+              <Text style={[styles.cardStatLabel, { color: colors.textSecondary }]}>
+                Spieler nach Alter, Liga, Vertrag und Status durchsuchen
+              </Text>
+            </View>
+            <View style={[styles.cardDivider, { backgroundColor: colors.border }]} />
+            <Text style={[styles.cardAction, { color: colors.primary }]}>
+              Suchmaschine öffnen →
+            </Text>
+          </TouchableOpacity>
+
+          {/* Sportstipendium Karte */}
+          <TouchableOpacity
+            style={[
+              styles.card,
+              isWide && styles.cardWide,
+              { backgroundColor: colors.cardBackground, borderColor: colors.cardBorder },
+            ]}
+            onPress={() => navigation.navigate('Sportstipendium')}
+          >
+            <View style={styles.cardHeader}>
+              <View style={[styles.cardIconContainer, { backgroundColor: '#facc15' + '20' }]}>
+                <Text style={styles.cardIcon}>🎓</Text>
+              </View>
+              <Text style={[styles.cardTitle, { color: colors.text }]}>Sportstipendium</Text>
+            </View>
+            <View style={styles.cardStats}>
+              <Text style={[styles.cardStatNumber, { color: '#facc15' }]}>{stipendiumCount}</Text>
+              <Text style={[styles.cardStatLabel, { color: colors.textSecondary }]}>
+                Kandidaten im Prozess
+              </Text>
+            </View>
+            <View style={[styles.cardDivider, { backgroundColor: colors.border }]} />
+            <Text style={[styles.cardAction, { color: colors.primary }]}>
+              Sportstipendium öffnen →
             </Text>
           </TouchableOpacity>
         </View>

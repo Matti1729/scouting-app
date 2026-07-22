@@ -8,6 +8,7 @@ import {
   StyleSheet,
   TouchableWithoutFeedback,
   ListRenderItemInfo,
+  Platform,
 } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
 
@@ -202,6 +203,7 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
                   data={options}
                   keyExtractor={keyExtractor}
                   renderItem={renderItem}
+                  style={styles.optionList}
                 />
                 {multiSelect && selectedValues.length > 0 && (
                   <TouchableOpacity
@@ -273,6 +275,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 8,
     elevation: 5,
+    overflow: 'hidden',
+  },
+  optionList: {
+    maxHeight: 200,
+    // RN-Web rendert die Liste sonst mit overflow:hidden — Mausrad-Scroll erzwingen
+    ...(Platform.OS === 'web' ? ({ overflowY: 'auto' } as any) : {}),
   },
   option: {
     flexDirection: 'row',

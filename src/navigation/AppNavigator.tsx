@@ -6,6 +6,8 @@ import { MatchListScreen } from '../screens/scout/MatchListScreen';
 import { PlayerEvaluationScreen } from '../screens/scout/PlayerEvaluationScreen';
 import { BeraterstatusScreen } from '../screens/scout/BeraterstatusScreen';
 import { WatchlistScreen } from '../screens/scout/WatchlistScreen';
+import { SportstipendiumScreen } from '../screens/scout/SportstipendiumScreen';
+import { SuchmaschineScreen } from '../screens/scout/SuchmaschineScreen';
 import { LoginScreen } from '../screens/auth/LoginScreen';
 import { useAuth } from '../contexts/AuthContext';
 import { useTheme } from '../contexts/ThemeContext';
@@ -54,6 +56,8 @@ export function AppNavigator() {
       />
       <Stack.Screen name="Beraterstatus" component={BeraterstatusScreen} />
       <Stack.Screen name="Watchlist" component={WatchlistScreen} />
+      <Stack.Screen name="Sportstipendium" component={SportstipendiumScreen} />
+      <Stack.Screen name="Suchmaschine" component={SuchmaschineScreen} />
     </Stack.Navigator>
   );
 }

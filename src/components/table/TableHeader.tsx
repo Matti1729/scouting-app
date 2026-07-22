@@ -78,31 +78,38 @@ export function TableHeader({
                   onPointerDown: (e: any) => onDragStart(key, e),
                 } : {})}
               >
-                <Text
-                  style={[
-                    styles.headerText,
-                    { color: colors.textSecondary },
-                    sortKey === key && { color: colors.text },
-                    Platform.OS === 'web' && ({ cursor: draggingKey ? 'grabbing' : 'grab' } as any),
-                  ]}
-                  onPress={onSort ? () => onSort(key) : undefined}
-                  numberOfLines={1}
-                >
-                  {def.label}
-                  {sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : ''}
-                </Text>
+                {def.label !== '' && (
+                  <Text
+                    style={[
+                      styles.headerText,
+                      { color: colors.textSecondary },
+                      sortKey === key && { color: colors.text },
+                      Platform.OS === 'web' &&
+                        ({ cursor: draggingKey ? 'grabbing' : 'grab', userSelect: 'none' } as any),
+                    ]}
+                    onPress={onSort ? () => onSort(key) : undefined}
+                    numberOfLines={1}
+                  >
+                    {def.label}
+                    {sortKey === key ? (sortAsc ? ' ▲' : ' ▼') : ''}
+                  </Text>
+                )}
                 {renderHeaderExtra ? renderHeaderExtra(key) : null}
               </View>
             </View>
 
-            {/* Resize divider between cells */}
-            {!isLast && (
-              <ResizeHandle
-                columnKey={key}
-                isResizing={resizingKey === key}
-                onResizeStart={onResizeStart}
-              />
-            )}
+            {/* Resize divider between cells — vor Spalten ohne Label (z.B. Aktionsspalte)
+                nur ein unsichtbarer Platzhalter, damit kein einsamer Strich steht */}
+            {!isLast &&
+              (defMap.get(columnOrder[idx + 1])?.label === '' ? (
+                <View style={{ width: DIVIDER_WIDTH }} />
+              ) : (
+                <ResizeHandle
+                  columnKey={key}
+                  isResizing={resizingKey === key}
+                  onResizeStart={onResizeStart}
+                />
+              ))}
           </React.Fragment>
         );
       })}

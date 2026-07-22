@@ -36,11 +36,11 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-// Delay zwischen Profil-Requests: 2-3s + ±0.5s Jitter
+// Delay zwischen Profil-Requests: moderat ~1.5-2s + ±0.4s Jitter
 function getRequestDelay(): number {
-  const base = 2000 + Math.random() * 1000 // 2000-3000ms
-  const jitter = (Math.random() - 0.5) * 1000 // ±500ms
-  return Math.max(1500, base + jitter)
+  const base = 1500 + Math.random() * 500 // 1500-2000ms
+  const jitter = (Math.random() - 0.5) * 800 // ±400ms
+  return Math.max(1100, base + jitter)
 }
 
 // Delay zwischen Vereinen: 5-10s
@@ -68,6 +68,7 @@ function getSupabaseClient() {
 // ============================================================================
 
 interface AgentInfo {
+  fullName: string | null   // echter Spielername von der Profilseite (mit Diakritika)
   agentName: string | null
   agentCompany: string | null
   agentUrl: string | null
@@ -75,6 +76,8 @@ interface AgentInfo {
   isRetired: boolean
   currentClubName: string | null
   marketValue: string | null
+  contractUntil: string | null  // ISO "YYYY-MM-DD" aus "Vertrag bis: DD.MM.YYYY"
+  position: string | null      // z.B. "Offensives Mittelfeld" von der Profilseite
 }
 
 interface SquadPlayer {
@@ -143,7 +146,7 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
 
     if (!response || !response.ok) {
       console.error('Profile fetch failed for:', fullUrl)
-      return { agentName: null, agentCompany: null, agentUrl: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null }
+      return { fullName: null, agentName: null, agentCompany: null, agentUrl: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null, contractUntil: null, position: null }
     }
 
     const html = await response.text()
@@ -157,6 +160,20 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
       const club = clubHeaderMatch[1].trim()
       if (club && !/ohne verein|vereinslos|career break|retired|karriereende/i.test(club)) {
         currentClubName = club
+      }
+    }
+
+    // ========== ECHTER NAME (Headline, mit Diakritika) ==========
+    // Kader-Slugs verlieren Umlaute/Diakritika ("uriel-van-aalst" statt "Uriël van Aalst")
+    let fullName: string | null = null
+    const h1Match = html.match(/<h1[^>]*class="[^"]*data-header__headline-wrapper[^"]*"[^>]*>([\s\S]*?)<\/h1>/i)
+    if (h1Match) {
+      const n = decodeHtmlEntities(h1Match[1].replace(/<[^>]*>/g, ' '))
+        .replace(/\s+/g, ' ')
+        .trim()
+        .replace(/^#\d+\s*/, '')
+      if (n.length >= 3 && n.length <= 60) {
+        fullName = n
       }
     }
 
@@ -195,6 +212,32 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
       const mvGenericMatch = html.match(/Marktwert[\s\S]{0,200}?(\d[\d.,]*\s*(?:Mio|Tsd|Mrd)\.\s*(?:€|EUR))/i)
       if (mvGenericMatch) {
         marketValue = mvGenericMatch[1].replace(/EUR/i, '€').trim()
+      }
+    }
+
+    // ========== VERTRAGSENDE EXTRAHIEREN ==========
+    // TM-Profilseite: "Vertrag bis: 30.06.2026" (Info-Tabelle oder Header)
+    let contractUntil: string | null = null
+    const contractMatch = html.match(/Vertrag bis:[\s\S]{0,300}?(\d{1,2})\.(\d{1,2})\.(\d{4})/i)
+    if (contractMatch) {
+      const year = parseInt(contractMatch[3])
+      const currentYear = new Date().getFullYear()
+      // Plausibilität: Vertragsende zwischen letztem und +10 Jahren
+      if (year >= currentYear - 1 && year <= currentYear + 10) {
+        contractUntil = `${contractMatch[3]}-${contractMatch[2].padStart(2, '0')}-${contractMatch[1].padStart(2, '0')}`
+      }
+    }
+
+    // ========== POSITION EXTRAHIEREN ==========
+    // Info-Tabelle oder Data-Header: "Position: Offensives Mittelfeld"
+    let position: string | null = null
+    const posMatch = html.match(/Position:\s*<\/span>\s*<span[^>]*>\s*([^<]+?)\s*</i)
+      || html.match(/Position:\s*<span[^>]*>\s*([^<]+?)\s*</i)
+    if (posMatch) {
+      const p = decodeHtmlEntities(posMatch[1]).trim()
+      // Plausibilität: muss wie eine Fußballposition aussehen
+      if (/torwart|verteidiger|abwehr|mittelfeld|sturm|stürmer|außen/i.test(p) && p.length <= 40) {
+        position = p
       }
     }
 
@@ -315,7 +358,7 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
         const agentName = (title || (linkText.endsWith('...') && agentCompany ? agentCompany : linkText)).trim()
 
         const agentUrl = href ? `https://www.transfermarkt.de${href}` : null
-        if (agentName) return { agentName, agentCompany, agentUrl, birthDate, isRetired, currentClubName, marketValue }
+        if (agentName) return { fullName, agentName, agentCompany, agentUrl, birthDate, isRetired, currentClubName, marketValue, contractUntil, position }
       }
 
       // No link found - extract text from the bold span
@@ -325,7 +368,7 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
         : searchArea.replace(/<[^>]*>/g, '').replace(/Spielerberater:\s*/i, '').trim().split('\n')[0]?.trim()
 
       if (textContent && textContent !== '-' && textContent !== '---') {
-        return { agentName: textContent, agentCompany: null, agentUrl: null, birthDate, isRetired, currentClubName, marketValue }
+        return { fullName, agentName: textContent, agentCompany: null, agentUrl: null, birthDate, isRetired, currentClubName, marketValue, contractUntil, position }
       }
     }
 
@@ -353,7 +396,7 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
         }
         if (!agentCompany || agentCompany.endsWith('...')) agentCompany = linkText
         const agentUrl = href ? `https://www.transfermarkt.de${href}` : null
-        if (agentName) return { agentName, agentCompany, agentUrl, birthDate, isRetired, currentClubName, marketValue }
+        if (agentName) return { fullName, agentName, agentCompany, agentUrl, birthDate, isRetired, currentClubName, marketValue, contractUntil, position }
       }
     }
 
@@ -361,14 +404,14 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
     const isValidProfile = /data-header__headline-wrapper|class="[^"]*info-table/i.test(html)
     if (!isValidProfile) {
       console.log('Page does not appear to be a valid TM profile (captcha/error page?) - returning null')
-      return { agentName: null, agentCompany: null, agentUrl: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null }
+      return { fullName: null, agentName: null, agentCompany: null, agentUrl: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null, contractUntil: null, position: null }
     }
 
     // All patterns tried on a valid profile page → genuinely no agent listed
-    return { agentName: 'kein Beratereintrag', agentCompany: null, agentUrl: null, birthDate, isRetired, currentClubName, marketValue }
+    return { fullName, agentName: 'kein Beratereintrag', agentCompany: null, agentUrl: null, birthDate, isRetired, currentClubName, marketValue, contractUntil, position }
   } catch (error) {
     console.error('Error fetching agent info:', error)
-    return { agentName: null, agentCompany: null, agentUrl: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null }
+    return { fullName: null, agentName: null, agentCompany: null, agentUrl: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null, contractUntil: null, position: null }
   }
 }
 
@@ -377,17 +420,52 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
 // ============================================================================
 
 /**
+ * Extrahiert die Kader-Tabelle (<table class="items">) inklusive verschachtelter
+ * Tabellen — zählt öffnende/schließende table-Tags bis zur Balance.
+ */
+function extractItemsTable(html: string): string | null {
+  const startMatch = html.match(/<table class="items"/i)
+  if (!startMatch || startMatch.index === undefined) return null
+  const start = startMatch.index
+  const tokenRe = /<table\b|<\/table>/gi
+  tokenRe.lastIndex = start
+  let depth = 0
+  let m: RegExpExecArray | null
+  while ((m = tokenRe.exec(html)) !== null) {
+    if (m[0].toLowerCase().startsWith('<table')) {
+      depth++
+    } else {
+      depth--
+      if (depth === 0) {
+        return html.slice(start, m.index + m[0].length)
+      }
+    }
+  }
+  return null
+}
+
+/**
  * Extrahiert alle Spieler von einer TM-Kaderseite.
  */
 function parseSquadPage(html: string): SquadPlayer[] {
   const players: SquadPlayer[] = []
   const seenIds = new Set<string>()
 
+  // WICHTIG: Nur die eigentliche Kader-Tabelle parsen (<table class="items">),
+  // nicht die ganze Seite — sonst landen Spieler aus Seitenboxen
+  // (Transfergerüchte, News, Top-Transfers) fälschlich im Kader.
+  // Die Kader-Tabelle enthält VERSCHACHTELTE Tabellen (inline-table pro Zeile),
+  // daher balanciert bis zum echten Tabellenende parsen statt non-greedy Regex.
+  const squadHtml = extractItemsTable(html) ?? html
+  if (squadHtml === html) {
+    console.warn('parseSquadPage: keine Kader-Tabelle (table.items) gefunden — parse gesamte Seite (Kontaminationsrisiko)')
+  }
+
   // Pattern: Spieler-Profil-Links auf Kaderseiten
   // href="/spielername/profil/spieler/123456"
   const urlPattern = /href="\/([^\/]+)\/profil\/spieler\/(\d+)"/gi
 
-  for (const match of html.matchAll(urlPattern)) {
+  for (const match of squadHtml.matchAll(urlPattern)) {
     const urlSlug = match[1]
     const tmPlayerId = match[2]
 
@@ -413,7 +491,7 @@ function parseSquadPage(html: string): SquadPlayer[] {
   // TM-Kaderseiten haben Positionen in eigenen Spalten
   // Wir versuchen sie aus den table rows zu extrahieren
   const positionPattern = /class="[^"]*inline-table[^"]*"[\s\S]*?\/profil\/spieler\/(\d+)[\s\S]*?<td[^>]*class="[^"]*pos[^"]*"[^>]*>([^<]+)/gi
-  for (const match of html.matchAll(positionPattern)) {
+  for (const match of squadHtml.matchAll(positionPattern)) {
     const playerId = match[1]
     const position = match[2].trim()
     const player = players.find(p => p.tmPlayerId === playerId)
@@ -646,6 +724,12 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
 
   console.log(`Found ${squadPlayers.length} players in squad of ${club.club_name}`)
 
+  // Schutz: Bei verdächtig kleinem Parse-Ergebnis (Layout-Änderung/Fehlerseite)
+  // nicht weitermachen — sonst würde unten der ganze Kader als vereinslos markiert.
+  if (squadPlayers.length < 5) {
+    throw new Error(`Suspiciously few players (${squadPlayers.length}) parsed for ${club.club_name} — skipping to avoid false vereinslos marking`)
+  }
+
   let changesDetected = 0
   let newPlayers = 0
   const scannedPlayerIds = new Set<string>()
@@ -759,14 +843,15 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
       const agentChanged = wasAlreadyScanned && agentsAreDifferent(existingPlayer.current_agent_name, agentInfo.agentName)
       const updateData: Record<string, any> = {
         club_id: clubId,
-        player_name: sp.name,
+        player_name: agentInfo.fullName || sp.name,
         tm_profile_url: sp.profileUrl,
         birth_date: agentInfo.birthDate || existingPlayer.birth_date,
-        position: sp.position || existingPlayer.position,
+        position: agentInfo.position || sp.position || existingPlayer.position,
         current_agent_name: agentInfo.agentName,
         current_agent_company: agentInfo.agentCompany,
         agent_url: agentInfo.agentUrl,
         market_value: agentInfo.marketValue,
+        contract_until: agentInfo.contractUntil || existingPlayer.contract_until,
         has_agent: hasAgent,
         agent_updated_at: now,
         last_scanned_at: now,
@@ -789,15 +874,16 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
         .from('berater_players')
         .insert({
           club_id: clubId,
-          player_name: sp.name,
+          player_name: agentInfo.fullName || sp.name,
           tm_player_id: sp.tmPlayerId,
           tm_profile_url: sp.profileUrl,
           birth_date: agentInfo.birthDate,
-          position: sp.position,
+          position: agentInfo.position || sp.position,
           current_agent_name: agentInfo.agentName,
           current_agent_company: agentInfo.agentCompany,
         agent_url: agentInfo.agentUrl,
         market_value: agentInfo.marketValue,
+          contract_until: agentInfo.contractUntil,
           has_agent: hasAgent,
           agent_updated_at: now,
           agent_since: now,
@@ -860,11 +946,12 @@ async function cleanupVereinslose(supabase: ReturnType<typeof createClient>, bat
   checked: number
   reactivated: number
   retired: number
+  leftLeagues: number
 }> {
   // Vereinslose Spieler laden (älteste zuerst, die am längsten nicht gescannt wurden)
   const { data: vereinslose, error } = await supabase
     .from('berater_players')
-    .select('id, player_name, tm_player_id, tm_profile_url, current_agent_name, current_agent_company, birth_date, position, club_id')
+    .select('id, player_name, tm_player_id, tm_profile_url, current_agent_name, current_agent_company, birth_date, position, club_id, contract_until')
     .eq('is_active', true)
     .eq('is_vereinslos', true)
     .order('last_scanned_at', { ascending: true, nullsFirst: true })
@@ -872,13 +959,14 @@ async function cleanupVereinslose(supabase: ReturnType<typeof createClient>, bat
 
   if (error || !vereinslose || vereinslose.length === 0) {
     console.log('No vereinslose players to check')
-    return { checked: 0, reactivated: 0, retired: 0 }
+    return { checked: 0, reactivated: 0, retired: 0, leftLeagues: 0 }
   }
 
   console.log(`Checking ${vereinslose.length} vereinslose players...`)
 
   let reactivated = 0
   let retired = 0
+  let leftLeagues = 0
   const now = new Date().toISOString()
 
   for (let i = 0; i < vereinslose.length; i++) {
@@ -925,15 +1013,34 @@ async function cleanupVereinslose(supabase: ReturnType<typeof createClient>, bat
         .eq('is_active', true)
         .maybeSingle()
 
+      // Neuer Verein ist nicht in den überwachten Ligen → Spieler hat die
+      // überwachten Ligen verlassen (z.B. Wechsel ins Ausland) → deaktivieren.
+      // Falls der Verein doch überwacht ist (Namensabweichung), reaktiviert ihn
+      // der nächste Kader-Scan dieses Vereins automatisch.
+      if (!matchedClub) {
+        console.log(`  LEFT MONITORED LEAGUES: ${player.player_name} → ${agentInfo.currentClubName} (nicht überwacht), deaktiviere`)
+        await supabase.from('berater_players').update({
+          is_active: false,
+          is_vereinslos: false,
+          last_scanned_at: now,
+          updated_at: now,
+        }).eq('id', player.id)
+        leftLeagues++
+        continue
+      }
+
       const hasAgent = !!(agentInfo.agentName && agentInfo.agentName !== 'kein Beratereintrag')
 
       await supabase.from('berater_players').update({
         is_vereinslos: false,
-        club_id: matchedClub?.id || player.club_id,
+        club_id: matchedClub.id,
+        player_name: agentInfo.fullName || player.player_name,
         current_agent_name: agentInfo.agentName,
         current_agent_company: agentInfo.agentCompany,
         agent_url: agentInfo.agentUrl,
         market_value: agentInfo.marketValue,
+        contract_until: agentInfo.contractUntil || player.contract_until,
+        position: agentInfo.position || player.position,
         has_agent: hasAgent,
         birth_date: agentInfo.birthDate || player.birth_date,
         agent_updated_at: now,
@@ -947,9 +1054,12 @@ async function cleanupVereinslose(supabase: ReturnType<typeof createClient>, bat
     // Immer noch vereinslos — nur Berater-Info + Scan-Timestamp updaten
     const hasAgent = !!(agentInfo.agentName && agentInfo.agentName !== 'kein Beratereintrag')
     await supabase.from('berater_players').update({
+      player_name: agentInfo.fullName || player.player_name,
       current_agent_name: agentInfo.agentName,
       current_agent_company: agentInfo.agentCompany,
         market_value: agentInfo.marketValue,
+      contract_until: agentInfo.contractUntil || player.contract_until,
+      position: agentInfo.position || player.position,
       has_agent: hasAgent,
       birth_date: agentInfo.birthDate || player.birth_date,
       agent_updated_at: now,
@@ -958,8 +1068,8 @@ async function cleanupVereinslose(supabase: ReturnType<typeof createClient>, bat
     }).eq('id', player.id)
   }
 
-  console.log(`Vereinslose cleanup done: ${vereinslose.length} checked, ${reactivated} reactivated, ${retired} retired`)
-  return { checked: vereinslose.length, reactivated, retired }
+  console.log(`Vereinslose cleanup done: ${vereinslose.length} checked, ${reactivated} reactivated, ${retired} retired, ${leftLeagues} left monitored leagues`)
+  return { checked: vereinslose.length, reactivated, retired, leftLeagues }
 }
 
 // ============================================================================

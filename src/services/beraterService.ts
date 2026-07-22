@@ -503,10 +503,10 @@ export async function scanClub(clubId: string) {
 
 const COUNTRY_ORDER = ['DE', 'AT', 'NL'];
 
-export async function loadLeagues(): Promise<Array<{ id: string; name: string; country: string; is_active: boolean }>> {
+export async function loadLeagues(): Promise<Array<{ id: string; name: string; country: string; is_active: boolean; tier: number }>> {
   const { data, error } = await supabase
     .from('berater_leagues')
-    .select('id, name, country, is_active')
+    .select('id, name, country, is_active, tier')
     .order('tier', { ascending: true });
 
   if (error) {
