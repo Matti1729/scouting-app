@@ -22,12 +22,11 @@ import { useTheme } from '../../contexts/ThemeContext';
 import {
   StipendiumEntry,
   StipendiumSearchPlayer,
-  PlayerTmDetails,
   loadStipendiumEntries,
   addStipendiumEntry,
   searchStipendiumPlayers,
-  fetchPlayerTmDetails,
 } from '../../services/stipendiumService';
+import { PlayerDetailModal } from '../../components/PlayerDetailModal';
 import { loadLeagues, loadWatchlist, addToWatchlist } from '../../services/beraterService';
 import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
@@ -483,8 +482,6 @@ export function SuchmaschineScreen() {
 
   // Spieler-Detail-Modal
   const [detailPlayer, setDetailPlayer] = useState<StipendiumSearchPlayer | null>(null);
-  const [tmDetails, setTmDetails] = useState<PlayerTmDetails | null>(null);
-  const [tmLoading, setTmLoading] = useState(false);
 
   // Watchlist-Mitgliedschaft (für den Button im Modal)
   const [watchlistIds, setWatchlistIds] = useState<Set<string>>(new Set());
@@ -498,16 +495,9 @@ export function SuchmaschineScreen() {
     });
   }, []);
 
+  // TM-Details (Einsätze/Transfers) lädt das Modal selbst nach
   const openPlayerDetail = (player: StipendiumSearchPlayer) => {
     setDetailPlayer(player);
-    setTmDetails(null);
-    if (player.tm_player_id) {
-      setTmLoading(true);
-      fetchPlayerTmDetails(player.tm_player_id).then((d) => {
-        setTmDetails(d);
-        setTmLoading(false);
-      });
-    }
   };
 
   const handleAddToWatchlist = async (player: StipendiumSearchPlayer) => {
@@ -807,7 +797,8 @@ export function SuchmaschineScreen() {
               case 'liga':
                 return (
                   <Text style={[styles.tableCell, { color: RETRO.textMuted }]} numberOfLines={1}>
-                    {item.league_name || ''}
+                    {/* Vereinslos: keine Liga anzeigen (wäre nur die letzte Liga) */}
+                    {item.is_vereinslos ? '' : item.league_name || ''}
                   </Text>
                 );
               default:
@@ -1011,173 +1002,54 @@ export function SuchmaschineScreen() {
         renderContent()
       )}
 
-      {/* Spieler-Detail-Modal */}
+      {/* Spieler-Detail-Modal (geteilte Komponente, identisch im Sportstipendium-Board) */}
       {detailPlayer && (() => {
         const p = detailPlayer;
         const added = !!(p.tm_player_id && addedTmIds.has(p.tm_player_id));
         const onWatchlist = watchlistIds.has(p.id);
-        const contract = formatContract(p.contract_until);
-        const vereinslosTransfer = tmDetails?.transfers?.find(
-          (t) => t.to && /vereinslos|ohne verein|career break/i.test(t.to)
-        );
-        const lastClubSeason = p.is_vereinslos ? seasonOfDate(vereinslosTransfer?.date || null) : null;
-        const infoRow = (label: string, value: React.ReactNode) => (
-          <View style={styles.detailRow}>
-            <Text style={[styles.detailLabel, { color: RETRO.text }]}>{label}</Text>
-            {typeof value === 'string' ? (
-              <Text style={[styles.detailValue, { color: RETRO.text }]}>{value}</Text>
-            ) : (
-              value
-            )}
-          </View>
-        );
-        // Gelber Abschnittsbalken wie in der Anstoss-Spielerinfo
-        const sectionBar = (title: string) => (
-          <View style={[styles.detailSectionBar, HARD_SHADOW]}>
-            <Text style={styles.detailSectionBarText}>{title}</Text>
-          </View>
-        );
-
         return (
-          <Modal visible transparent animationType="fade" onRequestClose={() => setDetailPlayer(null)}>
-            <TouchableWithoutFeedback onPress={() => setDetailPlayer(null)}>
-              <View style={styles.detailOverlay}>
-                <TouchableWithoutFeedback>
-                  <View style={[styles.detailModal, HARD_SHADOW_LG]}>
-                    {/* Namens-Balken (gelb): Name links, TM-Link rechtsbündig */}
-                    <View style={[styles.detailNameBar, HARD_SHADOW]}>
-                      <Text style={styles.detailName} numberOfLines={1}>
-                        {(() => {
-                          const n = splitName(p.player_name);
-                          return n.first ? `${n.last}, ${n.first}` : n.last;
-                        })()}
-                      </Text>
-                      {p.tm_profile_url && (
-                        <TouchableOpacity onPress={() => openProfile(p.tm_profile_url)} hitSlop={8}>
-                          <Image source={require('../../../assets/tm-icon.png')} style={styles.tmIcon} />
-                        </TouchableOpacity>
-                      )}
-                      <TouchableOpacity onPress={() => setDetailPlayer(null)} hitSlop={8}>
-                        <Ionicons name="close" size={20} color={RETRO.text} />
-                      </TouchableOpacity>
-                    </View>
-                    <View style={{ height: 6 }} />
-                    {infoRow(
-                      'Alter',
-                      p.age !== null
-                        ? `${p.age} Jahre${p.birth_date ? ` (${p.birth_date})` : ''}`
-                        : p.birth_date || '—'
-                    )}
-                    {p.position ? infoRow('Position', p.position) : null}
-                    {infoRow(
-                      'Berater',
-                      p.current_agent_name && p.current_agent_name !== 'kein Beratereintrag'
-                        ? p.current_agent_name
-                        : 'kein Beratereintrag'
-                    )}
-
-                    {/* Aktueller Verein */}
-                    {sectionBar('Aktueller Verein')}
-                    {p.is_vereinslos ? (
-                      <>
-                        {infoRow('Verein', 'vereinslos')}
-                        {infoRow(
-                          'Letzter Verein',
-                          <View style={styles.detailClubValue}>
-                            {p.club_tm_id && (
-                              <Image
-                                source={{ uri: `https://tmssl.akamaized.net/images/wappen/head/${p.club_tm_id}.png` }}
-                                style={styles.detailClubLogo}
-                                resizeMode="contain"
-                              />
-                            )}
-                            <Text style={styles.detailClubText}>
-                              {`${p.club_name || '?'}${lastClubSeason ? ` (${lastClubSeason})` : ''}`}
-                            </Text>
-                          </View>
-                        )}
-                      </>
-                    ) : (
-                      infoRow(
-                        'Verein',
-                        <View style={styles.detailClubValue}>
-                          {p.club_tm_id && (
-                            <Image
-                              source={{ uri: `https://tmssl.akamaized.net/images/wappen/head/${p.club_tm_id}.png` }}
-                              style={styles.detailClubLogo}
-                              resizeMode="contain"
-                            />
-                          )}
-                          <Text style={styles.detailClubText}>
-                            {p.club_name || '—'}
-                          </Text>
-                        </View>
-                      )
-                    )}
-                    {infoRow('Liga', p.league_name || '—')}
-
-                    {/* Vertrag */}
-                    {sectionBar('Vertrag')}
-                    {infoRow('Vertrag bis', contract || '—')}
-                    {infoRow('Marktwert', p.market_value || '—')}
-
-                    {/* Spiele */}
-                    {sectionBar('Einsätze')}
-                    {infoRow(
-                      `Saison ${tmDetails ? seasonLabel(tmDetails.seasonYear) : 'aktuell'}`,
-                      tmLoading ? (
-                        <ActivityIndicator size="small" color={RETRO.headerBg} />
-                      ) : (
-                        `${tmDetails?.gamesCurrentSeason ?? '—'} Spiele`
-                      )
-                    )}
-                    {infoRow(
-                      `Saison ${tmDetails ? seasonLabel(tmDetails.seasonYear - 1) : 'letzte'}`,
-                      tmLoading ? ' ' : `${tmDetails?.gamesLastSeason ?? '—'} Spiele`
-                    )}
-
-                    {/* Aktionen */}
-                    <View style={styles.detailActions}>
-                      {added ? (
-                        <View style={[styles.detailActionButton, { backgroundColor: RETRO.yellow }, HARD_SHADOW]}>
-                          <Text style={[styles.detailActionText, { color: RETRO.yellowText }]}>🎓 im Sportstipendium</Text>
-                        </View>
-                      ) : (
-                        <TouchableOpacity
-                          style={[retro.button, styles.detailActionButton]}
-                          onPress={() => handleAddToStipendium(p)}
-                          disabled={addingId === p.id}
-                        >
-                          {addingId === p.id ? (
-                            <ActivityIndicator size="small" color={RETRO.text} />
-                          ) : (
-                            <Text style={[styles.detailActionText, { color: RETRO.text }]}>+ Sportstipendium</Text>
-                          )}
-                        </TouchableOpacity>
-                      )}
-                      {onWatchlist ? (
-                        <View style={[styles.detailActionButton, { backgroundColor: RETRO.faceSelected }, HARD_SHADOW]}>
-                          <Text style={[styles.detailActionText, { color: RETRO.text }]}>⭐ auf der Watchlist</Text>
-                        </View>
-                      ) : (
-                        <TouchableOpacity
-                          style={[retro.button, styles.detailActionButton]}
-                          onPress={() => handleAddToWatchlist(p)}
-                          disabled={addingWatchlist}
-                        >
-                          {addingWatchlist ? (
-                            <ActivityIndicator size="small" color={RETRO.text} />
-                          ) : (
-                            <Text style={[styles.detailActionText, { color: RETRO.text }]}>+ Watchlist (Beratung)</Text>
-                          )}
-                        </TouchableOpacity>
-                      )}
-                    </View>
+          <PlayerDetailModal
+            player={p}
+            onClose={() => setDetailPlayer(null)}
+            actions={
+              <>
+                {added ? (
+                  <View style={[styles.detailActionButton, { backgroundColor: RETRO.yellow }, HARD_SHADOW]}>
+                    <Text style={[styles.detailActionText, { color: RETRO.yellowText }]}>🎓 im Sportstipendium</Text>
                   </View>
-                </TouchableWithoutFeedback>
-              </View>
-            </TouchableWithoutFeedback>
-          </Modal>
+                ) : (
+                  <TouchableOpacity
+                    style={[retro.button, styles.detailActionButton]}
+                    onPress={() => handleAddToStipendium(p)}
+                    disabled={addingId === p.id}
+                  >
+                    {addingId === p.id ? (
+                      <ActivityIndicator size="small" color={RETRO.text} />
+                    ) : (
+                      <Text style={[styles.detailActionText, { color: RETRO.text }]}>+ Sportstipendium</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+                {onWatchlist ? (
+                  <View style={[styles.detailActionButton, { backgroundColor: RETRO.faceSelected }, HARD_SHADOW]}>
+                    <Text style={[styles.detailActionText, { color: RETRO.text }]}>⭐ auf der Watchlist</Text>
+                  </View>
+                ) : (
+                  <TouchableOpacity
+                    style={[retro.button, styles.detailActionButton]}
+                    onPress={() => handleAddToWatchlist(p)}
+                    disabled={addingWatchlist}
+                  >
+                    {addingWatchlist ? (
+                      <ActivityIndicator size="small" color={RETRO.text} />
+                    ) : (
+                      <Text style={[styles.detailActionText, { color: RETRO.text }]}>+ Watchlist (Beratung)</Text>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </>
+            }
+          />
         );
       })()}
     </SafeAreaView>

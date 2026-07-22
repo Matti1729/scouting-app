@@ -258,6 +258,74 @@ function nextSeasonEnd(): string {
   return `${year}-06-30`;
 }
 
+/** DB-Zeile (berater_players + Verein/Liga) auf das Such-/Detailformat mappen */
+function mapRowToSearchPlayer(row: any): StipendiumSearchPlayer {
+  return {
+    id: row.id,
+    player_name: row.player_name,
+    birth_date: row.birth_date,
+    age: ageFromBirthDate(row.birth_date),
+    position: positionCode(row.position),
+    current_agent_name: row.current_agent_name || null,
+    tm_player_id: row.tm_player_id,
+    tm_profile_url: row.tm_profile_url,
+    market_value: row.market_value,
+    contract_until: row.contract_until,
+    is_vereinslos: !!row.is_vereinslos,
+    club_name: row.berater_clubs?.club_name || null,
+    club_tm_id: row.berater_clubs?.tm_club_id || null,
+    league_name: row.berater_clubs?.berater_leagues?.name || null,
+  };
+}
+
+const SEARCH_PLAYER_SELECT = `id, player_name, birth_date, position, current_agent_name, tm_player_id, tm_profile_url, market_value, contract_until, is_vereinslos,
+   berater_clubs!inner (club_name, tm_club_id, league_id, berater_leagues (name, country))`;
+
+/** Einzelnen Spieler (z.B. für das Detail-Modal im Sportstipendium-Board) laden */
+export async function fetchSearchPlayer(
+  tmPlayerId: string | null,
+  playerName?: string | null
+): Promise<StipendiumSearchPlayer | null> {
+  let query = supabase.from('berater_players').select(SEARCH_PLAYER_SELECT).eq('is_active', true);
+  if (tmPlayerId) {
+    query = query.eq('tm_player_id', tmPlayerId);
+  } else if (playerName) {
+    query = query.eq('player_name', playerName);
+  } else {
+    return null;
+  }
+  const { data, error } = await query.limit(1).maybeSingle();
+  if (error || !data) return null;
+  return mapRowToSearchPlayer(data);
+}
+
+export interface PlayerClubInfo {
+  club_name: string | null;
+  club_tm_id: string | null;
+  is_vereinslos: boolean;
+}
+
+/** Aktuelle Vereinsinfo (inkl. Wappen-ID) für mehrere Spieler — für die Board-Karten */
+export async function fetchPlayersClubInfo(tmPlayerIds: string[]): Promise<Record<string, PlayerClubInfo>> {
+  if (tmPlayerIds.length === 0) return {};
+  const { data, error } = await supabase
+    .from('berater_players')
+    .select('tm_player_id, is_vereinslos, berater_clubs (club_name, tm_club_id)')
+    .eq('is_active', true)
+    .in('tm_player_id', tmPlayerIds);
+  if (error || !data) return {};
+  const map: Record<string, PlayerClubInfo> = {};
+  for (const row of data as any[]) {
+    if (!row.tm_player_id) continue;
+    map[row.tm_player_id] = {
+      club_name: row.berater_clubs?.club_name || null,
+      club_tm_id: row.berater_clubs?.tm_club_id || null,
+      is_vereinslos: !!row.is_vereinslos,
+    };
+  }
+  return map;
+}
+
 export async function searchStipendiumPlayers(
   filters: StipendiumSearchFilters
 ): Promise<{ players: StipendiumSearchPlayer[]; total: number; hiddenNoPosition: number }> {
@@ -273,7 +341,11 @@ export async function searchStipendiumPlayers(
       )
       .eq('is_active', true);
 
-    query = query.eq('is_vereinslos', !!filters.vereinslos);
+    // Ohne Filter alle Spieler (mit Verein UND vereinslos);
+    // "vereinslos"-Button schränkt auf Vereinslose ein.
+    if (filters.vereinslos) {
+      query = query.eq('is_vereinslos', true);
+    }
 
     if (filters.leagueIds && filters.leagueIds.length > 0) {
       query = query.in('berater_clubs.league_id', filters.leagueIds);
@@ -308,22 +380,7 @@ export async function searchStipendiumPlayers(
     }
   }
 
-  let players: StipendiumSearchPlayer[] = allData.map((row) => ({
-    id: row.id,
-    player_name: row.player_name,
-    birth_date: row.birth_date,
-    age: ageFromBirthDate(row.birth_date),
-    position: positionCode(row.position),
-    current_agent_name: row.current_agent_name || null,
-    tm_player_id: row.tm_player_id,
-    tm_profile_url: row.tm_profile_url,
-    market_value: row.market_value,
-    contract_until: row.contract_until,
-    is_vereinslos: !!row.is_vereinslos,
-    club_name: row.berater_clubs?.club_name || null,
-    club_tm_id: row.berater_clubs?.tm_club_id || null,
-    league_name: row.berater_clubs?.berater_leagues?.name || null,
-  }));
+  let players: StipendiumSearchPlayer[] = allData.map(mapRowToSearchPlayer);
 
   // Namens-/Vereinsfilter client-seitig und akzent-unabhängig ("uriel" findet "Uriël")
   if (filters.name?.trim()) {
