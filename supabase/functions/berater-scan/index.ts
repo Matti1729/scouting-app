@@ -697,6 +697,7 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
   newPlayers: number
   deactivated: number
   clubName: string
+  skipped?: boolean
 }> {
   // Club laden
   const { data: club, error: clubError } = await supabase
@@ -724,9 +725,23 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
 
   console.log(`Found ${squadPlayers.length} players in squad of ${club.club_name}`)
 
-  // Schutz: Bei verdächtig kleinem Parse-Ergebnis (Layout-Änderung/Fehlerseite)
-  // nicht weitermachen — sonst würde unten der ganze Kader als vereinslos markiert.
+  // Schutz: Bei verdächtig kleinem Parse-Ergebnis nicht weitermachen —
+  // sonst würde unten der ganze Kader als vereinslos markiert.
   if (squadPlayers.length < 5) {
+    // Kader-Tabelle vorhanden, aber (fast) leer: legitimer Zustand in der
+    // Sommerpause (v.a. Jugendteams) — Verein sauber überspringen statt Fehler.
+    if (html.includes('class="items"')) {
+      console.log(`Skipping ${club.club_name}: only ${squadPlayers.length} players listed (likely off-season/empty squad)`)
+      return {
+        playersScanned: squadPlayers.length,
+        changesDetected: 0,
+        newPlayers: 0,
+        deactivated: 0,
+        clubName: club.club_name,
+        skipped: true,
+      }
+    }
+    // Keine Kader-Tabelle gefunden: echte Fehlerseite/Layout-Änderung
     throw new Error(`Suspiciously few players (${squadPlayers.length}) parsed for ${club.club_name} — skipping to avoid false vereinslos marking`)
   }
 
@@ -1178,12 +1193,22 @@ async function scanNextBatch(supabase: ReturnType<typeof createClient>): Promise
   } catch (error) {
     console.error(`Error scanning club ${club.club_name}:`, error)
 
-    // Error count erhöhen
+    // Error count erhöhen. Da der Index bei Fehlern nicht weiterrückt, zählt
+    // error_count die Fehlversuche am SELBEN Verein (Reset bei Erfolg).
+    // Nach 5 Versuchen: Verein überspringen, damit der Scan nie dauerhaft hängt.
+    const newErrorCount = (state.error_count || 0) + 1
+    const skipClub = newErrorCount >= 5
+    if (skipClub) {
+      console.warn(`Skipping ${club.club_name} after ${newErrorCount} failed attempts`)
+    }
     await supabase
       .from('berater_scan_state')
       .update({
         is_running: false,
-        error_count: (state.error_count || 0) + 1,
+        error_count: skipClub ? 0 : newErrorCount,
+        ...(skipClub
+          ? { next_club_index: nextIndex + 1, last_scan_at: new Date().toISOString() }
+          : {}),
         updated_at: new Date().toISOString(),
       })
       .eq('id', 1)

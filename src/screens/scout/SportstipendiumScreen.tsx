@@ -30,6 +30,7 @@ import {
   removeStipendiumEntry,
   fetchSearchPlayer,
   fetchPlayersClubInfo,
+  syncGoKandidat,
 } from '../../services/stipendiumService';
 import { PlayerDetailModal, splitName } from '../../components/PlayerDetailModal';
 
@@ -205,6 +206,19 @@ export function SportstipendiumScreen() {
     const success = await updateStipendiumStatus(entry.id, status);
     if (!success) {
       setEntries((prev) => prev.map((e) => (e.id === entry.id ? { ...e, status: prevStatus } : e)));
+      return;
+    }
+    // Go-Kandidat: automatisch als Spieler im Scout Portal anlegen (idempotent)
+    if (status === 'go') {
+      const result = await syncGoKandidat(entry);
+      if (!result.ok) {
+        const msg = `"${entry.player_name}" konnte nicht ins Scout Portal übertragen werden: ${result.error}`;
+        if (Platform.OS === 'web') {
+          window.alert(`Scout-Portal\n\n${msg}`);
+        } else {
+          console.error(msg);
+        }
+      }
     }
   };
 

@@ -2,7 +2,7 @@
 // Wird von der Suchmaschine und dem Sportstipendium-Board geteilt, damit das
 // Spielerprofil überall identisch aussieht. Lädt die TM-Details (Einsätze,
 // Transfers) selbst nach.
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -14,13 +14,27 @@ import {
   Image,
   Linking,
   Platform,
+  TextInput,
+  ScrollView,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
   StipendiumSearchPlayer,
   PlayerTmDetails,
   fetchPlayerTmDetails,
+  loadPlayerNote,
+  savePlayerNote,
 } from '../services/stipendiumService';
+
+// Nativer Datums-Picker des Browsers (input type="date") — nur im Web verfügbar
+let createDomElement: ((type: string, props: any) => React.ReactElement) | null = null;
+if (Platform.OS === 'web') {
+  try {
+    createDomElement = require('react-native').unstable_createElement;
+  } catch {
+    createDomElement = null;
+  }
+}
 
 // Retro-Farbschema (Anstoss-3-Optik) — identisch zur Suchmaschine
 const RETRO = {
@@ -100,6 +114,10 @@ export function PlayerDetailModal({
 }) {
   const [tmDetails, setTmDetails] = useState<PlayerTmDetails | null>(null);
   const [tmLoading, setTmLoading] = useState(false);
+  // Notizen + Erstkontakt (pro Spieler gespeichert)
+  const [notes, setNotes] = useState('');
+  const [firstContact, setFirstContact] = useState(''); // ISO "YYYY-MM-DD"
+  const savedNote = useRef({ notes: '', firstContact: '' });
 
   useEffect(() => {
     setTmDetails(null);
@@ -111,6 +129,25 @@ export function PlayerDetailModal({
       });
     }
   }, [player.tm_player_id]);
+
+  useEffect(() => {
+    loadPlayerNote(player.id).then((n) => {
+      setNotes(n.notes || '');
+      setFirstContact(n.first_contact_date || '');
+      savedNote.current = { notes: n.notes || '', firstContact: n.first_contact_date || '' };
+    });
+  }, [player.id]);
+
+  // Speichern, sobald sich etwas geändert hat (Notizen bei Verlassen des Felds,
+  // Datum direkt bei Auswahl)
+  const persistNote = (nextNotes: string, nextContact: string) => {
+    if (nextNotes === savedNote.current.notes && nextContact === savedNote.current.firstContact) return;
+    savedNote.current = { notes: nextNotes, firstContact: nextContact };
+    savePlayerNote(player.id, {
+      notes: nextNotes.trim() || null,
+      first_contact_date: nextContact || null,
+    });
+  };
 
   const p = player;
   const contract = formatContract(p.contract_until);
@@ -137,9 +174,22 @@ export function PlayerDetailModal({
     </View>
   );
 
+  // Grüner Abschnittsbalken (eigene Scouting-Felder: Notizen, Erstkontakt)
+  const sectionBarGreen = (title: string) => (
+    <View style={[styles.detailSectionBar, styles.detailSectionBarGreen, HARD_SHADOW]}>
+      <Text style={[styles.detailSectionBarText, { color: '#ffffff' }]}>{title}</Text>
+    </View>
+  );
+
+  // Beim Schließen offene Änderungen sichern
+  const handleClose = () => {
+    persistNote(notes, firstContact);
+    onClose();
+  };
+
   return (
-    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
-      <TouchableWithoutFeedback onPress={onClose}>
+    <Modal visible transparent animationType="fade" onRequestClose={handleClose}>
+      <TouchableWithoutFeedback onPress={handleClose}>
         <View style={styles.detailOverlay}>
           <TouchableWithoutFeedback>
             <View style={[styles.detailModal, HARD_SHADOW_LG]}>
@@ -156,10 +206,11 @@ export function PlayerDetailModal({
                     <Image source={require('../../assets/tm-icon.png')} style={styles.tmIcon} />
                   </TouchableOpacity>
                 )}
-                <TouchableOpacity onPress={onClose} hitSlop={8}>
+                <TouchableOpacity onPress={handleClose} hitSlop={8}>
                   <Ionicons name="close" size={20} color={RETRO.text} />
                 </TouchableOpacity>
               </View>
+              <ScrollView style={styles.detailScroll} showsVerticalScrollIndicator={false}>
               <View style={{ height: 6 }} />
               {infoRow(
                 'Alter',
@@ -234,8 +285,59 @@ export function PlayerDetailModal({
                 tmLoading ? ' ' : `${tmDetails?.gamesLastSeason ?? '—'} Spiele`
               )}
 
+              {/* Erstkontakt */}
+              {sectionBarGreen('Erstkontakt')}
+              <View style={styles.detailRow}>
+                <Text style={[styles.detailLabel, { color: RETRO.text }]}>Erstkontakt am</Text>
+                <View style={styles.dateInputWrap}>
+                  {createDomElement ? (
+                    createDomElement('input', {
+                      type: 'date',
+                      value: firstContact,
+                      onChange: (e: any) => {
+                        const v = e.target.value || '';
+                        setFirstContact(v);
+                        persistNote(notes, v);
+                      },
+                      style: {
+                        border: `1px solid ${RETRO.shadowDark}`,
+                        background: 'rgba(255, 255, 255, 0.92)',
+                        color: RETRO.text,
+                        fontSize: 13,
+                        fontWeight: 600,
+                        padding: '5px 8px',
+                        fontFamily: 'inherit',
+                        outline: 'none',
+                      },
+                    })
+                  ) : (
+                    <TextInput
+                      style={styles.dateInputNative}
+                      placeholder="JJJJ-MM-TT"
+                      placeholderTextColor={'#8a867e'}
+                      value={firstContact}
+                      onChangeText={setFirstContact}
+                      onBlur={() => persistNote(notes, firstContact)}
+                    />
+                  )}
+                </View>
+              </View>
+
+              {/* Notizen */}
+              {sectionBarGreen('Notizen')}
+              <TextInput
+                style={styles.notesInput}
+                placeholder="Notizen zum Spieler ..."
+                placeholderTextColor={'#8a867e'}
+                value={notes}
+                onChangeText={setNotes}
+                onBlur={() => persistNote(notes, firstContact)}
+                multiline
+              />
+
               {/* Aktionen (vom Aufrufer definiert, z.B. + Sportstipendium / + Watchlist) */}
               {actions ? <View style={styles.detailActions}>{actions}</View> : null}
+              </ScrollView>
             </View>
           </TouchableWithoutFeedback>
         </View>
@@ -255,11 +357,15 @@ const styles = StyleSheet.create({
   detailModal: {
     width: '100%',
     maxWidth: 480,
+    maxHeight: '92%',
     borderWidth: 1,
     borderColor: RETRO.shadowDark,
     borderRadius: 2,
     padding: 16,
     backgroundColor: 'rgba(238, 234, 226, 0.97)',
+  },
+  detailScroll: {
+    flexGrow: 0,
   },
   detailNameBar: {
     flexDirection: 'row',
@@ -313,6 +419,39 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: RETRO.text,
+  },
+  // Grüne Variante für die eigenen Scouting-Felder
+  detailSectionBarGreen: {
+    backgroundColor: '#2f7d36',
+  },
+  dateInputWrap: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  dateInputNative: {
+    borderWidth: 1,
+    borderColor: RETRO.shadowDark,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    fontSize: 13,
+    fontWeight: '600',
+    color: RETRO.text,
+    minWidth: 130,
+    textAlign: 'right',
+  },
+  notesInput: {
+    borderWidth: 1,
+    borderColor: RETRO.shadowDark,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 13,
+    color: RETRO.text,
+    minHeight: 64,
+    textAlignVertical: 'top',
+    marginHorizontal: 4,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : {}),
   },
   detailRow: {
     flexDirection: 'row',

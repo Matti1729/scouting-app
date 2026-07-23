@@ -299,6 +299,70 @@ export async function fetchSearchPlayer(
   return mapRowToSearchPlayer(data);
 }
 
+// ============================================================================
+// SCOUT-PORTAL-SYNC (Go-Kandidaten -> Athletes-USA Scout Portal)
+// ============================================================================
+
+/** Meldet einen Go-Kandidaten an das Scout Portal (idempotent pro Eintrag).
+ *  Rückgabe: true wenn der Lead angelegt wurde (oder schon existierte). */
+export async function syncGoKandidat(entry: {
+  id: string;
+  player_name: string;
+  tm_profile_url: string | null;
+}): Promise<{ ok: boolean; error?: string }> {
+  // "Nachname, Vorname"-Logik ist Anzeige-Sache — das Portal erwartet Vor-/Nachname
+  const parts = entry.player_name.trim().split(/\s+/);
+  const first = parts[0] || entry.player_name;
+  const last = parts.slice(1).join(' ');
+  try {
+    const { data, error } = await supabase.functions.invoke('stipendium-go-sync', {
+      body: {
+        first_name: first,
+        last_name: last,
+        profile_url: entry.tm_profile_url || '',
+        source_lead_id: entry.id,
+      },
+    });
+    if (error || !data?.success) {
+      console.error('Scout-Portal-Sync fehlgeschlagen:', error || data);
+      return { ok: false, error: (data as any)?.error || error?.message || 'unbekannter Fehler' };
+    }
+    return { ok: true };
+  } catch (e) {
+    console.error('Scout-Portal-Sync fehlgeschlagen:', e);
+    return { ok: false, error: String(e) };
+  }
+}
+
+// ============================================================================
+// SPIELER-NOTIZEN (Notizen + Erstkontakt-Datum im Profil-Modal)
+// ============================================================================
+
+export interface PlayerNote {
+  notes: string | null;
+  first_contact_date: string | null; // ISO "YYYY-MM-DD"
+}
+
+export async function loadPlayerNote(playerId: string): Promise<PlayerNote> {
+  const { data } = await supabase
+    .from('player_notes')
+    .select('notes, first_contact_date')
+    .eq('player_id', playerId)
+    .maybeSingle();
+  return { notes: data?.notes || null, first_contact_date: data?.first_contact_date || null };
+}
+
+export async function savePlayerNote(playerId: string, note: PlayerNote): Promise<boolean> {
+  const { error } = await supabase.from('player_notes').upsert({
+    player_id: playerId,
+    notes: note.notes,
+    first_contact_date: note.first_contact_date,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) console.error('Error saving player note:', error);
+  return !error;
+}
+
 export interface PlayerClubInfo {
   club_name: string | null;
   club_tm_id: string | null;
