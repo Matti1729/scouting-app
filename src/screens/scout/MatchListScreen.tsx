@@ -39,6 +39,55 @@ import {
   isProLeague,
 } from '../../services/kickerService';
 import {
+  loadAreaData,
+  areaAge,
+  areaArt,
+  stripAge,
+  resolveGameVenue,
+  saveGameVenue,
+  AreaLeague,
+} from '../../services/areaGamesService';
+import { GamesMapView, GameMapFeature } from '../../components/GamesMapView';
+import { Image } from 'react-native';
+
+// Retro-Farbschema (Anstoss-3-Optik) — identisch zur Suchmaschine
+const RETRO = {
+  page: '#e9e5dd',
+  titleBar: 'rgba(210, 206, 198, 0.92)',
+  panel: 'rgba(228, 224, 216, 0.68)',
+  face: 'rgba(230, 226, 218, 0.80)',
+  faceSelected: 'rgba(169, 187, 223, 0.92)',
+  shadowDark: '#55524e',
+  text: '#14141e',
+  textMuted: '#4a4a55',
+  headerBg: '#2b3f96',
+  headerText: '#ffffff',
+  inputBg: 'rgba(255, 255, 255, 0.92)',
+  yellow: '#f2c230',
+  rowBorder: '#c6c2ba',
+  white: '#ffffff',
+};
+
+const HARD_SHADOW = Platform.OS === 'web'
+  ? ({ boxShadow: '2px 2px 3px rgba(20, 20, 45, 0.45)' } as any)
+  : { shadowColor: '#14142d', shadowOffset: { width: 2, height: 2 }, shadowOpacity: 0.45, shadowRadius: 2, elevation: 3 };
+
+const HARD_SHADOW_LG = Platform.OS === 'web'
+  ? ({ boxShadow: '3px 4px 9px rgba(10, 10, 45, 0.5)' } as any)
+  : { shadowColor: '#0a0a2d', shadowOffset: { width: 3, height: 4 }, shadowOpacity: 0.5, shadowRadius: 5, elevation: 4 };
+
+const BLUE_GRADIENT = Platform.OS === 'web'
+  ? ({ backgroundImage: 'linear-gradient(180deg, #4058b6 0%, #2b3f96 55%, #223077 100%)' } as any)
+  : {};
+
+// Retro-Button (erhabene Fläche wie in der Suchmaschine)
+const RETRO_BTN = {
+  backgroundColor: RETRO.face,
+  borderWidth: 1,
+  borderColor: RETRO.shadowDark,
+  borderRadius: 0,
+} as const;
+import {
   pickAndExtractLineups,
   MediaSource,
 } from '../../services/visionLineupService';
@@ -121,6 +170,12 @@ interface Match {
   fussballDeUrl?: string;
   ergebnis?: string;
   isArchived?: boolean;
+  // Spiele "in der Umgebung" (aus der KMH-Datenbank, read-only)
+  isAreaGame?: boolean;
+  lat?: number | null;
+  lng?: number | null;
+  venueAddress?: string | null;
+  markerColor?: string;
 }
 
 interface Player {
@@ -415,6 +470,17 @@ export function MatchListScreen({ navigation }: any) {
   const [matches, setMatches] = useState<Match[]>([]);
   const [isLoadingMatches, setIsLoadingMatches] = useState(true);
 
+  // Spiele "in der Umgebung" (aus der KMH-App) + Ansicht/Filter
+  const [areaMatches, setAreaMatches] = useState<Match[]>([]);
+  const [jahrgangFilter, setJahrgangFilter] = useState<string[]>([]);
+  const [artFilter, setArtFilter] = useState<string[]>([]);
+  const [filterMenu, setFilterMenu] = useState<'jahrgang' | 'art' | null>(null);
+  const [dateFilter, setDateFilter] = useState(''); // ISO "YYYY-MM-DD", leer = alle
+  const [hoveredMapKey, setHoveredMapKey] = useState<string | null>(null);
+  // Detail-Modal für Umgebungs-Spiele (+ "Zu Meine Spiele hinzufügen")
+  const [areaDetail, setAreaDetail] = useState<Match | null>(null);
+  const [addingAreaGame, setAddingAreaGame] = useState(false);
+
   // Aufstellung Import
   const [isLoadingLineups, setIsLoadingLineups] = useState(false);
   const [lineupStatus, setLineupStatus] = useState<'none' | 'loading' | 'available' | 'unavailable'>('none');
@@ -478,6 +544,62 @@ export function MatchListScreen({ navigation }: any) {
       setMatches(result.data.map(dbMatchToMatch));
     }
     setIsLoadingMatches(false);
+  };
+
+  // Spiele "in der Umgebung" laden (geteilte KMH-Datenbank, bereits geocodiert)
+  const fetchAreaGames = async () => {
+    const { leagues, clubs, games } = await loadAreaData();
+    const leagueName = (key: string) => leagues.find((l) => l.league_key === key)?.name || '';
+    const groupColor = (key: string) => {
+      const g = leagues.find((l) => l.league_key === key)?.marker_group;
+      return g === 'jugend' ? '#f59e0b' : g === 'gemischt' ? '#a855f7' : '#3b82f6';
+    };
+    // Heimverein nachschlagen (per fussball.de-Team-ID, sonst Liga+Name):
+    // liefert Spielstätte/Koordinaten, wenn das Spiel selbst keine hat.
+    const clubByTeamId = new Map(clubs.filter((c) => c.fussballde_team_id).map((c) => [c.fussballde_team_id as string, c]));
+    const clubByName = new Map(clubs.map((c) => [`${c.league_key}::${c.name}`, c]));
+    setAreaMatches(
+      games.map((g) => {
+        const homeClub = (g.home_team_id && clubByTeamId.get(g.home_team_id))
+          || clubByName.get(`${g.league_key}::${g.home_name}`)
+          || null;
+        const venue = g.venue || homeClub?.venue || null;
+        // Letzter Fallback: Heimvereinsname als Maps-Suche (findet das Vereinsgelände)
+        const venueAddress = g.venue_address || homeClub?.venue_address || (venue ? null : stripAge(g.home_name));
+        return {
+          id: `area:${g.match_key}`,
+          datum: g.kickoff_date, // ISO — parseDateString/formatDateGerman können das
+          datumEnde: null,
+          zeit: g.kickoff_time || '',
+          mannschaft: areaAge(g, leagueName(g.league_key)),
+          spiel: `${stripAge(g.home_name)} - ${stripAge(g.away_name)}`,
+          art: areaArt(g),
+          ort: venueAddress ? `${venue ? `${venue}, ` : ''}${venueAddress}` : venue,
+          fussballDeUrl: g.game_url || undefined,
+          isAreaGame: true,
+          lat: g.lat ?? homeClub?.lat ?? null,
+          lng: g.lng ?? homeClub?.lng ?? null,
+          venueAddress,
+          markerColor: groupColor(g.league_key),
+        };
+      })
+    );
+
+    // Fehlende Spiel-Adressen im Hintergrund von der fussball.de-Spielseite
+    // nachladen (der nächtliche Sync arbeitet Budget-begrenzt) und in die
+    // Datenbank zurückschreiben — nächste Ladungen haben sie dann direkt.
+    const missing = games.filter((g) => !g.venue_address && g.game_url).slice(0, 25);
+    for (const g of missing) {
+      const r = await resolveGameVenue(g.game_url as string);
+      if (!r?.address) continue;
+      const ortText = r.venue ? `${r.venue}, ${r.address}` : r.address;
+      setAreaMatches((prev) =>
+        prev.map((m) =>
+          m.id === `area:${g.match_key}` ? { ...m, ort: ortText, venueAddress: r.address } : m
+        )
+      );
+      saveGameVenue(g.match_key, r.venue, r.address);
+    }
   };
 
   // Aufstellung für ein Spiel laden
@@ -745,6 +867,7 @@ export function MatchListScreen({ navigation }: any) {
   // Initial laden
   useEffect(() => {
     fetchMatches();
+    fetchAreaGames();
   }, []);
 
   // Fussball.de URL laden
@@ -1057,11 +1180,41 @@ export function MatchListScreen({ navigation }: any) {
   };
 
   const handleMatchPress = async (match: Match) => {
+    // Umgebungs-Spiel: Detail-Modal mit Spieldaten + "Zu Meine Spiele hinzufügen"
+    if (match.isAreaGame) {
+      setAreaDetail(match);
+      return;
+    }
     setSelectedMatch(match);
     setModalVisible(true);
     // Aufstellung aus Supabase laden
     await fetchLineupForMatch(match.id);
   };
+
+  // Umgebungs-Spiel als eigenes Event übernehmen (bekommt damit Aufstellung/Scouting)
+  const handleAddAreaGameToMyGames = async () => {
+    if (!areaDetail || addingAreaGame) return;
+    setAddingAreaGame(true);
+    const [home, ...rest] = areaDetail.spiel.split(' - ');
+    const result = await createMatch({
+      home_team: home?.trim() || areaDetail.spiel,
+      away_team: rest.join(' - ').trim(),
+      match_date: areaDetail.datum,
+      match_time: areaDetail.zeit || null,
+      age_group: areaDetail.mannschaft || null,
+      match_type: areaDetail.art || 'Punktspiel',
+      location: areaDetail.ort || null,
+      fussball_de_url: areaDetail.fussballDeUrl || null,
+    } as any);
+    if (result.success) {
+      await fetchMatches(); // eigene Liste aktualisieren (Umgebungs-Duplikat wird ausgeblendet)
+    }
+    setAddingAreaGame(false);
+  };
+
+  // Ist das Umgebungs-Spiel schon als eigenes Event übernommen?
+  const isAreaGameAdded = (m: Match | null): boolean =>
+    !!m?.fussballDeUrl && matches.some((x) => x.fussballDeUrl === m.fussballDeUrl);
 
   // Ort in Karten-App öffnen (Google Maps / Apple Maps)
   const openLocationInMaps = (location: string) => {
@@ -1756,27 +1909,154 @@ export function MatchListScreen({ navigation }: any) {
     }
   }, [matches.length]);
 
-  // Filter-Logik
+  // Jahrgang einer Zeile normalisieren ("U17", sonst "Herren") — fürs Filtern
+  const rowJahrgang = (m: Match): string => {
+    const hit = (m.mannschaft || '').match(/\bU[\s-]?(\d{2})\b/i);
+    return hit ? `U${hit[1]}` : 'Herren';
+  };
+
+  // Filter-Logik: eigene Termine + Spiele "in der Umgebung" (nur Anstehend),
+  // gefiltert nach Suche, Jahrgang und Art
   const filteredMatches = useMemo(() => {
-    const filtered = matches.filter(match => {
+    // Bereits als eigenes Event übernommene Umgebungs-Spiele ausblenden (kein Duplikat)
+    const ownUrls = new Set(matches.map((m) => m.fussballDeUrl).filter(Boolean));
+    const pool = showArchive
+      ? matches
+      : [...matches, ...areaMatches.filter((a) => !a.fussballDeUrl || !ownUrls.has(a.fussballDeUrl))];
+    const q = searchQuery.toLowerCase();
+    const filtered = pool.filter(match => {
       const matchesSearch =
         searchQuery === '' ||
-        match.spiel.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        match.mannschaft.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (match.ort && match.ort.toLowerCase().includes(searchQuery.toLowerCase()));
+        match.spiel.toLowerCase().includes(q) ||
+        match.mannschaft.toLowerCase().includes(q) ||
+        match.art.toLowerCase().includes(q) ||
+        (match.ort && match.ort.toLowerCase().includes(q));
 
-      // Trenne aktive und archivierte Spiele
-      // Event ist archiviert wenn manuell archiviert ODER wenn es beendet ist
+      const matchesJahrgang =
+        jahrgangFilter.length === 0 || jahrgangFilter.includes(rowJahrgang(match));
+
+      const matchesArt = artFilter.length === 0 || artFilter.includes(match.art);
+
+      // Datums-Filter: Tag muss im Zeitraum des Events liegen
+      let matchesDate = true;
+      if (dateFilter) {
+        const day = parseDateString(dateFilter);
+        const start = parseDateString(match.datum);
+        const end = match.datumEnde ? parseDateString(match.datumEnde) : start;
+        matchesDate = !!(day && start && end && day >= new Date(start.setHours(0, 0, 0, 0)) && day <= new Date(end.setHours(23, 59, 59, 999)));
+      }
+
+      // "Meine Spiele" = ALLE eigenen Spiele (auch kommende);
+      // "Anstehend" = alles, was noch nicht beendet/archiviert ist
       const isArchived = match.isArchived || isEventFinished(match.datum, match.datumEnde);
-      const matchesArchiveFilter = showArchive ? isArchived : !isArchived;
+      const matchesArchiveFilter = showArchive ? true : !isArchived;
 
-      return matchesSearch && matchesArchiveFilter;
+      return matchesSearch && matchesJahrgang && matchesArt && matchesDate && matchesArchiveFilter;
     });
     return getSortedMatches(filtered);
-  }, [matches, searchQuery, showArchive, sortField, sortDirection]);
+  }, [matches, areaMatches, searchQuery, jahrgangFilter, artFilter, dateFilter, showArchive, sortField, sortDirection]);
 
   // Anzahl archivierter Spiele
   const archivedCount = matches.filter(m => m.isArchived || isEventFinished(m.datum, m.datumEnde)).length;
+
+  // Jahrgangs-Optionen dynamisch: nur Jahrgänge, die im Spielplan vorkommen
+  const jahrgangOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const m of [...matches, ...areaMatches]) set.add(rowJahrgang(m));
+    const jugend = Array.from(set)
+      .filter((x) => x !== 'Herren')
+      .sort((a, b) => parseInt(a.slice(1), 10) - parseInt(b.slice(1), 10));
+    return [...jugend, ...(set.has('Herren') ? ['Herren'] : [])];
+  }, [matches, areaMatches]);
+
+  // Filter-Pill mit Mehrfachauswahl-Dropdown (Jahrgang bzw. Art)
+  const renderFilterPill = (key: 'jahrgang' | 'art') => {
+    const isJahr = key === 'jahrgang';
+    const options = isJahr ? jahrgangOptions : SPIELART_OPTIONS.map(o => o.value);
+    const sel = isJahr ? jahrgangFilter : artFilter;
+    const setSel = isJahr ? setJahrgangFilter : setArtFilter;
+    const open = filterMenu === key;
+    const label = isJahr ? 'Jahrgang' : 'Art';
+    const text = sel.length === 0 ? label : sel.length <= 2 ? sel.join(', ') : `${label} (${sel.length})`;
+    return (
+      <View style={{ position: 'relative', zIndex: open ? 1000 : 1 }}>
+        <TouchableOpacity
+          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 },
+            sel.length > 0 && { backgroundColor: RETRO.faceSelected }]}
+          onPress={() => setFilterMenu(open ? null : key)}
+        >
+          <Text style={{ fontSize: 13, fontWeight: sel.length ? '700' : '600', color: RETRO.text }}>{text} ▾</Text>
+        </TouchableOpacity>
+        {open && (
+          <View style={[HARD_SHADOW_LG, {
+            position: 'absolute', top: 40, left: 0, width: 200,
+            backgroundColor: RETRO.white, borderWidth: 1, borderColor: RETRO.shadowDark,
+            paddingVertical: 4, zIndex: 1000,
+          }]}>
+            <TouchableOpacity
+              style={{ paddingVertical: 8, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder }}
+              onPress={() => setSel([])}
+            >
+              <Text style={{ color: sel.length === 0 ? RETRO.text : RETRO.textMuted, fontSize: 13, fontWeight: sel.length === 0 ? '700' : '400' }}>
+                Alle
+              </Text>
+            </TouchableOpacity>
+            <ScrollView style={{ maxHeight: 280 }}>
+              {options.map(opt => {
+                const on = sel.includes(opt);
+                return (
+                  <TouchableOpacity
+                    key={opt}
+                    style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 7, paddingHorizontal: 12 }}
+                    onPress={() => setSel(on ? sel.filter(x => x !== opt) : [...sel, opt])}
+                  >
+                    <View style={{
+                      width: 16, height: 16, borderWidth: 1.5,
+                      borderColor: on ? RETRO.headerBg : RETRO.rowBorder,
+                      backgroundColor: on ? RETRO.headerBg : 'transparent',
+                      alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {on && <Text style={{ color: '#fff', fontSize: 11, fontWeight: '800' }}>✓</Text>}
+                    </View>
+                    <Text style={{ color: RETRO.text, fontSize: 13 }}>{opt}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        )}
+      </View>
+    );
+  };
+
+  // Karten-Marker: ein Pin je Spielort, Popup mit den Spielen + Maps-Link
+  const mapFeatures = useMemo<GameMapFeature[]>(() => {
+    if (showArchive) return [];
+    const esc = (s: string) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const byLoc: Record<string, { lat: number; lng: number; color: string; blocks: string[]; addrs: Map<string, string>; keys: string[] }> = {};
+    for (const m of filteredMatches) {
+      if (m.lat == null || m.lng == null) continue;
+      const k = `${m.lat.toFixed(4)},${m.lng.toFixed(4)}`;
+      if (!byLoc[k]) byLoc[k] = { lat: m.lat, lng: m.lng, color: m.markerColor || '#3b82f6', blocks: [], addrs: new Map(), keys: [] };
+      byLoc[k].keys.push(m.id);
+      byLoc[k].blocks.push(
+        `<div style="color:#6b7280">${esc(formatDateGerman(m.datum, m.datumEnde))}${m.zeit ? ` · ${esc(m.zeit)} Uhr` : ''} · ${esc(m.mannschaft)} · ${esc(m.art)}</div>`
+        + `<div style="font-weight:600;margin-bottom:4px">${esc(m.spiel)}</div>`
+      );
+      const q = m.venueAddress || m.ort || '';
+      if (q && !byLoc[k].addrs.has(q)) byLoc[k].addrs.set(q, m.ort || q);
+    }
+    return Object.values(byLoc).map(v => {
+      const addrLinks = Array.from(v.addrs.entries()).slice(0, 3).map(([q, txt]) =>
+        `<div><a href="https://www.google.de/maps?q=${encodeURIComponent(q)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none">📍 ${esc(txt)}</a></div>`
+      ).join('');
+      return {
+        type: 'Feature' as const,
+        geometry: { type: 'Point' as const, coordinates: [v.lng, v.lat] as [number, number] },
+        properties: { color: v.color, keys: v.keys, title: v.blocks.slice(0, 8).join('') + (v.blocks.length > 8 ? '<div>…</div>' : '') + addrLinks },
+      };
+    });
+  }, [showArchive, filteredMatches]);
 
   // Desktop: Tabellen-Zeile
   const renderMatchRow = ({ item }: { item: Match }) => {
@@ -1960,7 +2240,21 @@ export function MatchListScreen({ navigation }: any) {
   };
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: isMobile ? colors.background : RETRO.page }]}>
+      {/* Verwaschenes Hintergrundfoto (Anstoss-Optik, nur Desktop) */}
+      {!isMobile && (
+        <Image
+          source={require('../../../assets/retro-bg.jpg')}
+          style={{
+            position: 'absolute', top: 0, left: 0, right: 0, bottom: 0,
+            width: '100%', height: '100%', opacity: 0.55,
+            ...(Platform.OS === 'web'
+              ? ({ objectFit: 'cover', objectPosition: 'center', backgroundSize: 'cover', backgroundPosition: 'center' } as any)
+              : {}),
+          } as any}
+          resizeMode="cover"
+        />
+      )}
       {/* Mobile Header (wie KMH-App) */}
       {isMobile ? (
         <>
@@ -2030,7 +2324,7 @@ export function MatchListScreen({ navigation }: any) {
               onPress={() => setShowArchive(false)}
             >
               <Text style={[styles.mobileToggleBtnText, { color: colors.textSecondary }, !showArchive && { color: colors.text, fontWeight: '600' }]}>
-                Anstehend ({matches.filter(m => !m.isArchived && !isMatchFinished(m.datum)).length})
+                Anstehend ({matches.filter(m => !m.isArchived && !isMatchFinished(m.datum)).length + areaMatches.length})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -2045,110 +2339,109 @@ export function MatchListScreen({ navigation }: any) {
         </>
       ) : (
         <>
-        {/* Desktop: Top Header Bar (wie Mobile) */}
-        <View style={[styles.desktopTopHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-          {/* Menu Button */}
-          <TouchableOpacity
-            style={[styles.desktopMenuBtn, { backgroundColor: colors.surfaceSecondary }]}
-            onPress={() => navigation.navigate('Dashboard')}
-          >
-            <Ionicons name="menu" size={24} color={colors.text} />
+        {/* Desktop: Fenster-Titelleiste (Anstoss-Optik wie Suchmaschine) */}
+        <View style={{
+          flexDirection: 'row', alignItems: 'center', padding: 16,
+          backgroundColor: RETRO.titleBar, borderBottomWidth: 1, borderBottomColor: RETRO.shadowDark,
+        }}>
+          <TouchableOpacity onPress={() => navigation.navigate('Dashboard')} style={{ marginRight: 12, padding: 4 }}>
+            <Text style={{ fontSize: 24, fontWeight: '600', color: RETRO.text }}>{'←'}</Text>
           </TouchableOpacity>
-
-          {/* Title + Subtitle (zentriert) */}
-          <View style={styles.desktopTitleContainer}>
-            <Text style={[styles.desktopHeaderTitle, { color: colors.text }]}>Spiele-Übersicht</Text>
-            <Text style={[styles.desktopHeaderSubtitle, { color: colors.textSecondary }]}>Termine der nächsten Spiele, Lehrgänge und Turniere</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={{ fontSize: 20, fontWeight: '700', color: RETRO.text }}>Spiele-Übersicht</Text>
+            <Text style={{ fontSize: 12, color: RETRO.textMuted }}>Termine der nächsten Spiele, Lehrgänge und Turniere</Text>
           </View>
-
-          {/* DFB-Sync Button */}
-          <TouchableOpacity
-            style={[styles.tab, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
-            onPress={() => setShowDfbSyncModal(true)}
-          >
-            <Text style={[styles.tabText, { color: colors.text }]}>DFB-Termine ↻</Text>
-          </TouchableOpacity>
+          {/* Anstehend | Meine Spiele | DFB-Sync */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <TouchableOpacity
+              style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 },
+                !showArchive && { backgroundColor: RETRO.faceSelected }]}
+              onPress={() => setShowArchive(false)}
+            >
+              <Text style={{ fontSize: 13, fontWeight: !showArchive ? '700' : '600', color: RETRO.text }}>
+                Anstehend ({(() => {
+                  // Übernommene Umgebungs-Spiele nicht doppelt zählen
+                  const ownUrls = new Set(matches.map(m => m.fussballDeUrl).filter(Boolean));
+                  return matches.filter(m => !m.isArchived && !isMatchFinished(m.datum)).length
+                    + areaMatches.filter(a => !a.fussballDeUrl || !ownUrls.has(a.fussballDeUrl)).length;
+                })()})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 },
+                showArchive && { backgroundColor: RETRO.faceSelected }]}
+              onPress={() => setShowArchive(true)}
+            >
+              <Text style={{ fontSize: 13, fontWeight: showArchive ? '700' : '600', color: RETRO.text }}>
+                Meine Spiele ({matches.length})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 }]}
+              onPress={() => setShowDfbSyncModal(true)}
+            >
+              <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }}>DFB-Termine ↻</Text>
+            </TouchableOpacity>
+          </View>
         </View>
 
         {/* Desktop: Toolbar */}
-        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-          {/* Zurück-Button */}
-          <TouchableOpacity
-            style={[styles.backButton, { backgroundColor: colors.surfaceSecondary }]}
-            onPress={() => navigation.navigate('Dashboard')}
-          >
-            <Text style={[styles.backButtonText, { color: colors.text }]}>←</Text>
-          </TouchableOpacity>
-
+        <View style={[styles.header, { backgroundColor: 'transparent', borderBottomWidth: 0 }, filterMenu ? ({ zIndex: 1000 } as any) : null]}>
           {/* Suchleiste */}
-          <View style={[styles.searchContainer, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder }]}>
-            <Text style={[styles.searchIcon, { color: colors.textSecondary }]}>🔍</Text>
+          <View style={[styles.searchContainer, HARD_SHADOW, {
+            backgroundColor: RETRO.inputBg, borderColor: RETRO.shadowDark, borderRadius: 0,
+          }]}>
+            <Text style={[styles.searchIcon, { color: RETRO.textMuted }]}>🔍</Text>
             <TextInput
-              style={[styles.searchInput, { color: colors.text }]}
+              style={[styles.searchInput, { color: RETRO.text }]}
               value={searchQuery}
               onChangeText={setSearchQuery}
-              placeholder="Spiel, Mannschaft suchen..."
-              placeholderTextColor={colors.textSecondary}
+              placeholder="Team, Spiel, Ort suchen..."
+              placeholderTextColor={RETRO.textMuted}
             />
           </View>
 
-          {/* Tab-Leiste: Anstehend | Archiv | + Neues Spiel */}
+          {/* Filter: Datum / Jahrgang / Art */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginRight: 8, zIndex: filterMenu ? 1000 : 1 }}>
+            {Platform.OS === 'web' &&
+              React.createElement('input' as any, {
+                type: 'date',
+                value: dateFilter,
+                onChange: (e: any) => setDateFilter(e.target.value),
+                title: 'Datum filtern',
+                style: {
+                  background: RETRO.inputBg,
+                  color: RETRO.text,
+                  border: `1px solid ${RETRO.shadowDark}`,
+                  borderRadius: 0,
+                  padding: '7px 8px',
+                  fontSize: 13,
+                  colorScheme: 'light',
+                  width: 140,
+                  boxShadow: '2px 2px 3px rgba(20, 20, 45, 0.45)',
+                },
+              })}
+            {renderFilterPill('jahrgang')}
+            {renderFilterPill('art')}
+          </View>
+
+          {/* Tab-Leiste: + Neues Spiel / Export */}
           <View style={styles.tabBar}>
-            {/* Anstehend Tab */}
-            <TouchableOpacity
-              style={[
-                styles.tab,
-                !showArchive && styles.tabActive,
-                {
-                  backgroundColor: !showArchive ? colors.primary : colors.surfaceSecondary,
-                  borderColor: !showArchive ? colors.primary : colors.border,
-                },
-              ]}
-              onPress={() => setShowArchive(false)}
-            >
-              <Text style={[
-                styles.tabText,
-                { color: !showArchive ? colors.primaryText : colors.text }
-              ]}>
-                Anstehend ({matches.filter(m => !m.isArchived && !isMatchFinished(m.datum)).length})
-              </Text>
-            </TouchableOpacity>
-
-            {/* Archiv Tab */}
-            <TouchableOpacity
-              style={[
-                styles.tab,
-                showArchive && styles.tabActive,
-                {
-                  backgroundColor: showArchive ? colors.primary : colors.surfaceSecondary,
-                  borderColor: showArchive ? colors.primary : colors.border,
-                },
-              ]}
-              onPress={() => setShowArchive(true)}
-            >
-              <Text style={[
-                styles.tabText,
-                { color: showArchive ? colors.primaryText : colors.text }
-              ]}>
-                Archiv ({archivedCount})
-              </Text>
-            </TouchableOpacity>
-
             {/* Neues Spiel Button */}
             <TouchableOpacity
-              style={[styles.tab, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
+              style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 }]}
               onPress={() => setAddMatchModalVisible(true)}
             >
-              <Text style={[styles.tabText, { color: colors.text }]}>+ Event anlegen</Text>
+              <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }}>+ Event anlegen</Text>
             </TouchableOpacity>
 
             {/* Kalender-Export Button (nur wenn Spiele ausgewählt) */}
             {selectedMatches.length > 0 && (
               <TouchableOpacity
-                style={[styles.tab, { backgroundColor: '#10b981', borderColor: '#10b981' }]}
+                style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#b7cdb7' }]}
                 onPress={exportSelectedToCalendar}
               >
-                <Text style={[styles.tabText, { color: '#fff' }]}>
+                <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }}>
                   📅 {selectedMatches.length} exportieren
                 </Text>
               </TouchableOpacity>
@@ -2158,62 +2451,215 @@ export function MatchListScreen({ navigation }: any) {
         </>
       )}
 
-      {/* Desktop: Tabellen-Layout */}
-      {!isMobile ? (
-        <View
-          style={[styles.tableContainer, { borderColor: colors.border, backgroundColor: colors.surface }]}
-          onLayout={(e) => setMatchTableWidth(e.nativeEvent.layout.width)}
-        >
-          {/* Tabellen-Header */}
-          <View style={[styles.tableHeader, { backgroundColor: colors.surfaceSecondary, borderBottomColor: colors.border }]}>
-            <TouchableOpacity style={styles.checkboxCell} onPress={toggleSelectAll}>
-              <View style={[
-                styles.checkbox,
-                filteredMatches.length > 0 &&
-                filteredMatches.every(m => selectedMatches.includes(m.id)) &&
-                { backgroundColor: '#10b981', borderColor: '#10b981' }
-              ]}>
-                {filteredMatches.length > 0 &&
-                 filteredMatches.every(m => selectedMatches.includes(m.id)) && (
-                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: 'bold' }}>✓</Text>
-                )}
-              </View>
-            </TouchableOpacity>
-            {matchTableWidth > 0 && (
-              <TableHeader
-                columnDefs={MATCH_COLUMNS}
-                columnOrder={matchTable.columnOrder}
-                getColumnWidth={matchTable.getColumnWidth}
-                onResizeStart={matchTable.onResizeStart}
-                onDragStart={matchTable.onDragStart}
-                resizingKey={matchTable.resizingKey}
-                draggingKey={matchTable.draggingKey}
-                dragOverKey={matchTable.dragOverKey}
-                onSort={(key) => handleSort(key as SortField)}
-                sortKey={sortField}
-                sortAsc={sortDirection === 'asc'}
-                colors={colors}
-                style={{ flex: 1, borderBottomWidth: 0, paddingHorizontal: 0 }}
-                setHeaderRef={matchTable.setHeaderRef}
-              />
-            )}
-          </View>
+      {/* Klick außerhalb schließt das offene Filter-Menü */}
+      {filterMenu && (
+        <Pressable
+          style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, zIndex: 500 }}
+          onPress={() => setFilterMenu(null)}
+        />
+      )}
 
-          {/* Tabellen-Inhalt */}
-          <FlatList
-            data={filteredMatches}
-            keyExtractor={(item) => item.id}
-            renderItem={renderMatchRow}
-            style={styles.list}
-            contentContainerStyle={styles.listContent}
-            ListEmptyComponent={
-              <View style={styles.emptyState}>
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  {showArchive ? 'Keine archivierten Spiele' : 'Keine anstehenden Spiele'}
-                </Text>
+      {/* Spiel-Detail-Modal (Anstoss-Optik) — für alle Spiele in der Liste */}
+      {areaDetail && (() => {
+        const isOwn = !areaDetail.isAreaGame;
+        const added = isOwn || isAreaGameAdded(areaDetail);
+        // Zugehöriges eigenes Event (für "Aufstellung & Scouting öffnen")
+        const ownMatch = isOwn
+          ? areaDetail
+          : matches.find((x) => x.fussballDeUrl && x.fussballDeUrl === areaDetail.fussballDeUrl) || null;
+        const infoRow = (label: string, value: React.ReactNode) => (
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 10, paddingHorizontal: 4 }}>
+            <Text style={{ width: 100, fontSize: 13, color: RETRO.text }}>{label}</Text>
+            {typeof value === 'string' ? (
+              <Text style={{ fontSize: 14, fontWeight: '600', flex: 1, textAlign: 'right', color: RETRO.text }}>{value}</Text>
+            ) : value}
+          </View>
+        );
+        return (
+          <Modal visible transparent animationType="fade" onRequestClose={() => setAreaDetail(null)}>
+            <Pressable
+              style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: 'center', alignItems: 'center', padding: 20 }}
+              onPress={() => setAreaDetail(null)}
+            >
+              <Pressable style={[HARD_SHADOW_LG, {
+                width: '100%', maxWidth: 480, borderWidth: 1, borderColor: RETRO.shadowDark,
+                borderRadius: 2, padding: 16, backgroundColor: 'rgba(238, 234, 226, 0.97)',
+              }]}>
+                {/* Gelber Namens-Balken */}
+                <View style={[HARD_SHADOW, {
+                  flexDirection: 'row', alignItems: 'center', backgroundColor: RETRO.yellow,
+                  paddingVertical: 6, paddingHorizontal: 10, marginRight: 40, marginBottom: 10, gap: 8,
+                }]}>
+                  <Text style={{ fontSize: 16, fontWeight: '700', color: RETRO.text, flex: 1 }} numberOfLines={2}>
+                    {areaDetail.spiel}
+                  </Text>
+                  <TouchableOpacity onPress={() => setAreaDetail(null)} hitSlop={8}>
+                    <Ionicons name="close" size={20} color={RETRO.text} />
+                  </TouchableOpacity>
+                </View>
+
+                {infoRow('Uhrzeit', `${formatDateGerman(areaDetail.datum, areaDetail.datumEnde)}${areaDetail.zeit ? ` · ${areaDetail.zeit} Uhr` : ''}`)}
+                {infoRow('Art', areaDetail.art)}
+                {areaDetail.ort
+                  ? infoRow('Spielstätte', (
+                      <TouchableOpacity
+                        style={{ flex: 1 }}
+                        onPress={() => {
+                          const q = areaDetail.venueAddress || areaDetail.ort || '';
+                          if (Platform.OS === 'web') window.open(`https://www.google.de/maps?q=${encodeURIComponent(q)}`, '_blank');
+                        }}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: '600', textAlign: 'right', color: '#2563eb' }} numberOfLines={2}>
+                          📍 {areaDetail.ort}
+                        </Text>
+                      </TouchableOpacity>
+                    ))
+                  : null}
+
+                {/* fussball.de-Link */}
+                {areaDetail.fussballDeUrl && (
+                  <TouchableOpacity
+                    style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 9, paddingHorizontal: 14, alignSelf: 'flex-start', marginTop: 8 }]}
+                    onPress={() => {
+                      if (Platform.OS === 'web') window.open(areaDetail.fussballDeUrl as string, '_blank');
+                      else Linking.openURL(areaDetail.fussballDeUrl as string);
+                    }}
+                  >
+                    <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }}>⚽ Spiel auf fussball.de öffnen</Text>
+                  </TouchableOpacity>
+                )}
+
+                {/* Zu Meine Spiele hinzufügen */}
+                <View style={{ borderTopWidth: 1, borderTopColor: RETRO.rowBorder, marginTop: 14, paddingTop: 12 }}>
+                  {added ? (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                      <View style={[HARD_SHADOW, {
+                        backgroundColor: RETRO.yellow, paddingVertical: 9, paddingHorizontal: 14,
+                      }]}>
+                        <Text style={{ fontSize: 13, fontWeight: '700', color: RETRO.text }}>✓ In „Meine Spiele" übernommen</Text>
+                      </View>
+                      {/* Aufstellung nur im "Meine Spiele"-Tab anbieten */}
+                      {ownMatch && showArchive && (
+                        <TouchableOpacity
+                          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 9, paddingHorizontal: 14 }]}
+                          onPress={() => {
+                            const m = ownMatch;
+                            setAreaDetail(null);
+                            setSelectedMatch(m);
+                            setModalVisible(true);
+                            fetchLineupForMatch(m.id);
+                          }}
+                        >
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }}>Aufstellung & Scouting</Text>
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                  ) : (
+                    <>
+                      <Text style={{ fontSize: 13, color: RETRO.textMuted, marginBottom: 8 }}>
+                        Dieses Spiel beobachten? Es wird als eigenes Spiel übernommen (mit Aufstellung & Scouting).
+                      </Text>
+                      <TouchableOpacity
+                        style={[HARD_SHADOW, {
+                          backgroundColor: RETRO.headerBg, paddingVertical: 9, paddingHorizontal: 14,
+                          alignSelf: 'flex-start', borderWidth: 1, borderColor: '#223077',
+                        }, BLUE_GRADIENT]}
+                        onPress={handleAddAreaGameToMyGames}
+                        disabled={addingAreaGame}
+                      >
+                        {addingAreaGame ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>+ Zu „Meine Spiele" hinzufügen</Text>
+                        )}
+                      </TouchableOpacity>
+                    </>
+                  )}
+                </View>
+              </Pressable>
+            </Pressable>
+          </Modal>
+        );
+      })()}
+
+      {/* Kombinierte Ansicht (wie KMH-App): links die Spiele-Liste, rechts die Karte.
+          Im Archiv nur die Liste (archivierte Events haben keine Koordinaten). */}
+      {!isMobile ? (
+        <View style={{ flex: 1, flexDirection: 'row', marginHorizontal: 16, marginBottom: 16, marginTop: 4, gap: 14 }}>
+          {/* Liste links */}
+          <View style={{ flex: 1, minWidth: 420 }}>
+            {/* Blauer Abschnittsbalken (Anstoss) */}
+            <View style={[HARD_SHADOW, BLUE_GRADIENT, {
+              backgroundColor: RETRO.headerBg, paddingVertical: 7, paddingHorizontal: 12,
+              flexDirection: 'row', alignItems: 'center',
+            }]}>
+              <Text style={{ color: RETRO.headerText, fontWeight: '700', fontSize: 14, flex: 1 }}>
+                {showArchive ? 'Meine Spiele' : 'Spiele'}
+              </Text>
+              <Text style={{ color: RETRO.headerText, fontWeight: '700', fontSize: 14 }}>{filteredMatches.length}</Text>
+            </View>
+            <View style={{ flex: 1, marginTop: 10, backgroundColor: RETRO.panel, borderWidth: 1, borderColor: RETRO.rowBorder }}>
+              <FlatList
+                data={filteredMatches}
+                keyExtractor={(item) => item.id}
+                renderItem={({ item }) => {
+                  const badge = getMatchTypeBadgeStyle(item.art);
+                  return (
+                    <TouchableOpacity
+                      onPress={() => setAreaDetail(item)}
+                      {...(Platform.OS === 'web'
+                        ? ({ onMouseEnter: () => setHoveredMapKey(item.id), onMouseLeave: () => setHoveredMapKey(null) } as any)
+                        : {})}
+                      style={[HARD_SHADOW, {
+                        backgroundColor: RETRO.white, borderWidth: 1, borderColor: RETRO.rowBorder,
+                        borderLeftWidth: 3, borderLeftColor: RETRO.yellow,
+                        paddingVertical: 8, paddingHorizontal: 12,
+                        marginHorizontal: 10, marginTop: 10,
+                      }]}
+                    >
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <Text style={{ color: RETRO.textMuted, fontSize: 11, flexShrink: 1 }} numberOfLines={1}>
+                          {formatDateGerman(item.datum, item.datumEnde)}{item.zeit ? ` · ${item.zeit} Uhr` : ''} · {item.mannschaft}
+                        </Text>
+                        <View style={{ backgroundColor: badge.backgroundColor, paddingHorizontal: 5, paddingVertical: 1 }}>
+                          <Text style={{ color: badge.color, fontSize: 9, fontWeight: '700' }}>{item.art}</Text>
+                        </View>
+                      </View>
+                      <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '600', marginTop: 2 }} numberOfLines={1}>
+                        {item.spiel}
+                      </Text>
+                      {item.ort ? (
+                        <Text style={{ color: RETRO.textMuted, fontSize: 11, marginTop: 1, fontStyle: 'italic' }} numberOfLines={1}>
+                          📍 {item.ort}
+                        </Text>
+                      ) : null}
+                    </TouchableOpacity>
+                  );
+                }}
+                contentContainerStyle={{ paddingBottom: 10 }}
+                ListEmptyComponent={
+                  <View style={styles.emptyState}>
+                    <Text style={[styles.emptyText, { color: RETRO.textMuted }]}>
+                      {showArchive ? 'Keine archivierten Spiele' : 'Keine Spiele gefunden'}
+                    </Text>
+                  </View>
+                }
+              />
+            </View>
+          </View>
+          {/* Karte rechts (nur Anstehend) */}
+          {!showArchive && (
+            <View style={{ flex: 1.2 }}>
+              <View style={[HARD_SHADOW, BLUE_GRADIENT, {
+                backgroundColor: RETRO.headerBg, paddingVertical: 7, paddingHorizontal: 12,
+              }]}>
+                <Text style={{ color: RETRO.headerText, fontWeight: '700', fontSize: 14 }}>Karte</Text>
               </View>
-            }
-          />
+              <View style={[HARD_SHADOW_LG, { flex: 1, marginTop: 10, borderWidth: 1, borderColor: RETRO.shadowDark, overflow: 'hidden' }]}>
+                <GamesMapView features={mapFeatures} hoverKey={hoveredMapKey} />
+              </View>
+            </View>
+          )}
         </View>
       ) : (
         /* Mobile: Card-Layout */

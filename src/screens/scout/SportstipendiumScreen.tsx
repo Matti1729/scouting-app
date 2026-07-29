@@ -31,6 +31,7 @@ import {
   fetchSearchPlayer,
   fetchPlayersClubInfo,
   syncGoKandidat,
+  checkGoKandidatImPortal,
 } from '../../services/stipendiumService';
 import { PlayerDetailModal, splitName } from '../../components/PlayerDetailModal';
 
@@ -104,7 +105,10 @@ function DraggableCard({
 
   const panResponder = useRef(
     PanResponder.create({
-      // Erst ab kleiner Bewegung übernehmen, damit Klicks (TM-Link, Löschen) funktionieren
+      // Erst ab kleiner Bewegung übernehmen, damit Klicks (TM-Link, Löschen) funktionieren.
+      // Capture-Phase nötig: die Karte selbst ist ein TouchableOpacity (Profil öffnen)
+      // und würde den Responder sonst behalten — Ziehen ginge nicht mehr.
+      onMoveShouldSetPanResponderCapture: (_evt, g) => Math.abs(g.dx) > 6 || Math.abs(g.dy) > 6,
       onMoveShouldSetPanResponder: (_evt, g) => Math.abs(g.dx) > 6 || Math.abs(g.dy) > 6,
       onPanResponderGrant: () => setDragging(true),
       onPanResponderMove: (evt, g) => {
@@ -156,6 +160,10 @@ export function SportstipendiumScreen() {
   const [confirmDelete, setConfirmDelete] = useState<StipendiumEntry | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<StipendiumEntry | null>(null);
   const [archiveReason, setArchiveReason] = useState('');
+  // Go-Kandidaten sind im Scout Portal angelegt -> auf dem Board gesperrt.
+  // Wurde der Spieler im Portal gelöscht, wird er automatisch wieder frei.
+  const [lockedDialog, setLockedDialog] = useState<StipendiumEntry | null>(null);
+  const [goUnlocked, setGoUnlocked] = useState<Set<string>>(new Set());
 
   // Spalten- und Archiv-Rechtecke für Drop-Erkennung (Fensterkoordinaten)
   const columnRefs = useRef<Partial<Record<StipendiumStatus, View | null>>>({});
@@ -188,6 +196,18 @@ export function SportstipendiumScreen() {
     const tmIds = result.map((e) => e.tm_player_id).filter(Boolean) as string[];
     if (tmIds.length > 0) {
       setClubInfo(await fetchPlayersClubInfo(tmIds));
+    }
+    // Auto-Unlock: Go-Kandidaten, die im Scout Portal gelöscht wurden, freigeben
+    const goEntries = result.filter((e) => e.status === 'go');
+    if (goEntries.length > 0) {
+      const checks = await Promise.all(goEntries.map((e) => checkGoKandidatImPortal(e)));
+      const unlocked = new Set<string>();
+      goEntries.forEach((e, i) => {
+        if (checks[i] === false) unlocked.add(e.id); // sicher gelöscht -> frei
+      });
+      setGoUnlocked(unlocked);
+    } else {
+      setGoUnlocked(new Set());
     }
   };
 
@@ -329,39 +349,57 @@ export function SportstipendiumScreen() {
   };
 
   const renderCard = (entry: StipendiumEntry) => {
+    // Go-Kandidaten sind ins Scout Portal übernommen -> gesperrt (grau, kein
+    // Verschieben/Archivieren/Löschen). Nach Löschung im Portal automatisch frei.
+    const locked = entry.status === 'go' && !goUnlocked.has(entry.id);
+
+    const cardInner = (
+      <TouchableOpacity
+        style={[styles.card, locked && styles.cardLocked, HARD_SHADOW]}
+        activeOpacity={0.7}
+        onPress={() => openPlayerDetail(entry)}
+      >
+        <View style={styles.cardNameRow}>
+          {locked && <Ionicons name="lock-closed" size={12} color={RETRO.textMuted} />}
+          <Text style={styles.cardName} numberOfLines={1}>
+            {displayName(entry.player_name)}
+          </Text>
+          {entry.tm_profile_url && (
+            <TouchableOpacity onPress={() => openProfile(entry.tm_profile_url)} hitSlop={8}>
+              <Ionicons name="open-outline" size={14} color={RETRO.textMuted} />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            style={styles.removeButton}
+            onPress={() => (locked ? setLockedDialog(entry) : (setArchiveReason(''), setArchiveTarget(entry)))}
+            hitSlop={4}
+          >
+            <Ionicons name="archive-outline" size={13} color={RETRO.textMuted} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.removeButton}
+            onPress={() => (locked ? setLockedDialog(entry) : setConfirmDelete(entry))}
+            hitSlop={4}
+          >
+            <Ionicons name="trash-outline" size={13} color={locked ? RETRO.textMuted : '#b02020'} />
+          </TouchableOpacity>
+        </View>
+        {renderClubLine(entry)}
+      </TouchableOpacity>
+    );
+
+    if (locked) {
+      // Nicht ziehbar — Zieh-Versuch (über die Buttons) zeigt den Hinweis
+      return <View key={entry.id}>{cardInner}</View>;
+    }
+
     return (
       <DraggableCard
         key={entry.id}
         onDragMove={onCardDragMove}
         onDragEnd={onCardDragEnd(entry)}
       >
-        <TouchableOpacity style={[styles.card, HARD_SHADOW]} activeOpacity={0.7} onPress={() => openPlayerDetail(entry)}>
-          <View style={styles.cardNameRow}>
-            <Text style={styles.cardName} numberOfLines={1}>
-              {displayName(entry.player_name)}
-            </Text>
-            {entry.tm_profile_url && (
-              <TouchableOpacity onPress={() => openProfile(entry.tm_profile_url)} hitSlop={8}>
-                <Ionicons name="open-outline" size={14} color={RETRO.textMuted} />
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity
-              style={styles.removeButton}
-              onPress={() => { setArchiveReason(''); setArchiveTarget(entry); }}
-              hitSlop={4}
-            >
-              <Ionicons name="archive-outline" size={13} color={RETRO.textMuted} />
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.removeButton}
-              onPress={() => setConfirmDelete(entry)}
-              hitSlop={4}
-            >
-              <Ionicons name="trash-outline" size={13} color="#b02020" />
-            </TouchableOpacity>
-          </View>
-          {renderClubLine(entry)}
-        </TouchableOpacity>
+        {cardInner}
       </DraggableCard>
     );
   };
@@ -470,6 +508,30 @@ export function SportstipendiumScreen() {
       {detailPlayer && (
         <PlayerDetailModal player={detailPlayer} onClose={() => setDetailPlayer(null)} />
       )}
+
+      {/* Gesperrt: Spieler ist im Scout Portal angelegt */}
+      <Modal visible={!!lockedDialog} transparent animationType="fade" onRequestClose={() => setLockedDialog(null)}>
+        <View style={styles.archiveOverlay}>
+          <View style={[styles.confirmModal, HARD_SHADOW_LG]}>
+            <View style={[styles.archiveModalHeader, BLUE_GRADIENT]}>
+              <Text style={styles.archiveModalTitle}>Spieler im Scout Portal</Text>
+            </View>
+            <Text style={styles.confirmText}>
+              {lockedDialog
+                ? `${displayName(lockedDialog.player_name)} wurde als Go-Kandidat ins Scout Portal übernommen und wird dort als Spieler geführt. Solange er dort gelistet ist, kann er hier weder verschoben noch entfernt werden. Wird er im Scout Portal gelöscht, wird er hier automatisch wieder freigegeben.`
+                : ''}
+            </Text>
+            <View style={styles.confirmActions}>
+              <TouchableOpacity
+                style={[styles.confirmButton, styles.confirmButtonPrimary, HARD_SHADOW]}
+                onPress={() => setLockedDialog(null)}
+              >
+                <Text style={[styles.confirmButtonText, { color: '#fff' }]}>Verstanden</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Nachfrage: wirklich löschen? */}
       <Modal visible={!!confirmDelete} transparent animationType="fade" onRequestClose={() => setConfirmDelete(null)}>
@@ -717,6 +779,11 @@ const styles = StyleSheet.create({
     borderLeftWidth: 3,
     borderLeftColor: RETRO.yellow,
   },
+  // Gesperrte Karte (Spieler im Scout Portal): grau hinterlegt
+  cardLocked: {
+    backgroundColor: '#dedbd4',
+    borderLeftColor: '#a8a49c',
+  },
   cardDragging: {
     zIndex: 1000,
     elevation: 10,
@@ -751,10 +818,11 @@ const styles = StyleSheet.create({
     width: 16,
     height: 16,
   },
+  // Gleicher Stil wie die vereinslos-Zeile (kursiv, dünn)
   cardClub: {
     fontSize: 12,
-    fontWeight: '600',
-    color: RETRO.text,
+    fontStyle: 'italic',
+    color: RETRO.textMuted,
     flexShrink: 1,
   },
   cardClubMuted: {
