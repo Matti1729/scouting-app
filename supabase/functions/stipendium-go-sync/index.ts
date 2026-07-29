@@ -23,11 +23,13 @@ serve(async (req) => {
   }
 
   try {
-    const { first_name, last_name, profile_url, source_lead_id } = await req.json()
+    const { first_name, last_name, profile_url, source_lead_id, date_of_birth, action } = await req.json()
 
     if (!first_name || !source_lead_id) {
       return json({ success: false, error: 'first_name und source_lead_id erforderlich' }, 400)
     }
+
+    // 'check' wird vom Portal seit PR #295 unterstützt (read-only Existenzprüfung).
 
     const ingestKey = Deno.env.get('SCOUT_PORTAL_INGEST_KEY')
     const portalUrl = Deno.env.get('SCOUT_PORTAL_URL') || 'https://network.warubi-sports.com'
@@ -46,6 +48,9 @@ serve(async (req) => {
         last_name: last_name || '',
         profile_url: profile_url || '',
         source_lead_id,
+        date_of_birth: date_of_birth || null,
+        // 'check' = nur nachsehen, ob der Spieler im Portal (noch) gelistet ist
+        ...(action === 'check' ? { action: 'check' } : {}),
       }),
     })
 

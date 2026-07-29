@@ -24,6 +24,7 @@ import {
   fetchPlayerTmDetails,
   loadPlayerNote,
   savePlayerNote,
+  fetchEntryAddedBy,
 } from '../services/stipendiumService';
 
 // Nativer Datums-Picker des Browsers (input type="date") — nur im Web verfügbar
@@ -118,6 +119,8 @@ export function PlayerDetailModal({
   const [notes, setNotes] = useState('');
   const [firstContact, setFirstContact] = useState(''); // ISO "YYYY-MM-DD"
   const savedNote = useRef({ notes: '', firstContact: '' });
+  // Wer hat den Spieler ins Sportstipendium aufgenommen (falls dort vorhanden)
+  const [addedBy, setAddedBy] = useState<string | null>(null);
 
   useEffect(() => {
     setTmDetails(null);
@@ -136,6 +139,10 @@ export function PlayerDetailModal({
       setFirstContact(n.first_contact_date || '');
       savedNote.current = { notes: n.notes || '', firstContact: n.first_contact_date || '' };
     });
+    setAddedBy(null);
+    if (player.tm_player_id) {
+      fetchEntryAddedBy(player.tm_player_id).then(setAddedBy);
+    }
   }, [player.id]);
 
   // Speichern, sobald sich etwas geändert hat (Notizen bei Verlassen des Felds,
@@ -287,6 +294,7 @@ export function PlayerDetailModal({
 
               {/* Erstkontakt */}
               {sectionBarGreen('Erstkontakt')}
+              {addedBy ? infoRow('Hinzugefügt von', addedBy) : null}
               <View style={styles.detailRow}>
                 <Text style={[styles.detailLabel, { color: RETRO.text }]}>Erstkontakt am</Text>
                 <View style={styles.dateInputWrap}>

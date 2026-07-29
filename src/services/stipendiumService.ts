@@ -303,12 +303,21 @@ export async function fetchSearchPlayer(
 // SCOUT-PORTAL-SYNC (Go-Kandidaten -> Athletes-USA Scout Portal)
 // ============================================================================
 
+/** "DD.MM.YYYY" -> ISO "YYYY-MM-DD" (fürs Portal) */
+function birthDateToIso(birthDate: string | null): string | null {
+  if (!birthDate) return null;
+  const m = birthDate.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (!m) return null;
+  return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+}
+
 /** Meldet einen Go-Kandidaten an das Scout Portal (idempotent pro Eintrag).
  *  Rückgabe: true wenn der Lead angelegt wurde (oder schon existierte). */
 export async function syncGoKandidat(entry: {
   id: string;
   player_name: string;
   tm_profile_url: string | null;
+  birth_date?: string | null;
 }): Promise<{ ok: boolean; error?: string }> {
   // "Nachname, Vorname"-Logik ist Anzeige-Sache — das Portal erwartet Vor-/Nachname
   const parts = entry.player_name.trim().split(/\s+/);
@@ -321,6 +330,8 @@ export async function syncGoKandidat(entry: {
         last_name: last,
         profile_url: entry.tm_profile_url || '',
         source_lead_id: entry.id,
+        // Geburtsdatum hilft dem Portal, vorhandene Spieler zu erkennen (Zusammenführen)
+        date_of_birth: birthDateToIso(entry.birth_date || null),
       },
     });
     if (error || !data?.success) {
@@ -334,6 +345,33 @@ export async function syncGoKandidat(entry: {
   }
 }
 
+/** Prüft, ob ein Go-Kandidat im Scout Portal (noch) gelistet ist.
+ *  Rückgabe null = Prüfung nicht möglich (dann vorsichtshalber gesperrt lassen). */
+export async function checkGoKandidatImPortal(entry: {
+  id: string;
+  player_name: string;
+  tm_profile_url: string | null;
+  birth_date?: string | null;
+}): Promise<boolean | null> {
+  const parts = entry.player_name.trim().split(/\s+/);
+  try {
+    const { data, error } = await supabase.functions.invoke('stipendium-go-sync', {
+      body: {
+        action: 'check',
+        first_name: parts[0] || entry.player_name,
+        last_name: parts.slice(1).join(' '),
+        profile_url: entry.tm_profile_url || '',
+        source_lead_id: entry.id,
+        date_of_birth: birthDateToIso(entry.birth_date || null),
+      },
+    });
+    if (error || !data?.success) return null;
+    return !!(data as any).exists;
+  } catch {
+    return null;
+  }
+}
+
 // ============================================================================
 // SPIELER-NOTIZEN (Notizen + Erstkontakt-Datum im Profil-Modal)
 // ============================================================================
@@ -341,6 +379,13 @@ export async function syncGoKandidat(entry: {
 export interface PlayerNote {
   notes: string | null;
   first_contact_date: string | null; // ISO "YYYY-MM-DD"
+}
+
+/** Name des Scouts, der den Spieler ins Sportstipendium aufgenommen hat */
+export async function fetchEntryAddedBy(tmPlayerId: string): Promise<string | null> {
+  const { data, error } = await supabase.rpc('get_entry_added_by', { p_tm_player_id: tmPlayerId });
+  if (error) return null;
+  return (data as string | null) || null;
 }
 
 export async function loadPlayerNote(playerId: string): Promise<PlayerNote> {
