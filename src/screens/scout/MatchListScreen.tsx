@@ -123,6 +123,11 @@ import {
   getHallenTermineCount,
   getLastUpdateDisplay,
 } from '../../services/dfbTermine';
+import {
+  checkMatchChanges,
+  applyMatchChange,
+  MatchChangeInfo,
+} from '../../services/matchChangeService';
 import { Ionicons } from '@expo/vector-icons';
 import { loadBeraterStatusForLineup, BeraterStatusResult } from '../../services/beraterService';
 import { ColumnDef } from '../../types/tableColumns';
@@ -469,6 +474,8 @@ export function MatchListScreen({ navigation }: any) {
   });
   const [matches, setMatches] = useState<Match[]>([]);
   const [isLoadingMatches, setIsLoadingMatches] = useState(true);
+  // Abweichungen übernommener Spiele ggü. fussball.de-Sync (Datum/Ort verlegt, abgesetzt)
+  const [matchChanges, setMatchChanges] = useState<Map<string, MatchChangeInfo>>(new Map());
 
   // Spiele "in der Umgebung" (aus der KMH-App) + Ansicht/Filter
   const [areaMatches, setAreaMatches] = useState<Match[]>([]);
@@ -486,7 +493,9 @@ export function MatchListScreen({ navigation }: any) {
   const [lineupStatus, setLineupStatus] = useState<'none' | 'loading' | 'available' | 'unavailable'>('none');
 
   // Archiv-Ansicht
-  const [showArchive, setShowArchive] = useState(false);
+  // Tabs: Anstehend (Umgebung + eigene) | Meine Spiele (eigene, kommend) | Archiv (eigene, vergangen)
+  const [viewTab, setViewTab] = useState<'anstehend' | 'meine' | 'archiv'>('anstehend');
+  const showArchive = viewTab !== 'anstehend'; // eigene-Spiele-Pool (Meine/Archiv) statt Umgebungs-Pool
 
   // Aktionsmenü (mobile "..." Menü)
   const [actionMenuVisible, setActionMenuVisible] = useState(false);
@@ -495,10 +504,10 @@ export function MatchListScreen({ navigation }: any) {
   const [sortField, setSortField] = useState<SortField>('datum');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
 
-  // Archiv: aktuellste zuerst, Anstehend: nächste zuerst
+  // Archiv: aktuellste zuerst, Anstehend/Meine Spiele: nächste zuerst
   useEffect(() => {
-    setSortDirection(showArchive ? 'desc' : 'asc');
-  }, [showArchive]);
+    setSortDirection(viewTab === 'archiv' ? 'desc' : 'asc');
+  }, [viewTab]);
 
   // DFB-Sync State
   const [dfbSyncLoading, setDfbSyncLoading] = useState(false);
@@ -542,8 +551,29 @@ export function MatchListScreen({ navigation }: any) {
     const result = await loadMatches();
     if (result.success && result.data) {
       setMatches(result.data.map(dbMatchToMatch));
+      // Abgleich gegen den fussball.de-Sync im Hintergrund (nicht blockierend)
+      checkMatchChanges(result.data).then(setMatchChanges).catch(() => {});
     }
     setIsLoadingMatches(false);
+  };
+
+  // Erkannte Änderung (Datum/Zeit/Ort) ins Spiel übernehmen
+  const handleApplyMatchChange = async (matchId: string) => {
+    const info = matchChanges.get(matchId);
+    if (!info) return;
+    const res = await applyMatchChange(matchId, info);
+    if (!res.success) {
+      Alert.alert('Fehler', res.error || 'Änderung konnte nicht übernommen werden.');
+      return;
+    }
+    const u = res.updates || {};
+    setMatches(prev => prev.map(m => m.id === matchId ? {
+      ...m,
+      datum: u.match_date ?? m.datum,
+      zeit: u.match_time ?? m.zeit,
+      ort: u.location ?? m.ort,
+    } : m));
+    setMatchChanges(prev => { const next = new Map(prev); next.delete(matchId); return next; });
   };
 
   // Spiele "in der Umgebung" laden (geteilte KMH-Datenbank, bereits geocodiert)
@@ -998,6 +1028,21 @@ export function MatchListScreen({ navigation }: any) {
     return sortDirection === 'asc' ? ' ▲' : ' ▼';
   };
 
+  // Alters-Rang für die Sortierung: Herren zuerst, dann absteigend U23, U21, U19, U17 ...
+  const ageRank = (mannschaft: string): number => {
+    const m = (mannschaft || '').trim();
+    if (/^herren/i.test(m)) return 0;
+    const u = m.match(/^u\s*(\d+)/i);
+    if (u) return 100 - parseInt(u[1], 10);
+    return 999; // Unbekanntes (z.B. "Frauen", Turniere) ans Ende der Gleichstand-Gruppe
+  };
+
+  // "9:00" / "15:30 Uhr" → "09:00" (lexikografisch sortierbar); ohne Zeit ans Ende
+  const normTime = (zeit: string | null | undefined): string => {
+    const m = (zeit || '').match(/(\d{1,2})[:.](\d{2})/);
+    return m ? `${m[1].padStart(2, '0')}:${m[2]}` : '99:99';
+  };
+
   const getSortedMatches = (matchList: Match[]): Match[] => {
     return [...matchList].sort((a, b) => {
       let valueA: any, valueB: any;
@@ -1034,7 +1079,17 @@ export function MatchListScreen({ navigation }: any) {
       }
       if (valueA < valueB) return sortDirection === 'asc' ? -1 : 1;
       if (valueA > valueB) return sortDirection === 'asc' ? 1 : -1;
-      return 0;
+      // Gleichstand: Datum → Uhrzeit → Alter (Herren, U23, U21, ...) → Alphabet
+      const dA = parseDateString(a.datum)?.getTime() ?? 0;
+      const dB = parseDateString(b.datum)?.getTime() ?? 0;
+      if (dA !== dB) return dA - dB;
+      const tA = normTime(a.zeit);
+      const tB = normTime(b.zeit);
+      if (tA !== tB) return tA < tB ? -1 : 1;
+      const rA = ageRank(a.mannschaft);
+      const rB = ageRank(b.mannschaft);
+      if (rA !== rB) return rA - rB;
+      return (a.spiel || '').localeCompare(b.spiel || '', 'de');
     });
   };
 
@@ -1946,15 +2001,15 @@ export function MatchListScreen({ navigation }: any) {
         matchesDate = !!(day && start && end && day >= new Date(start.setHours(0, 0, 0, 0)) && day <= new Date(end.setHours(23, 59, 59, 999)));
       }
 
-      // "Meine Spiele" = ALLE eigenen Spiele (auch kommende);
-      // "Anstehend" = alles, was noch nicht beendet/archiviert ist
+      // "Meine Spiele" = eigene kommende Spiele; "Archiv" = eigene vergangene
+      // (ab dem Folgetag); "Anstehend" = alles, was noch nicht beendet ist
       const isArchived = match.isArchived || isEventFinished(match.datum, match.datumEnde);
-      const matchesArchiveFilter = showArchive ? true : !isArchived;
+      const matchesArchiveFilter = viewTab === 'archiv' ? isArchived : !isArchived;
 
       return matchesSearch && matchesJahrgang && matchesArt && matchesDate && matchesArchiveFilter;
     });
     return getSortedMatches(filtered);
-  }, [matches, areaMatches, searchQuery, jahrgangFilter, artFilter, dateFilter, showArchive, sortField, sortDirection]);
+  }, [matches, areaMatches, searchQuery, jahrgangFilter, artFilter, dateFilter, viewTab, sortField, sortDirection]);
 
   // Anzahl archivierter Spiele
   const archivedCount = matches.filter(m => m.isArchived || isEventFinished(m.datum, m.datumEnde)).length;
@@ -2062,7 +2117,7 @@ export function MatchListScreen({ navigation }: any) {
   const renderMatchRow = ({ item }: { item: Match }) => {
     const isSelected = selectedMatches.includes(item.id);
     const isActive = isEventActive(item.datum, item.datumEnde);
-    const isPast = showArchive;
+    const isPast = viewTab === 'archiv';
     const badgeStyle = getMatchTypeBadgeStyle(item.art);
 
     return (
@@ -2105,7 +2160,7 @@ export function MatchListScreen({ navigation }: any) {
               case 'datum':
                 return (
                   <Text style={[styles.cellText, styles.datumText, { color: colors.text }]} numberOfLines={1}>
-                    {formatDateGerman(item.datum, item.datumEnde)}
+                    {matchChanges.has(item.id) ? '⚠️ ' : ''}{formatDateGerman(item.datum, item.datumEnde)}
                   </Text>
                 );
               case 'zeit':
@@ -2164,7 +2219,7 @@ export function MatchListScreen({ navigation }: any) {
   const renderMatchCard = ({ item }: { item: Match }) => {
     const isSelected = selectedMatches.includes(item.id);
     const isActive = isEventActive(item.datum, item.datumEnde);
-    const isPast = showArchive;
+    const isPast = viewTab === 'archiv';
     const badgeStyle = getMatchTypeBadgeStyle(item.art);
 
     return (
@@ -2197,6 +2252,37 @@ export function MatchListScreen({ navigation }: any) {
             {formatDateGerman(item.datum, item.datumEnde)}{item.zeit ? `, ${item.zeit}` : ''}
           </Text>
         </View>
+
+        {/* Warnung: Abweichung zum fussball.de-Sync (verlegt / Ort geändert / abgesetzt) */}
+        {(() => {
+          const chg = matchChanges.get(item.id);
+          if (!chg) return null;
+          const parts: string[] = [];
+          if (chg.missing) parts.push('Nicht mehr im fussball.de-Spielplan — evtl. abgesetzt/verlegt');
+          if (chg.newDate) parts.push(`Verlegt auf ${formatDateGerman(chg.newDate, null)}${chg.newTime ? `, ${chg.newTime}` : ''}`);
+          if (!chg.newDate && chg.newTime) parts.push(`Neue Anstoßzeit: ${chg.newTime}`);
+          if (chg.newVenue) parts.push(`Neuer Spielort: ${chg.newVenue}`);
+          return (
+            <View style={{
+              backgroundColor: isDark ? '#451a03' : '#fef3c7',
+              borderColor: '#f59e0b', borderWidth: 1, borderRadius: 8,
+              paddingHorizontal: 10, paddingVertical: 6, marginTop: 8,
+              flexDirection: 'row', alignItems: 'center', gap: 8,
+            }}>
+              <Text style={{ flex: 1, fontSize: 12, color: isDark ? '#fcd34d' : '#92400e' }}>
+                ⚠️ {parts.join(' · ')}
+              </Text>
+              {!chg.missing && (
+                <TouchableOpacity
+                  onPress={() => handleApplyMatchChange(item.id)}
+                  style={{ backgroundColor: '#f59e0b', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#451a03' }}>Übernehmen</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        })()}
 
         {/* Mitte: Spielpaarung + Ergebnis */}
         <View style={styles.matchCardCenter}>
@@ -2317,21 +2403,29 @@ export function MatchListScreen({ navigation }: any) {
             </TouchableOpacity>
           </View>
 
-          {/* Toggle: Anstehend | Archiv */}
+          {/* Toggle: Anstehend | Meine Spiele | Archiv */}
           <View style={[styles.mobileToggle, { backgroundColor: colors.surfaceSecondary }]}>
             <TouchableOpacity
-              style={[styles.mobileToggleBtn, !showArchive && [styles.mobileToggleBtnActive, { backgroundColor: colors.surface }]]}
-              onPress={() => setShowArchive(false)}
+              style={[styles.mobileToggleBtn, viewTab === 'anstehend' && [styles.mobileToggleBtnActive, { backgroundColor: colors.surface }]]}
+              onPress={() => setViewTab('anstehend')}
             >
-              <Text style={[styles.mobileToggleBtnText, { color: colors.textSecondary }, !showArchive && { color: colors.text, fontWeight: '600' }]}>
+              <Text style={[styles.mobileToggleBtnText, { color: colors.textSecondary }, viewTab === 'anstehend' && { color: colors.text, fontWeight: '600' }]}>
                 Anstehend ({matches.filter(m => !m.isArchived && !isMatchFinished(m.datum)).length + areaMatches.length})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.mobileToggleBtn, showArchive && [styles.mobileToggleBtnActive, { backgroundColor: colors.surface }]]}
-              onPress={() => setShowArchive(true)}
+              style={[styles.mobileToggleBtn, viewTab === 'meine' && [styles.mobileToggleBtnActive, { backgroundColor: colors.surface }]]}
+              onPress={() => setViewTab('meine')}
             >
-              <Text style={[styles.mobileToggleBtnText, { color: colors.textSecondary }, showArchive && { color: colors.text, fontWeight: '600' }]}>
+              <Text style={[styles.mobileToggleBtnText, { color: colors.textSecondary }, viewTab === 'meine' && { color: colors.text, fontWeight: '600' }]}>
+                Meine ({matches.length - archivedCount})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.mobileToggleBtn, viewTab === 'archiv' && [styles.mobileToggleBtnActive, { backgroundColor: colors.surface }]]}
+              onPress={() => setViewTab('archiv')}
+            >
+              <Text style={[styles.mobileToggleBtnText, { color: colors.textSecondary }, viewTab === 'archiv' && { color: colors.text, fontWeight: '600' }]}>
                 Archiv ({archivedCount})
               </Text>
             </TouchableOpacity>
@@ -2355,10 +2449,10 @@ export function MatchListScreen({ navigation }: any) {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             <TouchableOpacity
               style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 },
-                !showArchive && { backgroundColor: RETRO.faceSelected }]}
-              onPress={() => setShowArchive(false)}
+                viewTab === 'anstehend' && { backgroundColor: RETRO.faceSelected }]}
+              onPress={() => setViewTab('anstehend')}
             >
-              <Text style={{ fontSize: 13, fontWeight: !showArchive ? '700' : '600', color: RETRO.text }}>
+              <Text style={{ fontSize: 13, fontWeight: viewTab === 'anstehend' ? '700' : '600', color: RETRO.text }}>
                 Anstehend ({(() => {
                   // Übernommene Umgebungs-Spiele nicht doppelt zählen
                   const ownUrls = new Set(matches.map(m => m.fussballDeUrl).filter(Boolean));
@@ -2369,11 +2463,20 @@ export function MatchListScreen({ navigation }: any) {
             </TouchableOpacity>
             <TouchableOpacity
               style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 },
-                showArchive && { backgroundColor: RETRO.faceSelected }]}
-              onPress={() => setShowArchive(true)}
+                viewTab === 'meine' && { backgroundColor: RETRO.faceSelected }]}
+              onPress={() => setViewTab('meine')}
             >
-              <Text style={{ fontSize: 13, fontWeight: showArchive ? '700' : '600', color: RETRO.text }}>
-                Meine Spiele ({matches.length})
+              <Text style={{ fontSize: 13, fontWeight: viewTab === 'meine' ? '700' : '600', color: RETRO.text }}>
+                Meine Spiele ({matches.length - archivedCount})
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 },
+                viewTab === 'archiv' && { backgroundColor: RETRO.faceSelected }]}
+              onPress={() => setViewTab('archiv')}
+            >
+              <Text style={{ fontSize: 13, fontWeight: viewTab === 'archiv' ? '700' : '600', color: RETRO.text }}>
+                Archiv ({archivedCount})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -2594,7 +2697,7 @@ export function MatchListScreen({ navigation }: any) {
               flexDirection: 'row', alignItems: 'center',
             }]}>
               <Text style={{ color: RETRO.headerText, fontWeight: '700', fontSize: 14, flex: 1 }}>
-                {showArchive ? 'Meine Spiele' : 'Spiele'}
+                {viewTab === 'archiv' ? 'Archiv' : viewTab === 'meine' ? 'Meine Spiele' : 'Spiele'}
               </Text>
               <Text style={{ color: RETRO.headerText, fontWeight: '700', fontSize: 14 }}>{filteredMatches.length}</Text>
             </View>
@@ -2633,6 +2736,32 @@ export function MatchListScreen({ navigation }: any) {
                           📍 {item.ort}
                         </Text>
                       ) : null}
+                      {(() => {
+                        const chg = matchChanges.get(item.id);
+                        if (!chg) return null;
+                        const parts: string[] = [];
+                        if (chg.missing) parts.push('Nicht mehr im fussball.de-Spielplan — evtl. abgesetzt/verlegt');
+                        if (chg.newDate) parts.push(`Verlegt auf ${formatDateGerman(chg.newDate, null)}${chg.newTime ? `, ${chg.newTime}` : ''}`);
+                        if (!chg.newDate && chg.newTime) parts.push(`Neue Anstoßzeit: ${chg.newTime}`);
+                        if (chg.newVenue) parts.push(`Neuer Spielort: ${chg.newVenue}`);
+                        return (
+                          <View style={{
+                            backgroundColor: '#fef3c7', borderWidth: 1, borderColor: '#f59e0b',
+                            paddingHorizontal: 8, paddingVertical: 4, marginTop: 5,
+                            flexDirection: 'row', alignItems: 'center', gap: 6,
+                          }}>
+                            <Text style={{ flex: 1, fontSize: 11, color: '#92400e' }}>⚠️ {parts.join(' · ')}</Text>
+                            {!chg.missing && (
+                              <TouchableOpacity
+                                onPress={() => handleApplyMatchChange(item.id)}
+                                style={{ backgroundColor: '#f59e0b', paddingHorizontal: 8, paddingVertical: 3 }}
+                              >
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#451a03' }}>Übernehmen</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        );
+                      })()}
                     </TouchableOpacity>
                   );
                 }}
@@ -2640,7 +2769,7 @@ export function MatchListScreen({ navigation }: any) {
                 ListEmptyComponent={
                   <View style={styles.emptyState}>
                     <Text style={[styles.emptyText, { color: RETRO.textMuted }]}>
-                      {showArchive ? 'Keine archivierten Spiele' : 'Keine Spiele gefunden'}
+                      {viewTab === 'archiv' ? 'Keine archivierten Spiele' : 'Keine Spiele gefunden'}
                     </Text>
                   </View>
                 }
@@ -2674,7 +2803,7 @@ export function MatchListScreen({ navigation }: any) {
               <View style={styles.emptyState}>
                 <Text style={styles.emptyIcon}>📅</Text>
                 <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  {showArchive ? 'Keine archivierten Spiele' : 'Keine anstehenden Spiele'}
+                  {viewTab === 'archiv' ? 'Keine archivierten Spiele' : 'Keine anstehenden Spiele'}
                 </Text>
                 {!showArchive && (
                   <TouchableOpacity
