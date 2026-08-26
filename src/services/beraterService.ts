@@ -547,12 +547,27 @@ export interface MatchEvaluation {
 
 export async function loadMatchEvaluationsForPlayer(
   playerName: string,
-  tmProfileUrl?: string | null
+  tmProfileUrl?: string | null,
+  beraterPlayerId?: string | null
 ): Promise<MatchEvaluation[]> {
+  // 0. Bevorzugt über die feste Verknüpfung berater_player_id (seit Migration
+  //    2026-08-26 die zuverlässigste Identität, unabhängig von Namen/URLs)
+  if (beraterPlayerId) {
+    const { data } = await supabase
+      .from('player_evaluations')
+      .select('id, match_id, match_name, match_date, age_group, first_name, last_name, jersey_number, current_club, positions, transfermarkt_url, agent_name, birth_date, overall_rating, notes, body_structure, speed_athleticism')
+      .eq('berater_player_id', beraterPlayerId)
+      .order('match_date', { ascending: false });
+    if (data && data.length > 0) return data;
+  }
+
   // Spielername aufteilen für Suche
   const parts = playerName.trim().split(/\s+/);
   const lastName = parts[parts.length - 1];
   const firstName = parts.length > 1 ? parts.slice(0, -1).join(' ') : null;
+
+  // Platzhalter-Name ohne TM-URL: Namenssuche wäre mehrdeutig ("k.A.")
+  if (!tmProfileUrl && isPlaceholderName(lastName)) return [];
 
   let results: MatchEvaluation[] = [];
 
@@ -1119,6 +1134,9 @@ export async function loadBeraterStatusForLineup(
         continue;
       }
     }
+    // Platzhalter-Namen ("k.A.") nie per Name matchen — sonst bekommen alle
+    // unbekannten Spieler denselben Status/dieselbe Farbe
+    if (isPlaceholderName(player.name)) continue;
     // 2. Vollständiger Name (Vorname + Nachname)
     if (player.vorname && player.name) {
       const fullName = `${player.vorname} ${player.name}`.toLowerCase();
@@ -1137,5 +1155,285 @@ export async function loadBeraterStatusForLineup(
     }
   }
 
+  return result;
+}
+
+// ============================================================================
+// SPIELER-EBENE: Berichte je Spieler (Schritt 1)
+// ============================================================================
+
+/**
+ * Platzhalter-Namen aus dem fussball.de-Scraper ("k.A.", leer, "unbekannt").
+ * Dürfen NIE als Identität für Matching/Dedup dienen — sonst teilen sich alle
+ * unbekannten Spieler eines Spiels dieselben Berichte, Notizen und Status.
+ */
+export function isPlaceholderName(name?: string | null): boolean {
+  const s = (name || '').trim().toLowerCase().replace(/[.,\s]/g, '');
+  return !s || s === 'ka' || s === 'unbekannt';
+}
+
+/**
+ * Namen akzent-/schreibweisen-unabhängig normalisieren ("Ouédraogo" -> "ouedraogo").
+ * Muss zur SQL-Funktion public.normalize_player_name passen (unaccent + lower + trim).
+ */
+export function normalizePlayerName(name?: string | null): string {
+  return (name || '')
+    .toLowerCase()
+    .replace(/ß/g, 'ss')
+    .replace(/æ/g, 'ae')
+    .replace(/œ/g, 'oe')
+    .replace(/ø/g, 'o')
+    .replace(/đ/g, 'd')
+    .replace(/ł/g, 'l')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Gescoutete Spieler (ohne Verein, ohne TM-Profil) mit später aufgetauchten
+ * Transfermarkt-Spielern zusammenführen: gleicher normalisierter Name und kein
+ * Geburtsdatums-Widerspruch -> Berichte, Watchlist und Status wandern zum
+ * TM-Datensatz, der gescoutete Duplikat-Datensatz wird gelöscht.
+ * Läuft still; gibt die Anzahl der Zusammenführungen zurück.
+ */
+export async function mergeObservedDuplicates(): Promise<number> {
+  try {
+    const { data: scouted, error } = await supabase
+      .from('berater_players')
+      .select('id, player_name, normalized_name, birth_date')
+      .is('club_id', null)
+      .is('tm_profile_url', null)
+      .eq('is_active', true)
+      .limit(500);
+    if (error || !scouted?.length) return 0;
+
+    let merged = 0;
+    for (const s of scouted) {
+      const norm = s.normalized_name || normalizePlayerName(s.player_name);
+      if (!norm || isPlaceholderName(s.player_name)) continue;
+
+      const { data: targets } = await supabase
+        .from('berater_players')
+        .select('id, birth_date, tm_profile_url, club_id')
+        .eq('normalized_name', norm)
+        .neq('id', s.id)
+        .or('tm_profile_url.not.is.null,club_id.not.is.null')
+        .limit(2);
+      // Eindeutiges Ziel ohne Geburtsdatums-Widerspruch
+      const candidates = (targets || []).filter(
+        (t) => !(s.birth_date && t.birth_date && s.birth_date !== t.birth_date)
+      );
+      if (candidates.length !== 1) continue;
+      const target = candidates[0];
+
+      // 1) Berichte umhängen
+      await supabase
+        .from('player_evaluations')
+        .update({ berater_player_id: target.id })
+        .eq('berater_player_id', s.id);
+
+      // 2) Watchlist + Berater-Status umhängen (hat das Ziel schon einen
+      //    Eintrag, wird der der Quelle verworfen)
+      for (const table of ['berater_watchlist', 'berater_player_evaluations']) {
+        const { data: existing } = await supabase
+          .from(table)
+          .select('id')
+          .eq('player_id', target.id)
+          .maybeSingle();
+        if (existing) {
+          await supabase.from(table).delete().eq('player_id', s.id);
+        } else {
+          await supabase.from(table).update({ player_id: target.id }).eq('player_id', s.id);
+        }
+      }
+
+      // 3) Duplikat löschen
+      const { error: delError } = await supabase.from('berater_players').delete().eq('id', s.id);
+      if (!delError) merged++;
+    }
+    return merged;
+  } catch {
+    // z.B. Spalte normalized_name existiert noch nicht (Migration offen) — still bleiben
+    return 0;
+  }
+}
+
+export interface ObservedPlayer {
+  player: BeraterPlayer;
+  reportCount: number;
+  lastMatchDate: string | null; // wie in player_evaluations gespeichert
+  lastMatchName: string | null;
+  lastRating: number | null;
+}
+
+// "25.01.2026" / "2026-01-25" → Timestamp (für Sortierung); unbekannt → 0
+function reportDateTs(dateStr: string | null | undefined): number {
+  if (!dateStr) return 0;
+  const s = dateStr.trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return new Date(s.slice(0, 10)).getTime();
+  const m = s.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+  if (!m) return 0;
+  let year = parseInt(m[3], 10);
+  if (year < 100) year += 2000;
+  return new Date(year, parseInt(m[2], 10) - 1, parseInt(m[1], 10)).getTime();
+}
+
+/**
+ * Anzahl Berichte je Spieler (über alle Spiele) für eine Menge berater_player_ids.
+ * Für das "schon X Berichte"-Badge in der Aufstellung.
+ */
+export async function loadReportCountsByPlayerIds(
+  playerIds: string[]
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  const ids = [...new Set(playerIds.filter(Boolean))];
+  if (!ids.length) return counts;
+  try {
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data, error } = await supabase
+        .from('player_evaluations')
+        .select('berater_player_id')
+        .in('berater_player_id', ids.slice(i, i + 100));
+      if (error) throw error;
+      for (const row of (data || []) as { berater_player_id: string | null }[]) {
+        if (!row.berater_player_id) continue;
+        counts.set(row.berater_player_id, (counts.get(row.berater_player_id) || 0) + 1);
+      }
+    }
+  } catch (err) {
+    console.warn('loadReportCountsByPlayerIds fehlgeschlagen:', err);
+  }
+  return counts;
+}
+
+/**
+ * "Beobachtet": alle Spieler mit mindestens einem Bericht,
+ * zuletzt gesehene zuerst. Grundlage ist die feste Verknüpfung
+ * player_evaluations.berater_player_id (Migration 20260826090000).
+ */
+export async function loadObservedPlayers(): Promise<ObservedPlayer[]> {
+  try {
+    const { data: evals, error } = await supabase
+      .from('player_evaluations')
+      .select('berater_player_id, match_date, match_name, overall_rating')
+      .not('berater_player_id', 'is', null);
+    if (error) throw error;
+
+    // Je Spieler: Anzahl + jüngster Bericht
+    type Agg = { count: number; lastTs: number; lastDate: string | null; lastName: string | null; lastRating: number | null };
+    const byPlayer = new Map<string, Agg>();
+    for (const e of (evals || []) as any[]) {
+      const id = e.berater_player_id as string;
+      const ts = reportDateTs(e.match_date);
+      const agg = byPlayer.get(id) || { count: 0, lastTs: -1, lastDate: null, lastName: null, lastRating: null };
+      agg.count++;
+      if (ts >= agg.lastTs) {
+        agg.lastTs = ts;
+        agg.lastDate = e.match_date || null;
+        agg.lastName = e.match_name || null;
+        agg.lastRating = e.overall_rating ?? null;
+      }
+      byPlayer.set(id, agg);
+    }
+    if (!byPlayer.size) return [];
+
+    // Spieler-Datensätze inkl. Verein/Liga
+    const ids = [...byPlayer.keys()];
+    const players: any[] = [];
+    for (let i = 0; i < ids.length; i += 100) {
+      const { data, error: pErr } = await supabase
+        .from('berater_players')
+        .select(`*, berater_clubs (club_name, league_id, berater_leagues (name))`)
+        .in('id', ids.slice(i, i + 100));
+      if (pErr) throw pErr;
+      players.push(...(data || []));
+    }
+
+    const result: ObservedPlayer[] = players.map((p: any) => {
+      const agg = byPlayer.get(p.id)!;
+      return {
+        player: {
+          ...p,
+          club_name: p.berater_clubs?.club_name,
+          league_id: p.berater_clubs?.league_id,
+          league_name: p.berater_clubs?.berater_leagues?.name,
+        },
+        reportCount: agg.count,
+        lastMatchDate: agg.lastDate,
+        lastMatchName: agg.lastName,
+        lastRating: agg.lastRating,
+      };
+    });
+    result.sort((a, b) => (byPlayer.get(b.player.id)!.lastTs) - (byPlayer.get(a.player.id)!.lastTs));
+    return result;
+  } catch (err) {
+    console.warn('loadObservedPlayers fehlgeschlagen:', err);
+    return [];
+  }
+}
+
+/**
+ * Berichte-Anzahl je Aufstellungs-Spieler (über ALLE Spiele) — fürs Badge.
+ * Matching wie üblich: 1. Transfermarkt-URL, 2. Nachname+Vorname.
+ * Liefert Map<lineup_player_id, Anzahl>.
+ */
+export async function loadReportCountsForLineup(
+  lineupPlayers: { id: string; name: string; vorname?: string; transfermarkt_url?: string | null }[]
+): Promise<Map<string, number>> {
+  const result = new Map<string, number>();
+  if (!lineupPlayers.length) return result;
+  try {
+    const urls = [...new Set(lineupPlayers.map(p => p.transfermarkt_url).filter(Boolean))] as string[];
+    // Platzhalter-Namen ("k.A.") nie per Name zählen — sonst bekommen alle
+    // unbekannten Spieler denselben (falschen) Zähler
+    const lastNames = [...new Set(lineupPlayers.map(p => p.name).filter(n => n && !isPlaceholderName(n)))];
+
+    type EvalRow = { id: string; transfermarkt_url: string | null; last_name: string | null; first_name: string | null };
+    const rowById = new Map<string, EvalRow>();
+    for (let i = 0; i < urls.length; i += 100) {
+      const { data, error } = await supabase
+        .from('player_evaluations')
+        .select('id, transfermarkt_url, last_name, first_name')
+        .in('transfermarkt_url', urls.slice(i, i + 100));
+      if (error) throw error;
+      for (const r of (data || []) as EvalRow[]) rowById.set(r.id, r);
+    }
+    for (let i = 0; i < lastNames.length; i += 100) {
+      const { data, error } = await supabase
+        .from('player_evaluations')
+        .select('id, transfermarkt_url, last_name, first_name')
+        .in('last_name', lastNames.slice(i, i + 100));
+      if (error) throw error;
+      for (const r of (data || []) as EvalRow[]) rowById.set(r.id, r);
+    }
+
+    // URL-Treffer zählen bevorzugt; Namens-Zählung nur für Berichte ohne gematchte URL
+    const urlSet = new Set(urls);
+    const byUrl = new Map<string, number>();
+    const byName = new Map<string, number>();
+    for (const r of rowById.values()) {
+      if (r.transfermarkt_url && urlSet.has(r.transfermarkt_url)) {
+        byUrl.set(r.transfermarkt_url, (byUrl.get(r.transfermarkt_url) || 0) + 1);
+      } else if (!isPlaceholderName(r.last_name)) {
+        const key = `${(r.last_name || '').toLowerCase()}::${(r.first_name || '').toLowerCase()}`;
+        byName.set(key, (byName.get(key) || 0) + 1);
+      }
+    }
+
+    for (const p of lineupPlayers) {
+      let count = 0;
+      if (p.transfermarkt_url && byUrl.has(p.transfermarkt_url)) {
+        count = byUrl.get(p.transfermarkt_url)!;
+      } else if (!isPlaceholderName(p.name)) {
+        const key = `${(p.name || '').toLowerCase()}::${(p.vorname || '').toLowerCase()}`;
+        count = byName.get(key) || 0;
+      }
+      if (count > 0) result.set(p.id, count);
+    }
+  } catch (err) {
+    console.warn('loadReportCountsForLineup fehlgeschlagen:', err);
+  }
   return result;
 }

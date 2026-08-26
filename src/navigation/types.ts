@@ -6,6 +6,9 @@ export type RootStackParamList = {
     matchId?: string;
     matchName?: string;
     matchDate?: string;
+    matchArt?: string;
+    matchZeit?: string;
+    fussballDeUrl?: string;
     mannschaft?: string;
     playerName?: string;
     playerNumber?: string;

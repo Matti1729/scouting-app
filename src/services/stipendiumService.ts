@@ -209,6 +209,7 @@ export interface StipendiumSearchPlayer {
   age: number | null;
   position: string | null;       // Kürzel (TW, IV, ...) oder Rohwert
   current_agent_name: string | null;
+  agent_url: string | null;      // TM-Link der Berateragentur
   tm_player_id: string | null;
   tm_profile_url: string | null;
   market_value: string | null;
@@ -267,6 +268,7 @@ function mapRowToSearchPlayer(row: any): StipendiumSearchPlayer {
     age: ageFromBirthDate(row.birth_date),
     position: positionCode(row.position),
     current_agent_name: row.current_agent_name || null,
+    agent_url: row.agent_url || null,
     tm_player_id: row.tm_player_id,
     tm_profile_url: row.tm_profile_url,
     market_value: row.market_value,
@@ -278,8 +280,8 @@ function mapRowToSearchPlayer(row: any): StipendiumSearchPlayer {
   };
 }
 
-const SEARCH_PLAYER_SELECT = `id, player_name, birth_date, position, current_agent_name, tm_player_id, tm_profile_url, market_value, contract_until, is_vereinslos,
-   berater_clubs!inner (club_name, tm_club_id, league_id, berater_leagues (name, country))`;
+const SEARCH_PLAYER_SELECT = `id, player_name, birth_date, position, current_agent_name, agent_url, tm_player_id, tm_profile_url, market_value, contract_until, is_vereinslos,
+   berater_clubs (club_name, tm_club_id, league_id, berater_leagues (name, country))`;
 
 /** Einzelnen Spieler (z.B. für das Detail-Modal im Sportstipendium-Board) laden */
 export async function fetchSearchPlayer(
@@ -441,11 +443,17 @@ export async function searchStipendiumPlayers(
   const PAGE_SIZE = 1000;
 
   function buildQuery() {
+    // Left-Join auf den Verein: auch gescoutete Spieler ohne Vereinszuordnung
+    // (z.B. U16 ohne TM-Profil, per Bericht angelegt) sollen auffindbar sein.
+    // Nur der Liga-Filter erzwingt den Inner-Join.
+    const clubJoin = filters.leagueIds && filters.leagueIds.length > 0
+      ? 'berater_clubs!inner'
+      : 'berater_clubs';
     let query = supabase
       .from('berater_players')
       .select(
-        `id, player_name, birth_date, position, current_agent_name, tm_player_id, tm_profile_url, market_value, contract_until, is_vereinslos,
-         berater_clubs!inner (club_name, tm_club_id, league_id, berater_leagues (name, country))`,
+        `id, player_name, birth_date, position, current_agent_name, agent_url, tm_player_id, tm_profile_url, market_value, contract_until, is_vereinslos,
+         ${clubJoin} (club_name, tm_club_id, league_id, berater_leagues (name, country))`,
         { count: 'exact' }
       )
       .eq('is_active', true);
