@@ -16,7 +16,7 @@ import {
   Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
 import {
@@ -482,6 +482,17 @@ export function SuchmaschineScreen() {
 
   // Spieler-Detail-Modal
   const [detailPlayer, setDetailPlayer] = useState<StipendiumSearchPlayer | null>(null);
+  // Nach Schließen der Spielbewertung zurück ins Spielerprofil
+  const returnToPlayerRef = useRef<StipendiumSearchPlayer | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      if (returnToPlayerRef.current) {
+        const player = returnToPlayerRef.current;
+        returnToPlayerRef.current = null;
+        setTimeout(() => setDetailPlayer(player), 100);
+      }
+    }, [])
+  );
 
   // Watchlist-Mitgliedschaft (für den Button im Modal)
   const [watchlistIds, setWatchlistIds] = useState<Set<string>>(new Set());
@@ -1011,11 +1022,28 @@ export function SuchmaschineScreen() {
           <PlayerDetailModal
             player={p}
             onClose={() => setDetailPlayer(null)}
+            onOpenEvaluation={(ev) => {
+              returnToPlayerRef.current = p;
+              setDetailPlayer(null);
+              (navigation as any).navigate('PlayerEvaluation', {
+                matchId: ev.match_id,
+                matchName: ev.match_name,
+                matchDate: ev.match_date,
+                mannschaft: ev.age_group,
+                playerName: `${ev.last_name || ''}, ${ev.first_name || ''}`,
+                playerNumber: ev.jersey_number,
+                playerPosition: ev.positions?.split(', ')[0] || null,
+                playerBirthDate: ev.birth_date,
+                agentName: ev.agent_name,
+                transfermarktUrl: ev.transfermarkt_url,
+                beraterPlayerId: p.id,
+              });
+            }}
             actions={
               <>
                 {added ? (
-                  <View style={[styles.detailActionButton, { backgroundColor: RETRO.yellow }, HARD_SHADOW]}>
-                    <Text style={[styles.detailActionText, { color: RETRO.yellowText }]}>🎓 im Sportstipendium</Text>
+                  <View style={[styles.detailActionButton, { backgroundColor: '#1a5f2a' }]}>
+                    <Text style={[styles.detailActionText, { color: '#ffffff' }]}>im Sportstipendium</Text>
                   </View>
                 ) : (
                   <TouchableOpacity
@@ -1031,8 +1059,8 @@ export function SuchmaschineScreen() {
                   </TouchableOpacity>
                 )}
                 {onWatchlist ? (
-                  <View style={[styles.detailActionButton, { backgroundColor: RETRO.faceSelected }, HARD_SHADOW]}>
-                    <Text style={[styles.detailActionText, { color: RETRO.text }]}>⭐ auf der Watchlist</Text>
+                  <View style={[styles.detailActionButton, { backgroundColor: '#1a5f2a' }]}>
+                    <Text style={[styles.detailActionText, { color: '#ffffff' }]}>auf der Watchlist</Text>
                   </View>
                 ) : (
                   <TouchableOpacity
@@ -1043,7 +1071,7 @@ export function SuchmaschineScreen() {
                     {addingWatchlist ? (
                       <ActivityIndicator size="small" color={RETRO.text} />
                     ) : (
-                      <Text style={[styles.detailActionText, { color: RETRO.text }]}>+ Watchlist (Beratung)</Text>
+                      <Text style={[styles.detailActionText, { color: RETRO.text }]}>+ Watchlist</Text>
                     )}
                   </TouchableOpacity>
                 )}
@@ -1462,11 +1490,14 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   detailActionButton: {
+    borderWidth: 0, // randlos, nur Schatten
+    backgroundColor: '#ffffff', // weiße Fläche — hebt sich vom Papier-Hintergrund ab
     paddingHorizontal: 14,
     paddingVertical: 9,
     alignItems: 'center',
     justifyContent: 'center',
     minWidth: 160,
+    ...HARD_SHADOW, // gleicher Versatz-Schatten (unten + rechts) wie alle Flächen
   },
   detailActionText: {
     fontSize: 13,

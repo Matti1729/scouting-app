@@ -75,6 +75,8 @@ export interface PlayerRowProps {
   showPosition?: boolean;
   isEvaluated?: boolean;
   evalColor?: { bg: string; border: string } | null;
+  /** Anzahl Berichte zu diesem Spieler über alle Spiele ("schon gesehen") */
+  reportCount?: number;
 }
 
 export const PlayerRow = memo<PlayerRowProps>(({
@@ -85,6 +87,7 @@ export const PlayerRow = memo<PlayerRowProps>(({
   showPosition = false,
   isEvaluated = false,
   evalColor,
+  reportCount = 0,
 }) => {
   const { colors } = useTheme();
 
@@ -140,7 +143,7 @@ export const PlayerRow = memo<PlayerRowProps>(({
           maxLength={3}
         />
       ) : (
-        <View style={[styles.playerNumber, { backgroundColor: colors.surfaceSecondary }]}>
+        <View style={[styles.playerNumber, { backgroundColor: colors.surfaceSecondary, borderColor: colors.inputBorder }]}>
           <Text style={[styles.playerNumberText, { color: colors.text }]}>
             {player.nummer?.replace(/^0+/, '') || player.nummer}
           </Text>
@@ -205,8 +208,8 @@ export const PlayerRow = memo<PlayerRowProps>(({
         )}
       </View>
 
-      {/* Badges: T (Torwart), C (Kapitän), ✓ (bewertet) */}
-      {!isEditMode && (player.isGoalkeeper || player.isCaptain || isEvaluated) && (
+      {/* Badges: T (Torwart), C (Kapitän), ✓ (bewertet), n× (Berichte gesamt) */}
+      {!isEditMode && (player.isGoalkeeper || player.isCaptain || isEvaluated || reportCount > 0) && (
         <View style={styles.badgeContainer}>
           {player.isGoalkeeper && (
             <View style={styles.badge}>
@@ -215,11 +218,16 @@ export const PlayerRow = memo<PlayerRowProps>(({
           )}
           {player.isCaptain && (
             <View style={[styles.badge, styles.badgeCaptain]}>
-              <Text style={styles.badgeText}>C</Text>
+              <Text style={[styles.badgeText, styles.badgeTextCaptain]}>C</Text>
             </View>
           )}
           {isEvaluated && (
             <Text style={styles.evalEmoji}>📝</Text>
+          )}
+          {reportCount > 0 && (
+            <View style={styles.badgeReports}>
+              <Text style={styles.badgeReportsText}>{reportCount}×</Text>
+            </View>
           )}
         </View>
       )}
@@ -242,7 +250,8 @@ const styles = StyleSheet.create({
   playerNumber: {
     width: 22,
     height: 22,
-    borderRadius: 11,
+    borderRadius: 2, // Anstoss-Optik: eckig statt Kreis
+    borderWidth: 1, // Rahmenfarbe kommt aus dem Theme (inputBorder)
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 8,
@@ -307,19 +316,40 @@ const styles = StyleSheet.create({
   badge: {
     width: 18,
     height: 18,
-    backgroundColor: '#6b7280',
+    backgroundColor: '#55524e', // Anstoss-Palette (RETRO.shadowDark)
     justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: 3,
+    borderRadius: 2,
+    borderWidth: 1,
+    borderColor: '#14141e',
   },
   badgeCaptain: {
-    backgroundColor: '#d4a017',
+    backgroundColor: '#f2c230', // RETRO.yellow wie der Titelbalken
+  },
+  badgeTextCaptain: {
+    color: '#14141e',
   },
   evalEmoji: {
     fontSize: 14,
     marginLeft: 2,
   },
   badgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#fff',
+  },
+  badgeReports: {
+    minWidth: 20,
+    height: 18,
+    paddingHorizontal: 3,
+    backgroundColor: '#2563eb',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: 2, // eckig, passend zu T/C-Badges
+    borderWidth: 1,
+    borderColor: '#14141e',
+  },
+  badgeReportsText: {
     fontSize: 10,
     fontWeight: '800',
     color: '#fff',

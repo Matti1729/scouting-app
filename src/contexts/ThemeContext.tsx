@@ -54,6 +54,22 @@ interface ThemeContextType {
 
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
+/**
+ * Erzwingt eine feste Farbpalette für einen Teilbaum (z.B. Retro-Modals),
+ * unabhängig vom globalen Dark/Light-Theme. Kindkomponenten, die useTheme()
+ * aufrufen (PlayerRow, LineupList, Dropdown, ...), erhalten diese Farben.
+ */
+export function ThemeOverride({ colors, children }: { colors: ThemeColors; children: React.ReactNode }) {
+  const parent = useContext(ThemeContext);
+  const value = useMemo<ThemeContextType>(() => ({
+    colors,
+    isDark: false,
+    toggleTheme: parent?.toggleTheme ?? (() => {}),
+    setTheme: parent?.setTheme ?? (() => {}),
+  }), [colors, parent]);
+  return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
+}
+
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const systemColorScheme = useColorScheme();
   const [isDark, setIsDark] = useState(systemColorScheme === 'dark');

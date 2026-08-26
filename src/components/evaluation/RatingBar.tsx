@@ -7,6 +7,8 @@ interface RatingBarProps {
   onChange: (value: number) => void;
   compact?: boolean;
   compactSize?: number;
+  /** Schlichte Retro-Variante: langer Slider + eckige Wert-Box (ohne Hex-Badge) */
+  plain?: boolean;
 }
 
 /** Generate flat-top hexagon polygon points as CSS clip-path */
@@ -117,7 +119,7 @@ function HexBadge({ value, size, color, bgColor, isGold }: { value: number; size
   );
 }
 
-export function RatingBar({ value, onChange, compact, compactSize }: RatingBarProps) {
+export function RatingBar({ value, onChange, compact, compactSize, plain }: RatingBarProps) {
   const { colors } = useTheme();
   const trackRef = useRef<View>(null);
   const trackLayoutRef = useRef({ x: 0, width: 0 });
@@ -194,7 +196,7 @@ export function RatingBar({ value, onChange, compact, compactSize }: RatingBarPr
     <View
       ref={trackRef}
       onLayout={handleTrackLayout}
-      style={[styles.trackWrap, compact && styles.trackWrapCompact, Platform.OS === 'web' && { cursor: 'pointer' } as any]}
+      style={[styles.trackWrap, compact && styles.trackWrapCompact, plain && { width: '100%', height: 26 }, Platform.OS === 'web' && { cursor: 'pointer' } as any]}
       {...(Platform.OS !== 'web' ? panResponder.panHandlers : {})}
     >
       <View style={[styles.track, compact && styles.trackCompact, { backgroundColor: colors.border }]}>
@@ -202,10 +204,24 @@ export function RatingBar({ value, onChange, compact, compactSize }: RatingBarPr
       </View>
       <View style={[
         styles.thumb, compact && styles.thumbCompact,
+        plain && { top: 3 },
         { left: `${fillPercent}%`, backgroundColor: ratingColor, borderColor: colors.surface },
       ]} />
     </View>
   );
+
+  if (plain) {
+    return (
+      <View style={styles.plainContainer}>
+        <View style={styles.plainSliderWrap}>{renderSlider()}</View>
+        <View style={[styles.plainValueBox, { borderColor: colors.inputBorder, backgroundColor: colors.surfaceSecondary }]}>
+          <Text style={[styles.plainValueText, { color: value === 0 ? colors.textSecondary : ratingColor }]}>
+            {value || '-'}
+          </Text>
+        </View>
+      </View>
+    );
+  }
 
   if (compact) {
     return (
@@ -234,6 +250,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 2,
     width: '100%',
+  },
+  plainContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  plainSliderWrap: {
+    flex: 1,
+  },
+  plainValueBox: {
+    minWidth: 30,
+    height: 26,
+    borderWidth: 1,
+    borderRadius: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  plainValueText: {
+    fontSize: 14,
+    fontWeight: '800',
   },
   trackWrap: {
     width: '70%',

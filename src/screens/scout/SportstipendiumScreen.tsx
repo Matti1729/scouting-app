@@ -154,6 +154,17 @@ export function SportstipendiumScreen() {
   const [showArchive, setShowArchive] = useState(false);
   // Spielerprofil-Modal (identisch zur Suchmaschine)
   const [detailPlayer, setDetailPlayer] = useState<StipendiumSearchPlayer | null>(null);
+  // Nach Schließen der Spielbewertung zurück ins Spielerprofil
+  const returnToPlayerRef = useRef<StipendiumSearchPlayer | null>(null);
+  useFocusEffect(
+    useCallback(() => {
+      if (returnToPlayerRef.current) {
+        const player = returnToPlayerRef.current;
+        returnToPlayerRef.current = null;
+        setTimeout(() => setDetailPlayer(player), 100);
+      }
+    }, [])
+  );
   // Aktuelle Vereinsinfo (Wappen, vereinslos) pro TM-Spieler-ID
   const [clubInfo, setClubInfo] = useState<Record<string, PlayerClubInfo>>({});
   // Bestätigungs-Dialoge: Löschen bzw. Archivieren (mit Grund)
@@ -506,7 +517,28 @@ export function SportstipendiumScreen() {
 
       {/* Spielerprofil (geteilte Komponente, identisch zur Suchmaschine) */}
       {detailPlayer && (
-        <PlayerDetailModal player={detailPlayer} onClose={() => setDetailPlayer(null)} />
+        <PlayerDetailModal
+          player={detailPlayer}
+          onClose={() => setDetailPlayer(null)}
+          onOpenEvaluation={(ev) => {
+            const playerId = detailPlayer.id;
+            returnToPlayerRef.current = detailPlayer;
+            setDetailPlayer(null);
+            (navigation as any).navigate('PlayerEvaluation', {
+              matchId: ev.match_id,
+              matchName: ev.match_name,
+              matchDate: ev.match_date,
+              mannschaft: ev.age_group,
+              playerName: `${ev.last_name || ''}, ${ev.first_name || ''}`,
+              playerNumber: ev.jersey_number,
+              playerPosition: ev.positions?.split(', ')[0] || null,
+              playerBirthDate: ev.birth_date,
+              agentName: ev.agent_name,
+              transfermarktUrl: ev.transfermarkt_url,
+              beraterPlayerId: playerId,
+            });
+          }}
+        />
       )}
 
       {/* Gesperrt: Spieler ist im Scout Portal angelegt */}

@@ -11,6 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import { useTheme } from '../contexts/ThemeContext';
+import { HARD_SHADOW } from '../theme/retro';
 
 interface DropdownOption {
   value: string;
@@ -151,9 +152,10 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
         ref={buttonRef}
         style={[
           styles.button,
+          HARD_SHADOW,
           {
-            backgroundColor: colors.inputBackground,
-            borderColor: isOpen ? colors.primary : colors.inputBorder,
+            // graue Retro-Fläche wie die übrigen Buttons, randlos
+            backgroundColor: colors.surfaceSecondary,
           },
           compact && styles.buttonCompact,
         ]}
@@ -238,24 +240,23 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderWidth: 1,
-    borderRadius: 8,
+    borderRadius: 2, // Anstoss-Optik: eckig, randlos
     paddingHorizontal: 12,
     paddingVertical: 12,
     minHeight: 44,
   },
   buttonCompact: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    minHeight: 28,
-    minWidth: 60,
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    minHeight: 24,
+    minWidth: 52,
   },
   buttonText: {
     fontSize: 15,
     flex: 1,
   },
   buttonTextCompact: {
-    fontSize: 13,
+    fontSize: 12,
     flex: 1,
   },
   chevron: {
@@ -269,12 +270,16 @@ const styles = StyleSheet.create({
   dropdown: {
     position: 'absolute',
     borderWidth: 1,
-    borderRadius: 8,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 8,
-    elevation: 5,
+    borderRadius: 2, // Anstoss-Optik: eckig
+    ...(Platform.OS === 'web'
+      ? ({ boxShadow: '2px 2px 3px rgba(20, 20, 45, 0.45)' } as any)
+      : {
+          shadowColor: '#14142d',
+          shadowOffset: { width: 2, height: 2 },
+          shadowOpacity: 0.45,
+          shadowRadius: 2,
+          elevation: 5,
+        }),
     overflow: 'hidden',
   },
   optionList: {
@@ -286,12 +291,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingVertical: 8,
   },
   checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
+    width: 18,
+    height: 18,
+    borderRadius: 2, // eckig
     borderWidth: 2,
     marginRight: 10,
     justifyContent: 'center',
@@ -308,8 +313,8 @@ const styles = StyleSheet.create({
   },
   doneButton: {
     margin: 8,
-    paddingVertical: 10,
-    borderRadius: 6,
+    paddingVertical: 8,
+    borderRadius: 2, // eckig
     alignItems: 'center',
   },
   doneButtonText: {

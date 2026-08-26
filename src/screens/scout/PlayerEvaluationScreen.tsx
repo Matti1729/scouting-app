@@ -11,9 +11,13 @@ import {
   Alert,
   useWindowDimensions,
   BackHandler,
+  Image,
+  Linking,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../config/supabase';
-import { useTheme } from '../../contexts/ThemeContext';
+import { ThemeOverride } from '../../contexts/ThemeContext';
+import { RETRO, HARD_SHADOW, HARD_SHADOW_LG, RETRO_BTN, RETRO_THEME, MONO, RETRO_CHIP, RETRO_CHIP_TEXT } from '../../theme/retro';
 import {
   AgeGroup,
   Position,
@@ -32,10 +36,31 @@ import {
   addToWatchlist,
   removeFromWatchlist,
   isOnWatchlist,
+  isPlaceholderName,
+  normalizePlayerName,
 } from '../../services/beraterService';
 
+// Deutsches Datum mit Wochentag, z.B. "Mi, 26.08.26" (aus ISO oder DD.MM.YYYY)
+const formatMatchDateGerman = (raw: string): string => {
+  if (!raw) return '';
+  let d: Date | null = null;
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+    d = new Date(`${raw.slice(0, 10)}T12:00:00`);
+  } else if (/^\d{1,2}\.\d{1,2}\.\d{2,4}$/.test(raw)) {
+    const [dd, mm, yy] = raw.split('.').map(Number);
+    d = new Date(yy < 100 ? 2000 + yy : yy, mm - 1, dd, 12);
+  }
+  if (!d || isNaN(d.getTime())) return raw;
+  const wd = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][d.getDay()];
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const yy = String(d.getFullYear()).slice(-2);
+  return `${wd}, ${dd}.${mm}.${yy}`;
+};
+
 export function PlayerEvaluationScreen({ navigation, route }: any) {
-  const { colors } = useTheme();
+  // Retro-Look (Anstoss-Optik): feste Palette statt Dark/Light-Theme
+  const colors = RETRO_THEME;
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
@@ -96,6 +121,37 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
   const [hasChanges, setHasChanges] = useState(false);
   const hasChangesRef = useRef(false);
 
+  // Vereinswappen (über berater_clubs → Transfermarkt-CDN), rein optisch
+  const [clubLogoUrl, setClubLogoUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!currentClub) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const tryFind = async (pattern: string): Promise<string | null> => {
+          const { data } = await supabase
+            .from('berater_clubs')
+            .select('tm_club_id')
+            .ilike('club_name', pattern)
+            .limit(1);
+          return data?.[0]?.tm_club_id || null;
+        };
+        let tmId = await tryFind(currentClub);
+        if (!tmId) {
+          // Zusätze wie "II", "2", "U16", "1848 II" am Ende abstreifen
+          const base = currentClub.replace(/(\s+(II|III|IV|U\d+|\d+))+\s*$/i, '').trim();
+          if (base && base.length >= 4 && base !== currentClub) {
+            tmId = await tryFind(`${base}%`);
+          }
+        }
+        if (tmId && !cancelled) {
+          setClubLogoUrl(`https://tmssl.akamaized.net/images/wappen/head/${tmId}.png`);
+        }
+      } catch { /* Logo ist optional */ }
+    })();
+    return () => { cancelled = true; };
+  }, [currentClub]);
+
   // Berater-Evaluation + Watchlist Status
   const [beraterPlayerId, setBeraterPlayerId] = useState<string>(params.beraterPlayerId || '');
   const [beraterEvalStatus, setBeraterEvalStatus] = useState<'interessant' | 'nicht_interessant' | null>(null);
@@ -110,17 +166,37 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         return;
       }
       try {
-        let query = supabase
-          .from('player_evaluations')
-          .select('*')
-          .eq('match_id', params.matchId)
-          .eq('last_name', parsedName.lastName);
-        if (parsedName.firstName) {
-          query = query.eq('first_name', parsedName.firstName);
-        } else {
-          query = query.is('first_name', null);
+        // 1. Bevorzugt über die eindeutige Aufstellungs-Zeile laden — Namen sind
+        //    bei "k.A."-Spielern mehrdeutig und würden fremde Berichte laden.
+        let data: any = null;
+        if (params.lineupPlayerId) {
+          const { data: byLineup } = await supabase
+            .from('player_evaluations')
+            .select('*')
+            .eq('match_id', params.matchId)
+            .eq('lineup_player_id', params.lineupPlayerId)
+            .maybeSingle();
+          data = byLineup;
         }
-        const { data } = await query.maybeSingle();
+        // 2. Fallback per Name — nur mit echtem Namen, nie mit Platzhalter
+        if (!data && parsedName.lastName && !isPlaceholderName(parsedName.lastName)) {
+          let query = supabase
+            .from('player_evaluations')
+            .select('*')
+            .eq('match_id', params.matchId)
+            .eq('last_name', parsedName.lastName);
+          if (parsedName.firstName) {
+            query = query.eq('first_name', parsedName.firstName);
+          } else {
+            query = query.is('first_name', null);
+          }
+          const { data: byName } = await query.maybeSingle();
+          // Nur übernehmen, wenn der Bericht nicht zu einer ANDEREN
+          // Aufstellungs-Zeile gehört
+          if (byName && (!byName.lineup_player_id || !params.lineupPlayerId || byName.lineup_player_id === params.lineupPlayerId)) {
+            data = byName;
+          }
+        }
         if (data) {
           setExistingId(data.id);
           if (data.positions) setPositions(data.positions.split(', ').filter(Boolean) as Position[]);
@@ -247,44 +323,58 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       }
     }
 
-    // 2. Per Name suchen (mehrere Varianten: "Vorname Nachname" und "Nachname Vorname")
+    // Platzhalter-Name ("k.A.") ohne TM-Profil: keine belastbare Identität —
+    // NICHT anlegen/matchen, sonst teilen sich alle unbekannten Spieler
+    // denselben Datensatz (Berichte, Notizen, Status).
+    if (isPlaceholderName(lastName) && !transfermarktUrl) return null;
+
+    // 2. Per Name suchen — nie mit Platzhalter-Namen. Akzent-unabhängig über
+    //    normalized_name, damit "Ouedraogo" den TM-Spieler "Ouédraogo" findet.
     const playerName = [firstName, lastName].filter(Boolean).join(' ');
-    const playerNameReversed = [lastName, firstName].filter(Boolean).join(' ');
-    const namesToTry = [...new Set([playerName, playerNameReversed].filter(Boolean))];
+    if (!isPlaceholderName(lastName)) {
+      const playerNameReversed = [lastName, firstName].filter(Boolean).join(' ');
+      const normsToTry = [...new Set(
+        [playerName, playerNameReversed].filter(Boolean).map(normalizePlayerName)
+      )].filter(Boolean);
 
-    for (const name of namesToTry) {
-      if (!name) continue;
-      const { data: byName } = await supabase
-        .from('berater_players')
-        .select('id')
-        .ilike('player_name', name)
-        .maybeSingle();
-      if (byName) {
-        setBeraterPlayerId(byName.id);
-        return byName.id;
+      if (normsToTry.length > 0) {
+        const { data: byNorm } = await supabase
+          .from('berater_players')
+          .select('id, birth_date')
+          .in('normalized_name', normsToTry)
+          .limit(5);
+        // Kein Geburtsdatums-Widerspruch zulassen
+        const match = (byNorm || []).find(
+          (p) => !(birthDateFromTM && p.birth_date && p.birth_date !== birthDateFromTM)
+        );
+        if (match) {
+          setBeraterPlayerId(match.id);
+          return match.id;
+        }
+      }
+
+      // 2b. Fuzzy: Suche nach Nachname allein (wenn eindeutig im gleichen Verein)
+      if (lastName && currentClub) {
+        const { data: byLastName } = await supabase
+          .from('berater_players')
+          .select('id, player_name')
+          .ilike('player_name', `%${lastName}%`)
+          .limit(5);
+        if (byLastName?.length === 1) {
+          setBeraterPlayerId(byLastName[0].id);
+          return byLastName[0].id;
+        }
       }
     }
 
-    // 2b. Fuzzy: Suche nach Nachname allein (wenn eindeutig im gleichen Verein)
-    if (lastName && currentClub) {
-      const { data: byLastName } = await supabase
-        .from('berater_players')
-        .select('id, player_name')
-        .ilike('player_name', `%${lastName}%`)
-        .limit(5);
-      if (byLastName?.length === 1) {
-        setBeraterPlayerId(byLastName[0].id);
-        return byLastName[0].id;
-      }
-    }
-
-    // 3. Neuen Spieler anlegen
+    // 3. Neuen Spieler anlegen (tm_player_id aus der URL, damit UNIQUE-Dedup greift)
+    const tmIdMatch = transfermarktUrl?.match(/spieler\/(\d+)/);
     const { data: newPlayer, error } = await supabase
       .from('berater_players')
       .insert({
         player_name: playerName || lastName,
         tm_profile_url: transfermarktUrl || null,
-        tm_player_id: null,
+        tm_player_id: tmIdMatch ? tmIdMatch[1] : null,
         birth_date: birthDateFromTM || null,
         position: positions[0] || null,
         is_active: true,
@@ -334,6 +424,9 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
     }
     setSaving(true);
     try {
+      // Bericht immer fest mit dem Spieler-Datensatz verknüpfen (legt ihn bei Bedarf an)
+      let linkedPlayerId: string | null = null;
+      try { linkedPlayerId = await ensureBeraterPlayer(); } catch { /* Verknüpfung optional */ }
       const evalData: Record<string, any> = {
         match_id: params.matchId || null,
         lineup_player_id: params.lineupPlayerId || null,
@@ -358,6 +451,8 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         overall_rating: overallRating || null,
         notes: notes || null,
       };
+      // Nur setzen, wenn Verknüpfung gelang — nie eine bestehende überschreiben
+      if (linkedPlayerId) evalData.berater_player_id = linkedPlayerId;
       let error;
       if (existingId) {
         ({ error } = await supabase
@@ -388,17 +483,52 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
   };
 
   return (
+    <ThemeOverride colors={RETRO_THEME}>
     <View style={styles.modalOverlay}>
-      <View style={[styles.modalContainer, { backgroundColor: colors.background, borderColor: colors.border }]}>
-        {/* Top-Bar im dunklen Rahmen mit Close-Button */}
-        <View style={styles.modalTopBar}>
-          <View style={{ flex: 1 }} />
-          <TouchableOpacity
-            style={[styles.modalCloseButton, { borderColor: colors.border }]}
-            onPress={confirmClose}
-            activeOpacity={0.7}
-          >
-            <Text style={[styles.modalCloseText, { color: colors.textSecondary }]}>✕</Text>
+      <View style={[styles.modalContainer, HARD_SHADOW_LG, { backgroundColor: colors.background, borderColor: RETRO.shadowDark }]}>
+        {/* Gelbe Titelleiste (Anstoss-Optik): links Badge+Art · Mitte Spiel+Icon · rechts Wochentag/Datum/Zeit · ✕ */}
+        <View style={[HARD_SHADOW, {
+          backgroundColor: RETRO.yellow,
+          marginHorizontal: 12, marginTop: 12, marginBottom: 4,
+          paddingVertical: 8, paddingHorizontal: 12,
+          flexDirection: 'row', alignItems: 'center', gap: 10,
+        }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ backgroundColor: colors.primary, paddingHorizontal: 5, paddingVertical: 1 }}>
+              <Text style={{ fontSize: 10, fontWeight: '700', color: colors.primaryText }}>
+                {ageGroup}
+              </Text>
+            </View>
+            {params.matchArt ? (
+              <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
+                {params.matchArt}
+              </Text>
+            ) : null}
+          </View>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            <Text style={{ fontSize: 16, fontWeight: '800', color: RETRO.text }} numberOfLines={1}>
+              {matchName || [firstName, lastName].filter(Boolean).join(' ')}
+            </Text>
+            {params.fussballDeUrl ? (
+              <TouchableOpacity
+                onPress={() => Linking.openURL(params.fussballDeUrl)}
+                activeOpacity={0.7}
+                hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+              >
+                <Image
+                  source={require('../../../assets/fussballde-logo.png')}
+                  style={{ width: 20, height: 20, borderWidth: 1, borderColor: RETRO.shadowDark }}
+                />
+              </TouchableOpacity>
+            ) : null}
+          </View>
+          {matchDate ? (
+            <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
+              {formatMatchDateGerman(matchDate)}{params.matchZeit ? ` · ${params.matchZeit}` : ''}
+            </Text>
+          ) : null}
+          <TouchableOpacity onPress={confirmClose} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+            <Ionicons name="close" size={20} color={RETRO.text} />
           </TouchableOpacity>
         </View>
         <KeyboardAvoidingView
@@ -427,9 +557,10 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
               onClose={confirmClose}
               transfermarktUrl={transfermarktUrl}
               agentName={agentName}
+              clubLogoUrl={clubLogoUrl}
             />
 
-            {/* Körper + Athletik Cards */}
+            {/* Körper + Athletik + rechte Spalte (Report/Einordnung) */}
             <View style={isMobile ? styles.cardsColumn : styles.cardsRow}>
               <KoerperCard
                 relativeHeight={bodyStructure.relativeHeight}
@@ -455,87 +586,101 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                 intensitaet={speedAthleticism.intensitaet}
                 onIntensitaetChange={(v) => setSpeedAthleticism(prev => ({ ...prev, intensitaet: v }))}
               />
-            </View>
 
-            {/* Scouting Report */}
-            <View style={[styles.reportCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-              <Text style={[styles.reportLabel, { color: colors.textSecondary }]}>SCOUTING REPORT</Text>
-              <TextInput
-                style={[
-                  styles.reportTextArea,
-                  {
-                    backgroundColor: colors.inputBackground,
-                    borderColor: colors.inputBorder,
-                    color: colors.text,
-                  },
-                ]}
-                value={notes}
-                onChangeText={setNotes}
-                placeholder="Detaillierte Beobachtungen..."
-                placeholderTextColor={colors.textSecondary}
-                multiline
-                numberOfLines={6}
-                textAlignVertical="top"
-              />
+              {/* Rechte Spalte: Scouting Report + Einordnung */}
+              <View style={styles.rightCol}>
+                <View style={[styles.reportCard, { flex: 1, backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <View style={RETRO_CHIP}>
+                    <Text style={RETRO_CHIP_TEXT}>SCOUTING REPORT</Text>
+                  </View>
+                  <TextInput
+                    style={[
+                      styles.reportTextArea,
+                      {
+                        backgroundColor: colors.inputBackground,
+                        borderColor: colors.inputBorder,
+                        color: colors.text,
+                      },
+                      !isMobile && { flex: 1 },
+                    ]}
+                    value={notes}
+                    onChangeText={setNotes}
+                    placeholder="Detaillierte Beobachtungen..."
+                    placeholderTextColor={colors.textSecondary}
+                    multiline
+                    numberOfLines={6}
+                    textAlignVertical="top"
+                  />
+                  <View style={styles.noteQuickRow}>
+                    {(['Stärke', 'Schwäche', 'Notiz'] as const).map((kind) => (
+                      <TouchableOpacity
+                        key={kind}
+                        style={[RETRO_BTN, HARD_SHADOW, styles.noteQuickButton]}
+                        onPress={() => setNotes(prev => `${prev ? prev.replace(/\s+$/, '') + '\n' : ''}${kind}: `)}
+                      >
+                        <Text style={[styles.evalButtonText, { color: RETRO.text }]}>+ {kind}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+
+                <View style={[styles.reportCard, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                  <View style={RETRO_CHIP}>
+                    <Text style={RETRO_CHIP_TEXT}>EINORDNUNG</Text>
+                  </View>
+                  <View style={styles.evalButtons}>
+                    <TouchableOpacity
+                      style={[
+                        RETRO_BTN, HARD_SHADOW, styles.evalButton,
+                        beraterEvalStatus === 'nicht_interessant' && { backgroundColor: colors.error },
+                      ]}
+                      onPress={() => handleBeraterEvaluation('nicht_interessant')}
+                    >
+                      <Text style={[styles.evalButtonText, { color: beraterEvalStatus === 'nicht_interessant' ? '#fff' : RETRO.text }]}>
+                        Uninteressant
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        RETRO_BTN, HARD_SHADOW, styles.evalButton,
+                        beraterEvalStatus === 'interessant' && { backgroundColor: colors.success },
+                      ]}
+                      onPress={() => handleBeraterEvaluation('interessant')}
+                    >
+                      <Text style={[styles.evalButtonText, { color: beraterEvalStatus === 'interessant' ? '#fff' : RETRO.text }]}>
+                        Interessant
+                      </Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[
+                        RETRO_BTN, HARD_SHADOW, styles.evalButton,
+                        onWatchlist && { backgroundColor: '#d4a017' },
+                      ]}
+                      onPress={handleWatchlistToggle}
+                    >
+                      <Text style={[styles.evalButtonText, { color: onWatchlist ? '#fff' : RETRO.text }]}>
+                        Watchlist
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                  <TouchableOpacity
+                    style={[RETRO_BTN, HARD_SHADOW, styles.saveButton, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1 }]}
+                    onPress={handleSave}
+                    disabled={saving}
+                  >
+                    <Text style={[styles.saveButtonText, { color: colors.primaryText }]}>
+                      {saving ? 'Speichert...' : 'Änderungen speichern'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
             </View>
 
           </ScrollView>
-          {/* Fixed bottom bar */}
-          <View style={[styles.bottomBar, { borderTopColor: colors.border }]}>
-            <View style={styles.evalButtons}>
-              <TouchableOpacity
-                style={[
-                  styles.evalButton,
-                  beraterEvalStatus === 'nicht_interessant'
-                    ? { backgroundColor: colors.error }
-                    : { backgroundColor: colors.border },
-                ]}
-                onPress={() => handleBeraterEvaluation('nicht_interessant')}
-              >
-                <Text style={[styles.evalButtonText, { color: beraterEvalStatus === 'nicht_interessant' ? '#fff' : colors.textSecondary }]}>
-                  Uninteressant
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.evalButton,
-                  beraterEvalStatus === 'interessant'
-                    ? { backgroundColor: colors.success }
-                    : { backgroundColor: colors.border },
-                ]}
-                onPress={() => handleBeraterEvaluation('interessant')}
-              >
-                <Text style={[styles.evalButtonText, { color: beraterEvalStatus === 'interessant' ? '#fff' : colors.textSecondary }]}>
-                  Interessant
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.evalButton,
-                  onWatchlist
-                    ? { backgroundColor: colors.warning }
-                    : { backgroundColor: colors.border },
-                ]}
-                onPress={handleWatchlistToggle}
-              >
-                <Text style={[styles.evalButtonText, { color: onWatchlist ? '#fff' : colors.textSecondary }]}>
-                  Watchlist
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity
-              style={[styles.saveButton, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1 }]}
-              onPress={handleSave}
-              disabled={saving}
-            >
-              <Text style={[styles.saveButtonText, { color: colors.primaryText }]}>
-                {saving ? 'Speichert...' : 'Änderungen speichern'}
-              </Text>
-            </TouchableOpacity>
-          </View>
         </KeyboardAvoidingView>
       </View>
     </View>
+    </ThemeOverride>
   );
 }
 
@@ -550,60 +695,69 @@ const styles = StyleSheet.create({
   },
   cardsRow: {
     flexDirection: 'row',
+    alignItems: 'stretch',
     gap: 16,
   },
   cardsColumn: {
     flexDirection: 'column',
     gap: 16,
   },
+  rightCol: {
+    flex: 1,
+    gap: 16,
+  },
   reportCard: {
-    borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 2, // randlos, nur Schatten
     padding: 16,
     gap: 12,
+    ...HARD_SHADOW,
   },
   reportLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '600',
-    letterSpacing: 1,
+    letterSpacing: 2,
+    fontFamily: MONO,
   },
   reportTextArea: {
-    borderWidth: 1,
-    borderRadius: 12,
+    // randlos — die Karte selbst ist das Eingabefeld
+    borderRadius: 2,
     padding: 14,
-    fontSize: 15,
+    // gleiche Schrift wie die Auswahl-Buttons ("unterdurchschnittlich")
+    fontSize: 10,
+    fontWeight: '500',
+    lineHeight: 16,
     minHeight: 140,
   },
-  bottomBar: {
+  noteQuickRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
+    gap: 8,
+  },
+  noteQuickButton: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderTopWidth: 1,
   },
   evalButtons: {
     flexDirection: 'row',
-    gap: 6,
+    gap: 8,
   },
   evalButton: {
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-    borderRadius: 6,
+    flex: 1,
+    paddingVertical: 8,
+    paddingHorizontal: 8,
+    alignItems: 'center',
   },
   evalButtonText: {
     fontSize: 11,
     fontWeight: '600',
   },
   saveButton: {
-    paddingVertical: 7,
-    paddingHorizontal: 12,
-    borderRadius: 6,
+    paddingVertical: 10,
     alignItems: 'center',
   },
   saveButtonText: {
-    fontSize: 11,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
   },
   modalOverlay: {
     flex: 1,
@@ -612,29 +766,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 24,
   },
-  modalTopBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-  },
-  modalCloseButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  modalCloseText: {
-    fontSize: 16,
-    fontWeight: '600',
-  },
   modalContainer: {
     width: '95%',
     maxWidth: 1200,
     maxHeight: '92%',
-    borderRadius: 16,
+    borderRadius: 2,
     borderWidth: 1,
     overflow: 'hidden',
   },

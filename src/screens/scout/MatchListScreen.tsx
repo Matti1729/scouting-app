@@ -15,7 +15,7 @@ import {
   Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { useTheme } from '../../contexts/ThemeContext';
+import { useTheme, ThemeOverride } from '../../contexts/ThemeContext';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../navigation/types';
@@ -50,43 +50,7 @@ import {
 import { GamesMapView, GameMapFeature } from '../../components/GamesMapView';
 import { Image } from 'react-native';
 
-// Retro-Farbschema (Anstoss-3-Optik) — identisch zur Suchmaschine
-const RETRO = {
-  page: '#e9e5dd',
-  titleBar: 'rgba(210, 206, 198, 0.92)',
-  panel: 'rgba(228, 224, 216, 0.68)',
-  face: 'rgba(230, 226, 218, 0.80)',
-  faceSelected: 'rgba(169, 187, 223, 0.92)',
-  shadowDark: '#55524e',
-  text: '#14141e',
-  textMuted: '#4a4a55',
-  headerBg: '#2b3f96',
-  headerText: '#ffffff',
-  inputBg: 'rgba(255, 255, 255, 0.92)',
-  yellow: '#f2c230',
-  rowBorder: '#c6c2ba',
-  white: '#ffffff',
-};
-
-const HARD_SHADOW = Platform.OS === 'web'
-  ? ({ boxShadow: '2px 2px 3px rgba(20, 20, 45, 0.45)' } as any)
-  : { shadowColor: '#14142d', shadowOffset: { width: 2, height: 2 }, shadowOpacity: 0.45, shadowRadius: 2, elevation: 3 };
-
-const HARD_SHADOW_LG = Platform.OS === 'web'
-  ? ({ boxShadow: '3px 4px 9px rgba(10, 10, 45, 0.5)' } as any)
-  : { shadowColor: '#0a0a2d', shadowOffset: { width: 3, height: 4 }, shadowOpacity: 0.5, shadowRadius: 5, elevation: 4 };
-
-const BLUE_GRADIENT = Platform.OS === 'web'
-  ? ({ backgroundImage: 'linear-gradient(180deg, #4058b6 0%, #2b3f96 55%, #223077 100%)' } as any)
-  : {};
-
-// Retro-Button (erhabene Fläche wie in der Suchmaschine)
-const RETRO_BTN = {
-  backgroundColor: RETRO.face,
-  borderWidth: 1,
-  borderColor: RETRO.shadowDark,
-  borderRadius: 0,
-} as const;
+import { RETRO, HARD_SHADOW, HARD_SHADOW_LG, BLUE_GRADIENT, RETRO_BTN, RETRO_THEME } from '../../theme/retro';
 import {
   pickAndExtractLineups,
   MediaSource,
@@ -129,7 +93,7 @@ import {
   MatchChangeInfo,
 } from '../../services/matchChangeService';
 import { Ionicons } from '@expo/vector-icons';
-import { loadBeraterStatusForLineup, BeraterStatusResult } from '../../services/beraterService';
+import { loadBeraterStatusForLineup, BeraterStatusResult, loadReportCountsForLineup, isPlaceholderName } from '../../services/beraterService';
 import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
@@ -345,6 +309,12 @@ const dbMatchToMatch = (dbMatch: DbMatch): Match => ({
   isArchived: dbMatch.is_archived,
 });
 
+// Wochentag als Zwei-Buchstaben-Kürzel ("Mi") für die Titelleiste
+const weekdayShort = (datum: string): string => {
+  const d = parseDateString(datum);
+  return d ? ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'][d.getDay()] : '';
+};
+
 // Deutsches Datumsformat mit Datum-Range Support
 const formatDateGerman = (datum: string, datumEnde: string | null): string => {
   if (!datum) return '-';
@@ -532,6 +502,8 @@ export function MatchListScreen({ navigation }: any) {
 
   // Berater-Status für Lineup-Spieler (interessant/uninteressant/watchlist)
   const [beraterStatusMap, setBeraterStatusMap] = useState<Map<string, BeraterStatusResult>>(new Map());
+  // Berichte-Anzahl je Aufstellungs-Spieler über alle Spiele ("schon X-mal gesehen")
+  const [reportCounts, setReportCounts] = useState<Map<string, number>>(new Map());
 
   // Modal wieder öffnen wenn man von PlayerEvaluation zurückkommt
   useFocusEffect(
@@ -661,7 +633,9 @@ export function MatchListScreen({ navigation }: any) {
 
           if (ev.lineup_player_id) {
             evalIds.add(ev.lineup_player_id);
-          } else {
+          } else if (!isPlaceholderName(ev.last_name)) {
+            // Namens-Fallback nur für echte Namen — "k.A." würde ALLE
+            // unbekannten Spieler fälschlich als bewertet markieren
             const match = allLineupPlayers.find(
               p => p.name === ev.last_name && (p.vorname || '') === (ev.first_name || '')
             );
@@ -680,6 +654,11 @@ export function MatchListScreen({ navigation }: any) {
       }));
       const statusMap = await loadBeraterStatusForLineup(allLineupForBerater);
       setBeraterStatusMap(statusMap);
+
+      // Berichte-Anzahl über alle Spiele ("schon X-mal gesehen") fürs Badge
+      loadReportCountsForLineup(allLineupForBerater)
+        .then(setReportCounts)
+        .catch(() => setReportCounts(new Map()));
     } else {
       // Keine Aufstellung vorhanden
       setHomeLineup([]);
@@ -688,6 +667,7 @@ export function MatchListScreen({ navigation }: any) {
       setAwaySubs([]);
       setEvaluatedPlayerIds(new Set());
       setBeraterStatusMap(new Map());
+      setReportCounts(new Map());
     }
   };
 
@@ -714,9 +694,11 @@ export function MatchListScreen({ navigation }: any) {
 
     const allPlayers = result.data;
 
-    // Spieler ohne TM-URL oder ohne vollständige Profildaten suchen
+    // Spieler ohne TM-URL oder ohne vollständige Profildaten suchen.
+    // Platzhalter-Namen ("k.A.") NIE suchen — die TM-Namenssuche würde einen
+    // beliebigen Treffer liefern und ihn allen unbekannten Spielern zuordnen.
     const playersToSearch = allPlayers.filter(p =>
-      !p.transfermarkt_url || !p.agent_name || !p.birth_date
+      !isPlaceholderName(p.name) && (!p.transfermarkt_url || !p.agent_name || !p.birth_date)
     );
     if (playersToSearch.length === 0) {
       console.log('All players already have TM data');
@@ -1234,6 +1216,41 @@ export function MatchListScreen({ navigation }: any) {
     setSelectedMatches([]);
   };
 
+  // Aufstellung automatisch von fussball.de holen, wenn noch keine gespeichert ist.
+  // Läuft still im Hintergrund: liefert fussball.de (noch) nichts, passiert einfach nichts.
+  const autoScrapeLineupIfEmpty = async (matchId: string, fussballDeUrl?: string | null, spiel?: string) => {
+    if (!fussballDeUrl) return;
+    try {
+      const existing = await loadLineups(matchId);
+      if (existing.success && existing.data && existing.data.length > 0) return; // schon vorhanden
+      const scraperResult = await scrapeLineupsFromFussballDe(fussballDeUrl);
+      if (!(scraperResult.success && scraperResult.data?.available)) return; // noch nicht veröffentlicht
+      const d = scraperResult.data;
+      const prep = (
+        players: { nummer: string; vorname: string; name: string; jahrgang: string; position: string; isGoalkeeper?: boolean; isCaptain?: boolean }[],
+        team: 'home' | 'away',
+        isStarter: boolean
+      ) => players.map(p => ({
+        team, is_starter: isStarter, nummer: p.nummer, vorname: p.vorname, name: p.name,
+        jahrgang: p.jahrgang, position: p.position,
+        is_goalkeeper: p.isGoalkeeper ?? false, is_captain: p.isCaptain ?? false,
+      }));
+      const all = [
+        ...prep(d.homeStarters, 'home', true),
+        ...prep(d.homeSubs, 'home', false),
+        ...prep(d.awayStarters, 'away', true),
+        ...prep(d.awaySubs, 'away', false),
+      ];
+      if (!all.length) return;
+      const saved = await replaceLineup(matchId, all);
+      if (saved.success) {
+        await fetchLineupForMatch(matchId); // aktualisiert das (evtl. offene) Spiel-Modal
+        const [homeTeam, awayTeam] = (spiel || '').split(' - ');
+        searchTransfermarktForLineup(matchId, homeTeam || '', awayTeam || '');
+      }
+    } catch { /* Auto-Load ist Komfort — Fehler nie durchschlagen lassen */ }
+  };
+
   const handleMatchPress = async (match: Match) => {
     // Umgebungs-Spiel: Detail-Modal mit Spieldaten + "Zu Meine Spiele hinzufügen"
     if (match.isAreaGame) {
@@ -1244,6 +1261,9 @@ export function MatchListScreen({ navigation }: any) {
     setModalVisible(true);
     // Aufstellung aus Supabase laden
     await fetchLineupForMatch(match.id);
+    // Noch keine Aufstellung? Im Hintergrund automatisch von fussball.de holen
+    // (vor Ort: Spiel öffnen genügt, die Aufstellungen erscheinen von selbst).
+    void autoScrapeLineupIfEmpty(match.id, match.fussballDeUrl, match.spiel);
   };
 
   // Umgebungs-Spiel als eigenes Event übernehmen (bekommt damit Aufstellung/Scouting)
@@ -1263,6 +1283,10 @@ export function MatchListScreen({ navigation }: any) {
     } as any);
     if (result.success) {
       await fetchMatches(); // eigene Liste aktualisieren (Umgebungs-Duplikat wird ausgeblendet)
+      // Aufstellung direkt automatisch laden (falls fussball.de sie schon hat)
+      if (result.data) {
+        void autoScrapeLineupIfEmpty(result.data.id, areaDetail.fussballDeUrl, areaDetail.spiel);
+      }
     }
     setAddingAreaGame(false);
   };
@@ -1370,6 +1394,9 @@ export function MatchListScreen({ navigation }: any) {
       lineupPlayerId: player.id,
       matchName: selectedMatch.spiel,
       matchDate: selectedMatch.datum,
+      matchArt: selectedMatch.art,
+      matchZeit: selectedMatch.zeit,
+      fussballDeUrl: selectedMatch.fussballDeUrl,
       mannschaft: selectedMatch.mannschaft,
       playerName: `${player.name}, ${player.vorname}`,
       playerNumber: player.nummer?.replace(/^0+/, '') || '', // Führende Nullen entfernen
@@ -1428,6 +1455,9 @@ export function MatchListScreen({ navigation }: any) {
       matchId: selectedMatch.id,
       matchName: selectedMatch.spiel,
       matchDate: selectedMatch.datum,
+      matchArt: selectedMatch.art,
+      matchZeit: selectedMatch.zeit,
+      fussballDeUrl: selectedMatch.fussballDeUrl,
       mannschaft: selectedMatch.mannschaft,
     });
   };
@@ -1541,6 +1571,9 @@ export function MatchListScreen({ navigation }: any) {
       matchId: selectedMatch.id,
       matchName: selectedMatch.spiel,
       matchDate: selectedMatch.datum,
+      matchArt: selectedMatch.art,
+      matchZeit: selectedMatch.zeit,
+      fussballDeUrl: selectedMatch.fussballDeUrl,
       mannschaft: selectedMatch.mannschaft,
       playerName: `${selectedPlayerForProfile.name}, ${selectedPlayerForProfile.vorname}`,
       playerNumber: selectedPlayerForProfile.nummer,
@@ -2002,7 +2035,11 @@ export function MatchListScreen({ navigation }: any) {
       }
 
       // "Meine Spiele" = eigene kommende Spiele; "Archiv" = eigene vergangene
-      // (ab dem Folgetag); "Anstehend" = alles, was noch nicht beendet ist
+      // (ab dem Folgetag); "Anstehend" = alles, was noch nicht beendet ist.
+      // DFB-Termine (Nationalmannschaft/Hallenturnier, automatisch gesynct) gehören
+      // nur in "Anstehend" — nicht zu "Meine Spiele"/"Archiv" (nur selbst Hinzugefügtes).
+      const isDfbTermin = match.art === 'Nationalmannschaft' || match.art === 'Hallenturnier';
+      if ((viewTab === 'meine' || viewTab === 'archiv') && isDfbTermin) return false;
       const isArchived = match.isArchived || isEventFinished(match.datum, match.datumEnde);
       const matchesArchiveFilter = viewTab === 'archiv' ? isArchived : !isArchived;
 
@@ -2012,7 +2049,13 @@ export function MatchListScreen({ navigation }: any) {
   }, [matches, areaMatches, searchQuery, jahrgangFilter, artFilter, dateFilter, viewTab, sortField, sortDirection]);
 
   // Anzahl archivierter Spiele
-  const archivedCount = matches.filter(m => m.isArchived || isEventFinished(m.datum, m.datumEnde)).length;
+  // Zähler für "Meine Spiele"/"Archiv": ohne automatisch gesyncte DFB-Termine
+  const ownMatchCount = useMemo(
+    () => matches.filter(m => m.art !== 'Nationalmannschaft' && m.art !== 'Hallenturnier'),
+    [matches]
+  );
+  const archivedCount = ownMatchCount.filter(m => m.isArchived || isEventFinished(m.datum, m.datumEnde)).length;
+  const meineCount = ownMatchCount.length - archivedCount;
 
   // Jahrgangs-Optionen dynamisch: nur Jahrgänge, die im Spielplan vorkommen
   const jahrgangOptions = useMemo(() => {
@@ -2418,7 +2461,7 @@ export function MatchListScreen({ navigation }: any) {
               onPress={() => setViewTab('meine')}
             >
               <Text style={[styles.mobileToggleBtnText, { color: colors.textSecondary }, viewTab === 'meine' && { color: colors.text, fontWeight: '600' }]}>
-                Meine ({matches.length - archivedCount})
+                Meine ({meineCount})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -2467,7 +2510,7 @@ export function MatchListScreen({ navigation }: any) {
               onPress={() => setViewTab('meine')}
             >
               <Text style={{ fontSize: 13, fontWeight: viewTab === 'meine' ? '700' : '600', color: RETRO.text }}>
-                Meine Spiele ({matches.length - archivedCount})
+                Meine Spiele ({meineCount})
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -2650,7 +2693,10 @@ export function MatchListScreen({ navigation }: any) {
                             setAreaDetail(null);
                             setSelectedMatch(m);
                             setModalVisible(true);
-                            fetchLineupForMatch(m.id);
+                            fetchLineupForMatch(m.id).then(() => {
+                              // Noch keine Aufstellung? Automatisch von fussball.de holen
+                              void autoScrapeLineupIfEmpty(m.id, m.fussballDeUrl, m.spiel);
+                            });
                           }}
                         >
                           <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }}>Aufstellung & Scouting</Text>
@@ -2715,7 +2761,9 @@ export function MatchListScreen({ navigation }: any) {
                         : {})}
                       style={[HARD_SHADOW, {
                         backgroundColor: RETRO.white, borderWidth: 1, borderColor: RETRO.rowBorder,
-                        borderLeftWidth: 3, borderLeftColor: RETRO.yellow,
+                        // Nur heute stattfindende Spiele markieren (grüner Streifen)
+                        borderLeftWidth: 3,
+                        borderLeftColor: isEventActive(item.datum, item.datumEnde) ? '#10b981' : 'transparent',
                         paddingVertical: 8, paddingHorizontal: 12,
                         marginHorizontal: 10, marginTop: 10,
                       }]}
@@ -2845,11 +2893,18 @@ export function MatchListScreen({ navigation }: any) {
         onRequestClose={() => setModalVisible(false)}
       >
         <View style={[styles.modalOverlay, isMobile && styles.modalOverlayMobile]}>
-          <View style={[styles.modalContent, isMobile && styles.modalContentMobile, { backgroundColor: colors.background, borderColor: colors.border }]}>
+          {/* Retro-Optik wie die Spiele-Übersicht: Farb-Override für das ganze Modal */}
+          <ThemeOverride colors={RETRO_THEME}>
+          {(() => { const colors = RETRO_THEME; return (
+          <View style={[styles.modalContent, isMobile && styles.modalContentMobile, HARD_SHADOW_LG,
+            { backgroundColor: colors.background, borderColor: RETRO.shadowDark, borderRadius: isMobile ? undefined : 0 }]}>
             {selectedMatch && (
               <>
                 {/* Modal Header */}
-                <View style={[styles.modalHeader, isMobile && styles.modalHeaderMobile, { borderBottomColor: colors.border }]}>
+                <View style={[styles.modalHeader, isMobile && styles.modalHeaderMobile,
+                  { borderBottomColor: colors.border },
+                  // View-Mode: kompakter Kopf ohne Trennlinie → mehr Platz für die Aufstellungen
+                  !isEditMode && { borderBottomWidth: 0, paddingBottom: 4, paddingTop: 12 }]}>
                   {isEditMode ? (
                     <>
                       {/* Edit Mode: Original layout */}
@@ -2914,59 +2969,51 @@ export function MatchListScreen({ navigation }: any) {
                     </>
                   ) : (
                     <>
-                      {/* View Mode: Top bar with import button + close */}
-                      <View style={styles.modalTopBar}>
-                        <TouchableOpacity
-                          style={[styles.modalTopBarButton, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
-                          onPress={handleLoadLineups}
-                          disabled={isLoadingLineups}
-                        >
-                          {isLoadingLineups ? (
-                            <ActivityIndicator size="small" color={colors.primary} />
-                          ) : (
-                            <Text style={[styles.modalTopBarButtonText, { color: colors.text }]}>
-                              Aufstellungen laden
+                      {/* Gelbe Titelleiste: links Badge+Art · Mitte Titel · rechts Wochentag/Datum/Zeit · Icon · ✕ */}
+                      <View style={[HARD_SHADOW, {
+                        backgroundColor: RETRO.yellow,
+                        paddingVertical: 8, paddingHorizontal: 12, marginBottom: 8,
+                        flexDirection: 'row', alignItems: 'center', gap: 10,
+                      }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                          {/* kompaktes, eckiges Badge wie in der Spiele-Liste */}
+                          <View style={{ backgroundColor: colors.primary, paddingHorizontal: 5, paddingVertical: 1 }}>
+                            <Text style={{ fontSize: 10, fontWeight: '700', color: colors.primaryText }}>
+                              {selectedMatch.mannschaft}
                             </Text>
-                          )}
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[styles.modalCloseButton, { borderColor: colors.border }]}
-                          onPress={() => { setIsEditMode(false); setActionMenuVisible(false); setModalVisible(false); }}
-                          activeOpacity={0.7}
-                        >
-                          <Text style={[styles.modalCloseButtonText, { color: colors.textSecondary }]}>✕</Text>
-                        </TouchableOpacity>
-                      </View>
-                      {/* Centered info: age group, match type, date, time */}
-                      <View style={styles.modalInfoCenter}>
-                        <View style={[styles.modalBadge, { backgroundColor: colors.primary }]}>
-                          <Text style={[styles.modalBadgeText, { color: colors.primaryText }]}>
-                            {selectedMatch.mannschaft}
+                          </View>
+                          <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
+                            {selectedMatch.art}
                           </Text>
                         </View>
-                        <Text style={[styles.modalInfoText, { color: colors.textSecondary }]}>
-                          {selectedMatch.art}
-                        </Text>
-                        <Text style={[styles.modalInfoDot, { color: colors.textSecondary }]}>{'\u00B7'}</Text>
-                        <Text style={[styles.modalInfoText, { color: colors.textSecondary }]}>
-                          {selectedMatch.datum || '-'}
-                        </Text>
-                        <Text style={[styles.modalInfoDot, { color: colors.textSecondary }]}>{'\u00B7'}</Text>
-                        <Text style={[styles.modalInfoText, { color: colors.textSecondary }]}>
-                          {selectedMatch.zeit || '-'}
-                        </Text>
-                      </View>
-                      {/* Centered match name */}
-                      <Text style={[styles.modalTitle, { color: colors.text }]}>
-                        {selectedMatch.spiel}
-                      </Text>
-                      {selectedMatch.fussballDeUrl ? (
-                        <TouchableOpacity onPress={() => Linking.openURL(selectedMatch.fussballDeUrl!)} style={styles.fussballDeLinkContainer}>
-                          <Text style={[styles.fussballDeLink, { color: colors.primary }]}>
-                            fussball.de
+                        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                          <Text style={{ fontSize: 16, fontWeight: '800', color: RETRO.text }} numberOfLines={1}>
+                            {selectedMatch.spiel}
                           </Text>
+                          {selectedMatch.fussballDeUrl ? (
+                            <TouchableOpacity
+                              onPress={() => Linking.openURL(selectedMatch.fussballDeUrl!)}
+                              activeOpacity={0.7}
+                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                            >
+                              <Image
+                                source={require('../../../assets/fussballde-logo.png')}
+                                style={{ width: 20, height: 20, borderWidth: 1, borderColor: RETRO.shadowDark }}
+                              />
+                            </TouchableOpacity>
+                          ) : null}
+                        </View>
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
+                          {weekdayShort(selectedMatch.datum) ? `${weekdayShort(selectedMatch.datum)}, ` : ''}{formatDateGerman(selectedMatch.datum, selectedMatch.datumEnde)}{selectedMatch.zeit ? ` · ${selectedMatch.zeit}` : ''}
+                        </Text>
+                        <TouchableOpacity
+                          onPress={() => { setIsEditMode(false); setActionMenuVisible(false); setModalVisible(false); }}
+                          activeOpacity={0.7}
+                          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        >
+                          <Ionicons name="close" size={20} color={RETRO.text} />
                         </TouchableOpacity>
-                      ) : null}
+                      </View>
                     </>
                   )}
                 </View>
@@ -3064,6 +3111,7 @@ export function MatchListScreen({ navigation }: any) {
                           emptyMessage="Keine Spieler vorhanden"
                           evaluatedPlayerIds={evaluatedPlayerIds}
                           evalColors={evalColors}
+                          reportCounts={reportCounts}
                         />
                       </View>
                     )}
@@ -3098,6 +3146,7 @@ export function MatchListScreen({ navigation }: any) {
                           emptyMessage="Keine Spieler vorhanden"
                           evaluatedPlayerIds={evaluatedPlayerIds}
                           evalColors={evalColors}
+                          reportCounts={reportCounts}
                         />
                       </View>
                     )}
@@ -3134,12 +3183,23 @@ export function MatchListScreen({ navigation }: any) {
                     </TouchableOpacity>
                   </View>
                 ) : !isMobile ? (
-                  <View style={[styles.modalFooter, { borderTopColor: colors.border, justifyContent: 'flex-end' }]}>
+                  <View style={[styles.modalFooter, { borderTopColor: colors.border, justifyContent: 'flex-end', gap: 8 }]}>
                     <TouchableOpacity
-                      style={[styles.footerButtonSmall, { backgroundColor: colors.border }]}
+                      style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 6, paddingHorizontal: 12 }]}
+                      onPress={handleLoadLineups}
+                      disabled={isLoadingLineups}
+                    >
+                      {isLoadingLineups ? (
+                        <ActivityIndicator size="small" color={colors.primary} />
+                      ) : (
+                        <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }}>Aufstellungen laden</Text>
+                      )}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 6, paddingHorizontal: 12 }]}
                       onPress={handleEditMatch}
                     >
-                      <Text style={[styles.footerButtonSmallText, { color: colors.text }]}>Bearbeiten</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }}>Bearbeiten</Text>
                     </TouchableOpacity>
                   </View>
                 ) : null}
@@ -3174,6 +3234,8 @@ export function MatchListScreen({ navigation }: any) {
               </>
             )}
           </View>
+          ); })()}
+          </ThemeOverride>
         </View>
       </Modal>
 
@@ -4661,7 +4723,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 12,
     borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 0, // Anstoss-Optik: eckig
   },
   lineupColumnMobile: {
     paddingHorizontal: 12,
@@ -4835,8 +4897,6 @@ const styles = StyleSheet.create({
     gap: 12,
     paddingBottom: 4,
     marginBottom: 4,
-    borderBottomWidth: 1,
-    borderBottomColor: 'rgba(0,0,0,0.1)',
     flexWrap: 'wrap',
   },
   importButton: {

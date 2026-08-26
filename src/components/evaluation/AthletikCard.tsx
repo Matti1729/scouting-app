@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
+import { MONO, HARD_SHADOW, RETRO_CHIP, RETRO_CHIP_TEXT } from '../../theme/retro';
 import {
   SpeedRating,
   Flexibility,
@@ -68,34 +68,33 @@ export function AthletikCard({
   const { colors } = useTheme();
 
   return (
-    <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      <View style={styles.titleRow}>
-        <Ionicons name="flash-outline" size={18} color={colors.textSecondary} />
-        <Text style={[styles.title, { color: colors.text }]}>Athletik</Text>
+    <View style={[styles.card, HARD_SHADOW, { backgroundColor: colors.surface }]}>
+      <View style={RETRO_CHIP}>
+        <Text style={RETRO_CHIP_TEXT}>ATHLETIK</Text>
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.text }]}>Antritt (0-20m)</Text>
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Antritt (0-20m)</Text>
         <ToggleButtonRow options={SPEED_OPTIONS} value={antritt} onChange={onAntrittChange} />
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.text }]}>Endspeed (20m+)</Text>
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Endspeed (20m+)</Text>
         <ToggleButtonRow options={SPEED_OPTIONS} value={endspeed} onChange={onEndspeedChange} />
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.text }]}>Beweglichkeit</Text>
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Beweglichkeit</Text>
         <ToggleButtonRow options={BEWEGLICHKEIT_OPTIONS} value={beweglichkeit} onChange={onBeweglichkeitChange} />
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.text }]}>Koordination</Text>
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Koordination</Text>
         <ToggleButtonRow options={KOORDINATION_OPTIONS} value={koordination} onChange={onKoordinationChange} />
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.text }]}>Intensität</Text>
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Intensität</Text>
         <ToggleButtonRow options={INTENSITAET_OPTIONS} value={intensitaet} onChange={onIntensitaetChange} />
       </View>
     </View>
@@ -105,25 +104,18 @@ export function AthletikCard({
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 2, // Anstoss-Optik: eckig, randlos mit Schatten
     padding: 16,
     gap: 16,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  title: {
-    fontSize: 16,
-    fontWeight: '700',
   },
   section: {
     gap: 6,
   },
   fieldLabel: {
-    fontSize: 13,
+    fontSize: 10,
     fontWeight: '600',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    fontFamily: MONO,
   },
 });

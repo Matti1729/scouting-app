@@ -32,6 +32,8 @@ export interface LineupListProps {
   emptyMessage?: string;
   evaluatedPlayerIds?: Set<string>;
   evalColors?: Map<string, { bg: string; border: string }>;
+  /** Berichte-Anzahl je lineup_player_id ("schon X-mal gesehen") */
+  reportCounts?: Map<string, number>;
 }
 
 const ITEM_HEIGHT = 32;
@@ -46,6 +48,7 @@ export const LineupList = memo<LineupListProps>(({
   emptyMessage = 'Keine Spieler vorhanden',
   evaluatedPlayerIds,
   evalColors,
+  reportCounts,
 }) => {
   const { colors } = useTheme();
 
@@ -78,9 +81,11 @@ export const LineupList = memo<LineupListProps>(({
     if ('type' in item) {
       if (item.type === 'header') {
         return (
-          <Text style={[styles.subsTitle, { color: colors.textSecondary }]}>
-            {item.title}
-          </Text>
+          <View style={styles.subsHeader}>
+            <Text style={styles.subsTitle}>
+              {item.title}
+            </Text>
+          </View>
         );
       }
       if (item.type === 'empty') {
@@ -103,9 +108,10 @@ export const LineupList = memo<LineupListProps>(({
         showPosition={sortedSubs.some(s => s.id === player.id)}
         isEvaluated={evaluatedPlayerIds?.has(player.id) ?? false}
         evalColor={evalColors?.get(player.id)}
+        reportCount={reportCounts?.get(player.id) ?? 0}
       />
     );
-  }, [colors.textSecondary, onPlayerPress, onFieldChange, isEditMode, sortedSubs, evaluatedPlayerIds, evalColors]);
+  }, [colors.textSecondary, onPlayerPress, onFieldChange, isEditMode, sortedSubs, evaluatedPlayerIds, evalColors, reportCounts]);
 
   // Key extractor
   const keyExtractor = useCallback((item: typeof combinedData[0]) => {
@@ -160,12 +166,19 @@ const styles = StyleSheet.create({
   list: {
     flex: 1,
   },
+  subsHeader: {
+    backgroundColor: '#2b3f96', // Retro-Blau wie die Listen-Header der Spiele-Übersicht
+    borderRadius: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginTop: 8,
+    marginBottom: 4,
+    marginHorizontal: 4,
+  },
   subsTitle: {
     fontSize: 11,
-    fontWeight: '600',
-    paddingHorizontal: 12,
-    paddingTop: 10,
-    paddingBottom: 4,
+    fontWeight: '700',
+    color: '#ffffff',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
   },

@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
+import { HARD_SHADOW } from '../../theme/retro';
 
 interface ToggleOption<T extends string> {
   value: T;
@@ -29,9 +30,10 @@ export function ToggleButtonRow<T extends string>({
             key={opt.value}
             style={[
               styles.button,
+              HARD_SHADOW,
               {
+                // grau wie die "+ Stärke"-Buttons (RETRO_BTN-Fläche), randlos
                 backgroundColor: isSelected ? colors.primary : colors.surfaceSecondary,
-                borderColor: isSelected ? colors.primary : colors.border,
               },
             ]}
             onPress={() => onChange(isSelected ? null : opt.value)}
@@ -64,8 +66,7 @@ const styles = StyleSheet.create({
   button: {
     flex: 1,
     paddingVertical: 5,
-    borderRadius: 6,
-    borderWidth: 1,
+    borderRadius: 0, // Anstoss-Optik: eckige Flächen, randlos mit Schatten
     alignItems: 'center',
   },
   buttonText: {

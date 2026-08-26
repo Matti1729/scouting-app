@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
+import { MONO, HARD_SHADOW, RETRO_CHIP, RETRO_CHIP_TEXT } from '../../theme/retro';
 import {
   RelativeHeight,
   Proportion,
@@ -70,34 +70,33 @@ export function KoerperCard({
   const { colors } = useTheme();
 
   return (
-    <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      <View style={styles.titleRow}>
-        <Ionicons name="person-outline" size={18} color={colors.textSecondary} />
-        <Text style={[styles.title, { color: colors.text }]}>Körper</Text>
+    <View style={[styles.card, HARD_SHADOW, { backgroundColor: colors.surface }]}>
+      <View style={RETRO_CHIP}>
+        <Text style={RETRO_CHIP_TEXT}>KÖRPER</Text>
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.text }]}>Größe relativ</Text>
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Größe relativ</Text>
         <ToggleButtonRow options={GROESSE_OPTIONS} value={relativeHeight} onChange={onRelativeHeightChange} />
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.text }]}>Proportion</Text>
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Proportion</Text>
         <ToggleButtonRow options={PROPORTION_OPTIONS} value={proportion} onChange={onProportionChange} />
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.text }]}>Becken</Text>
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Becken</Text>
         <ToggleButtonRow options={BECKEN_OPTIONS} value={pelvis} onChange={onPelvisChange} />
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.text }]}>Schulterlinie</Text>
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Schulterlinie</Text>
         <ToggleButtonRow options={SCHULTER_OPTIONS} value={shoulderLine} onChange={onShoulderLineChange} />
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.text }]}>Muskulatur</Text>
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Muskulatur</Text>
         <ToggleButtonRow options={MUSKULATUR_OPTIONS} value={musculature} onChange={onMusculatureChange} />
       </View>
 
@@ -108,25 +107,18 @@ export function KoerperCard({
 const styles = StyleSheet.create({
   card: {
     flex: 1,
-    borderWidth: 1,
-    borderRadius: 16,
+    borderRadius: 2, // Anstoss-Optik: eckig, randlos mit Schatten
     padding: 16,
     gap: 16,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  title: {
-    fontSize: 16,
-    fontWeight: '700',
   },
   section: {
     gap: 6,
   },
   fieldLabel: {
-    fontSize: 13,
+    fontSize: 10,
     fontWeight: '600',
+    letterSpacing: 2,
+    textTransform: 'uppercase',
+    fontFamily: MONO,
   },
 });

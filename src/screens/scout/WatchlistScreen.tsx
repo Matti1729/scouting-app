@@ -39,6 +39,9 @@ import {
   updateWatchlistEntry,
   loadMatchEvaluationsForPlayer,
   MatchEvaluation,
+  loadObservedPlayers,
+  mergeObservedDuplicates,
+  ObservedPlayer,
 } from '../../services/beraterService';
 import { RatingBar } from '../../components/evaluation/RatingBar';
 import { fetchAgentInfo } from '../../services/transfermarktService';
@@ -93,10 +96,22 @@ export function WatchlistScreen() {
   const [modalEvalStatus, setModalEvalStatus] = useState<'interessant' | 'nicht_interessant' | null>(null);
   const notesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Tabs: Watchlist (Interessant-Shortlist) | Beobachtet (alle Spieler mit ≥1 Bericht)
+  const [viewTab, setViewTab] = useState<'watchlist' | 'beobachtet'>('watchlist');
+  const [observed, setObserved] = useState<ObservedPlayer[]>([]);
+
   const fetchData = useCallback(async () => {
-    const [data, evals] = await Promise.all([loadWatchlist(), loadAllEvaluations()]);
+    // Gescoutete Spieler mit später aufgetauchten TM-Datensätzen zusammenführen
+    // (z.B. U15 gesichtet, ab U17 bei Transfermarkt gelistet)
+    await mergeObservedDuplicates();
+    const [data, evals, obs] = await Promise.all([
+      loadWatchlist(),
+      loadAllEvaluations(),
+      loadObservedPlayers(),
+    ]);
     setWatchlist(data);
     setEvaluations(evals);
+    setObserved(obs);
     setLoading(false);
   }, []);
 
@@ -243,7 +258,7 @@ export function WatchlistScreen() {
 
     const [history, matchEvals] = await Promise.all([
       loadPlayerHistory(player.id),
-      loadMatchEvaluationsForPlayer(player.player_name, player.tm_profile_url),
+      loadMatchEvaluationsForPlayer(player.player_name, player.tm_profile_url, player.id),
     ]);
     setPlayerHistory(history);
     setMatchEvaluations(matchEvals);
@@ -759,12 +774,86 @@ export function WatchlistScreen() {
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Text style={[styles.backArrow, { color: colors.text }]}>{'\u2190'}</Text>
         </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>Watchlist</Text>
-        <Text style={[styles.headerCount, { color: colors.textSecondary }]}>{watchlist.length}</Text>
+        <Text style={[styles.headerTitle, { color: colors.text }]}>
+          {viewTab === 'beobachtet' ? 'Beobachtet' : 'Watchlist'}
+        </Text>
+        {/* Tabs: Watchlist | Beobachtet */}
+        <View style={{ flexDirection: 'row', gap: 6, marginRight: 10 }}>
+          <TouchableOpacity
+            onPress={() => setViewTab('watchlist')}
+            style={{
+              paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1,
+              borderColor: viewTab === 'watchlist' ? colors.primary : colors.border,
+              backgroundColor: viewTab === 'watchlist' ? colors.primary + '18' : 'transparent',
+            }}
+          >
+            <Text style={{ fontSize: 13, fontWeight: viewTab === 'watchlist' ? '700' : '500', color: viewTab === 'watchlist' ? colors.primary : colors.textSecondary }}>
+              Watchlist ({watchlist.length})
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => setViewTab('beobachtet')}
+            style={{
+              paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1,
+              borderColor: viewTab === 'beobachtet' ? colors.primary : colors.border,
+              backgroundColor: viewTab === 'beobachtet' ? colors.primary + '18' : 'transparent',
+            }}
+          >
+            <Text style={{ fontSize: 13, fontWeight: viewTab === 'beobachtet' ? '700' : '500', color: viewTab === 'beobachtet' ? colors.primary : colors.textSecondary }}>
+              Beobachtet ({observed.length})
+            </Text>
+          </TouchableOpacity>
+        </View>
       </View>
 
       {/* List */}
-      {isMobile ? (
+      {viewTab === 'beobachtet' ? (
+        <FlatList
+          data={observed}
+          keyExtractor={(item) => item.player.id}
+          contentContainerStyle={observed.length === 0 && !loading ? styles.emptyContainer : { padding: 12 }}
+          ListEmptyComponent={!loading ? (
+            <View style={styles.emptyState}>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Noch keine beobachteten Spieler</Text>
+              <Text style={[styles.emptyHint, { color: colors.textSecondary }]}>
+                Spieler erscheinen hier, sobald ein Spielbericht zu ihnen gespeichert wurde
+              </Text>
+            </View>
+          ) : null}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+          }
+          renderItem={({ item }) => (
+            <TouchableOpacity
+              onPress={() => openPlayerDetail(item.player)}
+              style={{
+                flexDirection: 'row', alignItems: 'center', gap: 10,
+                backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
+                borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 8,
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={1}>
+                  {item.player.player_name}
+                </Text>
+                <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
+                  {[item.player.club_name, item.player.birth_date, item.player.position].filter(Boolean).join(' · ') || '—'}
+                </Text>
+              </View>
+              {item.lastRating != null && item.lastRating > 0 && (
+                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primary }}>{item.lastRating}/10</Text>
+              )}
+              <View style={{ backgroundColor: '#2563eb', borderRadius: 10, minWidth: 26, paddingHorizontal: 6, paddingVertical: 3, alignItems: 'center' }}>
+                <Text style={{ fontSize: 12, fontWeight: '800', color: '#fff' }}>{item.reportCount}×</Text>
+              </View>
+              <Text style={{ fontSize: 12, color: colors.textSecondary, minWidth: 70, textAlign: 'right' }}>
+                {item.lastMatchDate || ''}
+              </Text>
+            </TouchableOpacity>
+          )}
+        />
+      ) : isMobile ? (
         <FlatList
           data={sortedWatchlist}
           renderItem={renderMobileCard}
