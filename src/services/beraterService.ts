@@ -1187,24 +1187,22 @@ export function normalizePlayerName(name?: string | null): string {
     .replace(/ł/g, 'l')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[-'\u2019\u00b4`._]+/g, ' ') // Sonderzeichen trennen ("Karl-Heinz" = "Karl Heinz")
     .replace(/\s+/g, ' ')
     .trim();
 }
 
 /**
  * Prüft, ob zwei normalisierte Namen denselben Spieler meinen können:
- * gleicher Nachname (letztes Token) und die Vornamen des einen sind eine
- * Teilmenge der Vornamen des anderen ("jan luca mueller" ~ "jan mueller").
- * Einzeltoken-Namen matchen bewusst nicht (zu unsicher).
+ * alle Wörter des kürzeren Namens kommen im längeren vor — deckt zweite
+ * Vornamen UND Doppel-Nachnamen ab ("morel bakam" ~ "morel dylan bakam ghopo").
+ * Einzeltoken-Namen matchen bewusst nie (zu unsicher).
  */
 export function namesCompatible(a: string, b: string): boolean {
-  const ta = a.split(' ').filter(Boolean);
-  const tb = b.split(' ').filter(Boolean);
-  if (ta.length < 2 || tb.length < 2) return false;
-  if (ta[ta.length - 1] !== tb[tb.length - 1]) return false; // Nachname muss passen
-  const fa = ta.slice(0, -1);
-  const fb = tb.slice(0, -1);
-  const [small, big] = fa.length <= fb.length ? [fa, fb] : [fb, fa];
+  const ta = [...new Set(a.split(' ').filter(Boolean))];
+  const tb = [...new Set(b.split(' ').filter(Boolean))];
+  if (ta.length < 2 || tb.length < 2) return false; // Einzeltoken: zu unsicher
+  const [small, big] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
   return small.every((t) => big.includes(t));
 }
 
@@ -1255,22 +1253,24 @@ export async function mergeObservedDuplicates(): Promise<number> {
         (t) => !group.some((s) => s.birth_date && t.birth_date && s.birth_date !== t.birth_date)
       );
 
-      // Kein exakter Treffer: Nachname + kompatible Vornamen versuchen
-      // (fussball.de führt z.B. zwei Vornamen, Transfermarkt nur einen)
+      // Kein exakter Treffer: kompatible Namen versuchen (zweite Vornamen
+      // oder Doppel-Nachnamen — je Namens-Wort suchen, dann streng filtern)
       if (tmCandidates.length === 0) {
-        const lastTok = norm.split(' ').pop();
-        if (lastTok && lastTok.length >= 3) {
+        const toks = norm.split(' ').filter((t) => t.length >= 3).slice(0, 4);
+        const found = new Map<string, { id: string; normalized_name: string | null; birth_date: string | null }>();
+        for (const tok of toks) {
           const { data: fuzzy } = await supabase
             .from('berater_players')
             .select('id, normalized_name, birth_date, tm_profile_url, club_id')
-            .ilike('normalized_name', `%${lastTok}`)
+            .ilike('normalized_name', `%${tok}%`)
             .or('tm_profile_url.not.is.null,club_id.not.is.null')
             .limit(10);
-          const compat = (fuzzy || [])
-            .filter((t) => t.normalized_name && namesCompatible(norm, t.normalized_name))
-            .filter((t) => !group.some((s) => s.birth_date && t.birth_date && s.birth_date !== t.birth_date));
-          if (compat.length === 1) tmCandidates = compat;
+          for (const f of fuzzy || []) found.set(f.id, f);
         }
+        const compat = [...found.values()]
+          .filter((t) => t.normalized_name && namesCompatible(norm, t.normalized_name))
+          .filter((t) => !group.some((s) => s.birth_date && t.birth_date && s.birth_date !== t.birth_date));
+        if (compat.length === 1) tmCandidates = compat as any;
       }
 
       let keeperId: string | null = null;

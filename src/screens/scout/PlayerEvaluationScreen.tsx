@@ -354,27 +354,29 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         }
       }
 
-      // 2b. Nachname + kompatible Vornamen (z.B. zwei Vornamen in der
-      //     Aufstellung, nur einer bei Transfermarkt) — nur bei eindeutigem
-      //     Treffer ohne Geburtsdatums-Widerspruch
-      if (lastName) {
-        const lastNorm = normalizePlayerName(lastName);
+      // 2b. Kompatible Namen (zweite Vornamen / Doppel-Nachnamen) — je
+      //     Namens-Wort suchen, nur bei eindeutigem Treffer ohne
+      //     Geburtsdatums-Widerspruch übernehmen
+      {
         const myNorm = normalizePlayerName(playerName);
-        if (lastNorm.length >= 3) {
-          const { data: byLastName } = await supabase
+        const toks = myNorm.split(' ').filter((t) => t.length >= 3).slice(0, 4);
+        const found = new Map<string, { id: string; player_name: string; normalized_name: string | null; birth_date: string | null }>();
+        for (const tok of toks) {
+          const { data: fuzzy } = await supabase
             .from('berater_players')
             .select('id, player_name, normalized_name, birth_date')
-            .ilike('normalized_name', `%${lastNorm}`)
+            .ilike('normalized_name', `%${tok}%`)
             .limit(10);
-          const candidates = (byLastName || []).filter((c) => {
-            const cNorm = c.normalized_name || normalizePlayerName(c.player_name);
-            if (!namesCompatible(myNorm, cNorm)) return false;
-            return !(birthDateFromTM && c.birth_date && c.birth_date !== birthDateFromTM);
-          });
-          if (candidates.length === 1) {
-            setBeraterPlayerId(candidates[0].id);
-            return candidates[0].id;
-          }
+          for (const f of fuzzy || []) found.set(f.id, f);
+        }
+        const candidates = [...found.values()].filter((c) => {
+          const cNorm = c.normalized_name || normalizePlayerName(c.player_name);
+          if (!namesCompatible(myNorm, cNorm)) return false;
+          return !(birthDateFromTM && c.birth_date && c.birth_date !== birthDateFromTM);
+        });
+        if (candidates.length === 1) {
+          setBeraterPlayerId(candidates[0].id);
+          return candidates[0].id;
         }
       }
     }
