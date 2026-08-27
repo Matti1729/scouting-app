@@ -148,6 +148,8 @@ export function PlayerDetailModal({
   // Generierte Einschätzung (aus den Berichten, am Spieler gespeichert)
   const [summary, setSummary] = useState<string | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  // Bewertung/Notiz aus dem Watchlist-System (berater_player_evaluations / berater_watchlist)
+  const [wlRating, setWlRating] = useState<number | null>(null);
   // Notizen + Erstkontakt (pro Spieler gespeichert)
   const [notes, setNotes] = useState('');
   const [firstContact, setFirstContact] = useState(''); // ISO "YYYY-MM-DD"
@@ -167,11 +169,23 @@ export function PlayerDetailModal({
   }, [player.tm_player_id]);
 
   useEffect(() => {
-    loadPlayerNote(player.id).then((n) => {
-      setNotes(n.notes || '');
+    // Notizen: player_notes ist führend; falls leer, Watchlist-/Status-Notiz übernehmen
+    // (die Systeme stammen aus verschiedenen Bauphasen und werden beim Speichern synchron gehalten)
+    setWlRating(null);
+    (async () => {
+      const [n, evalRow, wlRow] = await Promise.all([
+        loadPlayerNote(player.id),
+        supabase.from('berater_player_evaluations').select('notes, rating').eq('player_id', player.id).maybeSingle(),
+        supabase.from('berater_watchlist').select('notes, rating').eq('player_id', player.id).maybeSingle(),
+      ]);
+      const evalData = evalRow?.data as { notes: string | null; rating: number | null } | null;
+      const wlData = wlRow?.data as { notes: string | null; rating: number | null } | null;
+      const mergedNotes = n.notes || evalData?.notes || wlData?.notes || '';
+      setNotes(mergedNotes);
       setFirstContact(n.first_contact_date || '');
       savedNote.current = { notes: n.notes || '', firstContact: n.first_contact_date || '' };
-    });
+      setWlRating(evalData?.rating ?? wlData?.rating ?? null);
+    })();
     setAddedBy(null);
     if (player.tm_player_id) {
       fetchEntryAddedBy(player.tm_player_id).then(setAddedBy);
@@ -197,10 +211,14 @@ export function PlayerDetailModal({
   const persistNote = (nextNotes: string, nextContact: string) => {
     if (nextNotes === savedNote.current.notes && nextContact === savedNote.current.firstContact) return;
     savedNote.current = { notes: nextNotes, firstContact: nextContact };
+    const text = nextNotes.trim() || null;
     savePlayerNote(player.id, {
-      notes: nextNotes.trim() || null,
+      notes: text,
       first_contact_date: nextContact || null,
     });
+    // Watchlist-Notizen synchron halten (nur bestehende Einträge aktualisieren)
+    supabase.from('berater_player_evaluations').update({ notes: text }).eq('player_id', player.id).then(() => {});
+    supabase.from('berater_watchlist').update({ notes: text }).eq('player_id', player.id).then(() => {});
   };
 
   // Einschätzung aus den Berichten generieren und am Spieler speichern
@@ -262,8 +280,8 @@ export function PlayerDetailModal({
     </View>
   );
 
-  // Potential aus dem neuesten Bericht mit Bewertung
-  const latestRating = matchEvals.find((e) => e.overall_rating)?.overall_rating ?? null;
+  // Potential: neuester Bericht mit Bewertung, sonst Bewertung aus dem Watchlist-System
+  const latestRating = (matchEvals.find((e) => e.overall_rating)?.overall_rating ?? null) || wlRating;
 
   // Farbe wie im Potential-Schiebebalken (RatingBar), Grün etwas heller
   const potentialColor = (v: number | null): string => {

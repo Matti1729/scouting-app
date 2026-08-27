@@ -410,6 +410,18 @@ export async function savePlayerNote(playerId: string, note: PlayerNote): Promis
   return !error;
 }
 
+/** Nur den Notiztext speichern (Erstkontakt-Datum bleibt unberührt) —
+ *  für die Synchronisierung mit den Watchlist-Notizen */
+export async function savePlayerNotesText(playerId: string, notes: string | null): Promise<boolean> {
+  const { error } = await supabase.from('player_notes').upsert({
+    player_id: playerId,
+    notes,
+    updated_at: new Date().toISOString(),
+  });
+  if (error) console.error('Error saving player note text:', error);
+  return !error;
+}
+
 export interface PlayerClubInfo {
   club_name: string | null;
   club_tm_id: string | null;

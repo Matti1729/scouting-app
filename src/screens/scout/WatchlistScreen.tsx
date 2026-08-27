@@ -43,6 +43,7 @@ import {
   mergeObservedDuplicates,
   ObservedPlayer,
 } from '../../services/beraterService';
+import { savePlayerNotesText } from '../../services/stipendiumService';
 import { RatingBar } from '../../components/evaluation/RatingBar';
 import { fetchAgentInfo } from '../../services/transfermarktService';
 
@@ -350,6 +351,8 @@ export function WatchlistScreen() {
     if (!selectedPlayer) return;
     if (notesTimerRef.current) clearTimeout(notesTimerRef.current);
     notesTimerRef.current = setTimeout(async () => {
+      // Profil-Notizen (player_notes) synchron halten
+      savePlayerNotesText(selectedPlayer.id, text || null);
       const existing = evaluations.get(selectedPlayer.id);
       if (existing) {
         await updateEvaluationNotes(selectedPlayer.id, text || null);

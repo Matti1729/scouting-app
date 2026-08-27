@@ -1209,49 +1209,83 @@ export async function mergeObservedDuplicates(): Promise<number> {
       .limit(500);
     if (error || !scouted?.length) return 0;
 
-    let merged = 0;
+    // Nach normalisiertem Namen gruppieren (Platzhalter wie "k.A." nie zusammenführen)
+    const groups = new Map<string, typeof scouted>();
     for (const s of scouted) {
       const norm = s.normalized_name || normalizePlayerName(s.player_name);
       if (!norm || isPlaceholderName(s.player_name)) continue;
+      const g = groups.get(norm) || [];
+      g.push(s);
+      groups.set(norm, g);
+    }
 
+    // Noch unverknüpfte Berichte einmal laden (werden nach dem Merge angedockt)
+    const { data: unlinkedEvals } = await supabase
+      .from('player_evaluations')
+      .select('id, first_name, last_name')
+      .is('berater_player_id', null);
+
+    let merged = 0;
+    for (const [norm, group] of groups) {
+      // 1) Bevorzugtes Ziel: eindeutiger TM-verknüpfter Datensatz gleichen Namens
       const { data: targets } = await supabase
         .from('berater_players')
         .select('id, birth_date, tm_profile_url, club_id')
         .eq('normalized_name', norm)
-        .neq('id', s.id)
         .or('tm_profile_url.not.is.null,club_id.not.is.null')
         .limit(2);
-      // Eindeutiges Ziel ohne Geburtsdatums-Widerspruch
-      const candidates = (targets || []).filter(
-        (t) => !(s.birth_date && t.birth_date && s.birth_date !== t.birth_date)
+      const tmCandidates = (targets || []).filter(
+        (t) => !group.some((s) => s.birth_date && t.birth_date && s.birth_date !== t.birth_date)
       );
-      if (candidates.length !== 1) continue;
-      const target = candidates[0];
 
-      // 1) Berichte umhängen
-      await supabase
-        .from('player_evaluations')
-        .update({ berater_player_id: target.id })
-        .eq('berater_player_id', s.id);
+      let keeperId: string | null = null;
+      let losers: typeof group = [];
+      if (tmCandidates.length === 1) {
+        // Alle gescouteten Datensätze wandern zum TM-Datensatz
+        keeperId = tmCandidates[0].id;
+        losers = group;
+      } else if (group.length > 1) {
+        // 2) Gescoutete Doppelgänger untereinander: ältesten behalten
+        //    (identischer normalisierter Name ohne Verein/TM = Doppelanlage)
+        const sorted = [...group].sort((a, b) => a.id.localeCompare(b.id));
+        keeperId = sorted[0].id;
+        losers = sorted.slice(1);
+      }
+      if (!keeperId || losers.length === 0) continue;
 
-      // 2) Watchlist + Berater-Status umhängen (hat das Ziel schon einen
-      //    Eintrag, wird der der Quelle verworfen)
-      for (const table of ['berater_watchlist', 'berater_player_evaluations']) {
-        const { data: existing } = await supabase
-          .from(table)
-          .select('id')
-          .eq('player_id', target.id)
-          .maybeSingle();
-        if (existing) {
-          await supabase.from(table).delete().eq('player_id', s.id);
-        } else {
-          await supabase.from(table).update({ player_id: target.id }).eq('player_id', s.id);
+      for (const s of losers) {
+        await supabase
+          .from('player_evaluations')
+          .update({ berater_player_id: keeperId })
+          .eq('berater_player_id', s.id);
+
+        for (const table of ['berater_watchlist', 'berater_player_evaluations']) {
+          const { data: existing } = await supabase
+            .from(table)
+            .select('id')
+            .eq('player_id', keeperId)
+            .maybeSingle();
+          if (existing) {
+            await supabase.from(table).delete().eq('player_id', s.id);
+          } else {
+            await supabase.from(table).update({ player_id: keeperId }).eq('player_id', s.id);
+          }
         }
+
+        const { error: delError } = await supabase.from('berater_players').delete().eq('id', s.id);
+        if (!delError) merged++;
       }
 
-      // 3) Duplikat löschen
-      const { error: delError } = await supabase.from('berater_players').delete().eq('id', s.id);
-      if (!delError) merged++;
+      // 3) Unverknüpfte Berichte gleichen Namens andocken (jetzt eindeutig)
+      const evalIds = (unlinkedEvals || [])
+        .filter((ev) => normalizePlayerName([ev.first_name, ev.last_name].filter(Boolean).join(' ')) === norm)
+        .map((ev) => ev.id);
+      if (evalIds.length > 0) {
+        await supabase
+          .from('player_evaluations')
+          .update({ berater_player_id: keeperId })
+          .in('id', evalIds);
+      }
     }
     return merged;
   } catch {
