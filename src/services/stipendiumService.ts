@@ -129,10 +129,18 @@ export interface PlayerTmTransfer {
   to: string | null;
 }
 
+export interface PlayerTmSeasonStats {
+  games: number;
+  goals: number;
+  assists: number;
+}
+
 export interface PlayerTmDetails {
   seasonYear: number;
   gamesCurrentSeason: number | null;
   gamesLastSeason: number | null;
+  statsCurrentSeason: PlayerTmSeasonStats | null;
+  statsLastSeason: PlayerTmSeasonStats | null;
   transfers: PlayerTmTransfer[];
 }
 
@@ -166,6 +174,7 @@ export interface StipendiumSearchFilters {
   agePlus?: boolean;        // "34+" = 34 und älter
   positions?: string[];     // Positions-Kürzel (TW, IV, ...), leer = alle
   leagueIds?: string[];     // leer = alle Ligen; bei vereinslos = letzte Liga
+  nation?: string;          // Länderkürzel der Liga (DE, AT, ...), leer = egal
   vereinslos?: boolean;
   contractExpiring?: boolean; // Vertrag endet spätestens zum nächsten 30.06.
 }
@@ -209,6 +218,7 @@ export interface StipendiumSearchPlayer {
   age: number | null;
   position: string | null;       // Kürzel (TW, IV, ...) oder Rohwert
   current_agent_name: string | null;
+  current_agent_company: string | null;
   agent_url: string | null;      // TM-Link der Berateragentur
   tm_player_id: string | null;
   tm_profile_url: string | null;
@@ -259,6 +269,13 @@ function nextSeasonEnd(): string {
   return `${year}-06-30`;
 }
 
+/** Agentur-Namen aus TM-URL-Slugs enthalten "Middot" für den Mittelpunkt
+ *  (the-middot-team = THE·TEAM) — zurückübersetzen */
+function cleanAgencyName(name: string | null): string | null {
+  if (!name) return null;
+  return name.replace(/\s*\bmiddot\b\s*/gi, '·');
+}
+
 /** DB-Zeile (berater_players + Verein/Liga) auf das Such-/Detailformat mappen */
 function mapRowToSearchPlayer(row: any): StipendiumSearchPlayer {
   return {
@@ -267,7 +284,8 @@ function mapRowToSearchPlayer(row: any): StipendiumSearchPlayer {
     birth_date: row.birth_date,
     age: ageFromBirthDate(row.birth_date),
     position: positionCode(row.position),
-    current_agent_name: row.current_agent_name || null,
+    current_agent_name: cleanAgencyName(row.current_agent_name),
+    current_agent_company: cleanAgencyName(row.current_agent_company),
     agent_url: row.agent_url || null,
     tm_player_id: row.tm_player_id,
     tm_profile_url: row.tm_profile_url,
@@ -280,7 +298,7 @@ function mapRowToSearchPlayer(row: any): StipendiumSearchPlayer {
   };
 }
 
-const SEARCH_PLAYER_SELECT = `id, player_name, birth_date, position, current_agent_name, agent_url, tm_player_id, tm_profile_url, market_value, contract_until, is_vereinslos,
+const SEARCH_PLAYER_SELECT = `id, player_name, birth_date, position, current_agent_name, current_agent_company, agent_url, tm_player_id, tm_profile_url, market_value, contract_until, is_vereinslos,
    berater_clubs (club_name, tm_club_id, league_id, berater_leagues (name, country))`;
 
 /** Einzelnen Spieler (z.B. für das Detail-Modal im Sportstipendium-Board) laden */
@@ -457,15 +475,16 @@ export async function searchStipendiumPlayers(
   function buildQuery() {
     // Left-Join auf den Verein: auch gescoutete Spieler ohne Vereinszuordnung
     // (z.B. U16 ohne TM-Profil, per Bericht angelegt) sollen auffindbar sein.
-    // Nur der Liga-Filter erzwingt den Inner-Join.
-    const clubJoin = filters.leagueIds && filters.leagueIds.length > 0
-      ? 'berater_clubs!inner'
-      : 'berater_clubs';
+    // Nur Liga-/Nations-Filter erzwingen den Inner-Join.
+    const hasClubFilter =
+      (filters.leagueIds && filters.leagueIds.length > 0) || !!filters.nation;
+    const clubJoin = hasClubFilter ? 'berater_clubs!inner' : 'berater_clubs';
+    const leagueJoin = filters.nation ? 'berater_leagues!inner' : 'berater_leagues';
     let query = supabase
       .from('berater_players')
       .select(
-        `id, player_name, birth_date, position, current_agent_name, agent_url, tm_player_id, tm_profile_url, market_value, contract_until, is_vereinslos,
-         ${clubJoin} (club_name, tm_club_id, league_id, berater_leagues (name, country))`,
+        `id, player_name, birth_date, position, current_agent_name, current_agent_company, agent_url, tm_player_id, tm_profile_url, market_value, contract_until, is_vereinslos,
+         ${clubJoin} (club_name, tm_club_id, league_id, ${leagueJoin} (name, country))`,
         { count: 'exact' }
       )
       .eq('is_active', true);
@@ -478,6 +497,10 @@ export async function searchStipendiumPlayers(
 
     if (filters.leagueIds && filters.leagueIds.length > 0) {
       query = query.in('berater_clubs.league_id', filters.leagueIds);
+    }
+
+    if (filters.nation) {
+      query = query.eq('berater_clubs.berater_leagues.country', filters.nation);
     }
 
     if (filters.contractExpiring) {

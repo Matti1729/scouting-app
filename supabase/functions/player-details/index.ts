@@ -47,8 +47,14 @@ async function fetchTransfers(playerId: string): Promise<TransferInfo[]> {
   }
 }
 
-/** Einsätze pro Saison (gespielte Spiele) über die TM-Performance-API */
-async function fetchGamesBySeason(playerId: string): Promise<Record<number, number> | null> {
+interface SeasonStats {
+  games: number
+  goals: number
+  assists: number
+}
+
+/** Einsätze/Tore/Vorlagen pro Saison (gespielte Spiele) über die TM-Performance-API */
+async function fetchGamesBySeason(playerId: string): Promise<Record<number, SeasonStats> | null> {
   try {
     const r = await fetch(`https://tmapi.transfermarkt.technology/player/${playerId}/performance-game`, {
       headers: { ...FETCH_HEADERS, Accept: 'application/json' },
@@ -56,12 +62,15 @@ async function fetchGamesBySeason(playerId: string): Promise<Record<number, numb
     if (!r.ok) return null
     const j = await r.json()
     const perf: any[] = j?.data?.performance || []
-    const played: Record<number, number> = {}
+    const played: Record<number, SeasonStats> = {}
     for (const g of perf) {
       const sid = g?.gameInformation?.seasonId
       const state = g?.statistics?.generalStatistics?.participationState
       if (typeof sid === 'number' && state === 'played') {
-        played[sid] = (played[sid] || 0) + 1
+        const s = (played[sid] ||= { games: 0, goals: 0, assists: 0 })
+        s.games += 1
+        s.goals += g?.statistics?.goalStatistics?.goalsScoredTotal || 0
+        s.assists += g?.statistics?.goalStatistics?.assists || 0
       }
     }
     return played
@@ -91,11 +100,15 @@ serve(async (req: Request) => {
       fetchGamesBySeason(pid),
     ])
 
+    const cur = gamesBySeason ? gamesBySeason[seasonYear] : null
+    const last = gamesBySeason ? gamesBySeason[seasonYear - 1] : null
     return json({
       success: true,
       seasonYear,
-      gamesCurrentSeason: gamesBySeason ? gamesBySeason[seasonYear] || 0 : null,
-      gamesLastSeason: gamesBySeason ? gamesBySeason[seasonYear - 1] || 0 : null,
+      gamesCurrentSeason: gamesBySeason ? cur?.games || 0 : null,
+      gamesLastSeason: gamesBySeason ? last?.games || 0 : null,
+      statsCurrentSeason: gamesBySeason ? cur || { games: 0, goals: 0, assists: 0 } : null,
+      statsLastSeason: gamesBySeason ? last || { games: 0, goals: 0, assists: 0 } : null,
       transfers,
     })
   } catch (e) {

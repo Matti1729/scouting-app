@@ -27,7 +27,9 @@ import {
   searchStipendiumPlayers,
 } from '../../services/stipendiumService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
-import { loadLeagues, loadWatchlist, addToWatchlist } from '../../services/beraterService';
+import { loadLeagues, loadWatchlist, addToWatchlist, loadAllEvaluations } from '../../services/beraterService';
+import { useAuth } from '../../contexts/AuthContext';
+import { MONO, RETRO_CHIP, RETRO_CHIP_TEXT } from '../../theme/retro';
 import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
@@ -35,14 +37,24 @@ import { TableRow } from '../../components/table/TableRow';
 
 // Ergebnistabelle: Spalten sind per Drag tauschbar und per Klick sortierbar
 const RESULT_COLUMNS: ColumnDef[] = [
-  { key: 'nachname', label: 'Nachname', defaultFlex: 1.1, minWidth: 90 },
-  { key: 'vorname', label: 'Vorname', defaultFlex: 1, minWidth: 80 },
-  { key: 'alter', label: 'Alter', defaultFlex: 0.4, minWidth: 50 },
-  { key: 'verein', label: 'Verein', defaultFlex: 1.8, minWidth: 140 },
-  { key: 'liga', label: 'Liga', defaultFlex: 1.1, minWidth: 100 },
+  { key: 'name', label: 'Name', defaultFlex: 1.6, minWidth: 140 },
+  { key: 'pos', label: 'Pos', defaultFlex: 0.4, minWidth: 44 },
+  { key: 'verein', label: 'Verein', defaultFlex: 1.6, minWidth: 140 },
+  { key: 'alter', label: 'Alter', defaultFlex: 0.5, minWidth: 50 },
+  { key: 'vertrag', label: 'Vertrag', defaultFlex: 0.9, minWidth: 90 },
+  { key: 'berater', label: 'Berater', defaultFlex: 1.1, minWidth: 100 },
+  { key: 'potential', label: 'Pot.', defaultFlex: 0.4, minWidth: 48 },
 ];
 
-type ResultSortKey = 'nachname' | 'vorname' | 'alter' | 'verein' | 'liga';
+type ResultSortKey = 'name' | 'pos' | 'verein' | 'alter' | 'vertrag' | 'berater' | 'potential';
+
+// Farbe wie im Potential-Schiebebalken (1-3 rot, 4-6 orange, 7-9 grün, 10 gold)
+function potentialColor(v: number): string {
+  if (v === 10) return '#F0C040';
+  if (v >= 7) return '#22c55e';
+  if (v >= 4) return '#e8930c';
+  return '#dc2626';
+}
 
 // Namenszusätze, die zum Nachnamen gehören ("Patrick Van Aanholt" -> "Van Aanholt, Patrick")
 const NAME_PARTICLES = new Set([
@@ -128,8 +140,8 @@ function seasonOfDate(dateStr: string | null): string | null {
   return seasonLabel(startYear);
 }
 
-// Alter-Buttons: 16..34 plus "34+"
-const AGE_OPTIONS: number[] = Array.from({ length: 19 }, (_, i) => 16 + i);
+// Alter-Buttons: 14..33 plus "34+"
+const AGE_OPTIONS: number[] = Array.from({ length: 20 }, (_, i) => 14 + i);
 
 // Positions-Buttons (TM-Kürzel)
 const POSITION_OPTIONS: { code: string; label: string }[] = [
@@ -154,6 +166,16 @@ const COUNTRY_FLAGS: Record<string, string> = {
   CH: '🇨🇭',
   NL: '🇳🇱',
 };
+
+const COUNTRY_NAMES: Record<string, string> = {
+  DE: 'Deutschland',
+  AT: 'Österreich',
+  CH: 'Schweiz',
+  NL: 'Niederlande',
+};
+
+// Potential-Buttons (1..10) — filtert auf das Scouting-Rating
+const POTENTIAL_OPTIONS: number[] = Array.from({ length: 10 }, (_, i) => i + 1);
 
 interface LeagueOption {
   key: string;
@@ -263,7 +285,7 @@ function LeagueDropdown({
     <View>
       <TouchableOpacity
         ref={btnRef as any}
-        style={[ldStyles.button, { backgroundColor: RETRO.inputBg, borderColor: RETRO.shadowDark }, HARD_SHADOW]}
+        style={[ldStyles.button, { backgroundColor: RETRO.inputBg }, HARD_SHADOW]}
         onPress={openModal}
       >
         <Text style={[ldStyles.buttonText, { color: RETRO.text }]} numberOfLines={1}>
@@ -320,11 +342,11 @@ function LeagueDropdown({
 }
 
 const ldStyles = StyleSheet.create({
+  // randlos — Tiefe kommt vom HARD_SHADOW (Retro-Regel)
   button: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderWidth: 1,
     borderRadius: 0,
     paddingHorizontal: 8,
     paddingVertical: 6,
@@ -411,6 +433,90 @@ const ldStyles = StyleSheet.create({
   },
 });
 
+// Einfaches Einzelauswahl-Dropdown für die Nation ("Egal" = kein Filter)
+function NationDropdown({
+  countries,
+  selected,
+  onChange,
+}: {
+  countries: string[];
+  selected: string | null;
+  onChange: (code: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const btnRef = useRef<View>(null);
+
+  const openModal = () => {
+    btnRef.current?.measureInWindow((x, y, w, h) => {
+      setPos({ top: y + h + 4, left: x, width: w });
+      setOpen(true);
+    });
+  };
+
+  const label = (code: string) =>
+    `${COUNTRY_FLAGS[code] || ''} ${COUNTRY_NAMES[code] || code}`.trim();
+
+  const pick = (code: string | null) => {
+    onChange(code);
+    setOpen(false);
+  };
+
+  return (
+    <View>
+      <TouchableOpacity
+        ref={btnRef as any}
+        style={[ldStyles.button, { backgroundColor: RETRO.inputBg }, HARD_SHADOW]}
+        onPress={openModal}
+      >
+        <Text style={[ldStyles.buttonText, { color: RETRO.text }]} numberOfLines={1}>
+          {selected ? label(selected) : 'Egal'}
+        </Text>
+        <Text style={[ldStyles.buttonChevron, { color: RETRO.textMuted }]}>▼</Text>
+      </TouchableOpacity>
+
+      <Modal visible={open} transparent animationType="none" onRequestClose={() => setOpen(false)}>
+        <TouchableWithoutFeedback onPress={() => setOpen(false)}>
+          <View style={ldStyles.overlay}>
+            <TouchableWithoutFeedback>
+              <View
+                style={[
+                  ldStyles.dropdown,
+                  {
+                    backgroundColor: RETRO.white,
+                    borderColor: RETRO.shadowDark,
+                    top: pos.top,
+                    left: pos.left,
+                    minWidth: Math.max(pos.width, 180),
+                  },
+                ]}
+              >
+                {[null, ...countries].map((code) => (
+                  <TouchableOpacity
+                    key={code ?? 'egal'}
+                    style={[ldStyles.rowMain, { paddingHorizontal: 12 }]}
+                    onPress={() => pick(code)}
+                  >
+                    <Text
+                      style={[
+                        ldStyles.rowLabel,
+                        { color: RETRO.text },
+                        (selected ?? null) === code && { fontWeight: '700' },
+                      ]}
+                    >
+                      {code ? label(code) : 'Egal'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+    </View>
+  );
+}
+
 function RetroButton({
   label,
   selected,
@@ -455,8 +561,8 @@ export function SuchmaschineScreen() {
 
   // Ergebnistabelle (Desktop)
   const [tableWidth, setTableWidth] = useState(0);
-  const table = useTableColumns(RESULT_COLUMNS, tableWidth, 'suchmaschine_results');
-  const [sortKey, setSortKey] = useState<ResultSortKey>('nachname');
+  const table = useTableColumns(RESULT_COLUMNS, tableWidth, 'suchmaschine_results_v3');
+  const [sortKey, setSortKey] = useState<ResultSortKey>('name');
   const [sortAsc, setSortAsc] = useState(true);
 
   const [entries, setEntries] = useState<StipendiumEntry[]>([]);
@@ -467,9 +573,20 @@ export function SuchmaschineScreen() {
   const [selectedAges, setSelectedAges] = useState<Set<number>>(new Set());
   const [agePlus, setAgePlus] = useState(false);
   const [selectedPositions, setSelectedPositions] = useState<Set<string>>(new Set());
+  const [selectedPotentials, setSelectedPotentials] = useState<Set<number>>(new Set());
   const [selectedLeagueIds, setSelectedLeagueIds] = useState<Set<string>>(new Set());
+  const [nation, setNation] = useState<string | null>(null);
   const [vereinslos, setVereinslos] = useState(false);
   const [contractExpiring, setContractExpiring] = useState(false);
+  const [ohneBerater, setOhneBerater] = useState(false);
+  const [aufWatchlist, setAufWatchlist] = useState(false);
+
+  // Scouting-Ratings (für den Potential-Filter): Bewertung vor Watchlist-Rating
+  const [ratingsMap, setRatingsMap] = useState<Map<string, number>>(new Map());
+
+  // Initialen für die Kopfzeile (wie im Dashboard: erste 2 Zeichen der E-Mail)
+  const { session } = useAuth();
+  const initials = (session?.user?.email || '').slice(0, 2).toUpperCase();
 
   // Suchergebnisse
   const [searching, setSearching] = useState(false);
@@ -479,6 +596,8 @@ export function SuchmaschineScreen() {
 
   // Ligen aus DB
   const [leagueOptions, setLeagueOptions] = useState<LeagueOption[]>([]);
+  // Nationen (Länder der aktiven Ligen)
+  const [nationOptions, setNationOptions] = useState<string[]>([]);
 
   // Spieler-Detail-Modal
   const [detailPlayer, setDetailPlayer] = useState<StipendiumSearchPlayer | null>(null);
@@ -501,8 +620,17 @@ export function SuchmaschineScreen() {
   useEffect(() => {
     loadData();
     loadLeagueOptions();
-    loadWatchlist().then((wl) => {
+    Promise.all([loadWatchlist(), loadAllEvaluations()]).then(([wl, evals]) => {
       setWatchlistIds(new Set(wl.map((w) => w.player_id).filter(Boolean) as string[]));
+      // Rating aus Bewertung, sonst aus Watchlist-Eintrag
+      const map = new Map<string, number>();
+      for (const w of wl) {
+        if (w.player_id && w.rating != null) map.set(w.player_id, w.rating);
+      }
+      for (const [pid, ev] of evals) {
+        if (ev.rating != null) map.set(pid, ev.rating);
+      }
+      setRatingsMap(map);
     });
   }, []);
 
@@ -571,6 +699,9 @@ export function SuchmaschineScreen() {
     }
 
     setLeagueOptions(opts);
+    setNationOptions(
+      Array.from(new Set(leagues.filter((l) => l.is_active).map((l) => l.country))).sort()
+    );
   };
 
   const toggleAge = (age: number) => {
@@ -601,10 +732,27 @@ export function SuchmaschineScreen() {
       agePlus,
       positions: Array.from(selectedPositions),
       leagueIds,
+      nation: nation || undefined,
       vereinslos,
       contractExpiring,
     });
-    setSearchResults(result.players);
+    // Filter, die nur der Screen kennt (Ratings/Watchlist), client-seitig
+    let players = result.players;
+    if (selectedPotentials.size > 0) {
+      players = players.filter((p) => {
+        const r = ratingsMap.get(p.id);
+        return r != null && selectedPotentials.has(r);
+      });
+    }
+    if (ohneBerater) {
+      players = players.filter(
+        (p) => countsAsNoAgent(p.current_agent_name) && countsAsNoAgent(p.current_agent_company)
+      );
+    }
+    if (aufWatchlist) {
+      players = players.filter((p) => watchlistIds.has(p.id));
+    }
+    setSearchResults(players);
     setHiddenNoPosition(result.hiddenNoPosition);
     setSearching(false);
   };
@@ -614,10 +762,45 @@ export function SuchmaschineScreen() {
     setSelectedAges(new Set());
     setAgePlus(false);
     setSelectedPositions(new Set());
+    setSelectedPotentials(new Set());
     setSelectedLeagueIds(new Set());
+    setNation(null);
     setVereinslos(false);
     setContractExpiring(false);
+    setOhneBerater(false);
+    setAufWatchlist(false);
     setSearchResults(null);
+  };
+
+  // Zusammenfassung der aktiven Filter für die Statuszeile
+  const filterSummary = useMemo(() => {
+    const parts: string[] = [];
+    if (searchName.trim()) parts.push(`Name: ${searchName.trim()}`);
+    if (selectedAges.size > 0 || agePlus) {
+      const ages = Array.from(selectedAges).sort((a, b) => a - b).map(String);
+      if (agePlus) ages.push('34+');
+      parts.push(`Alter: ${ages.join(', ')}`);
+    }
+    if (selectedPositions.size > 0) parts.push(`Position: ${Array.from(selectedPositions).join(', ')}`);
+    if (selectedPotentials.size > 0) {
+      parts.push(`Potential: ${Array.from(selectedPotentials).sort((a, b) => a - b).join(', ')}`);
+    }
+    if (selectedLeagueIds.size > 0) parts.push(`${selectedLeagueIds.size} Ligen`);
+    if (nation) parts.push(COUNTRY_NAMES[nation] || nation);
+    if (vereinslos) parts.push('vereinslos');
+    if (contractExpiring) parts.push('Vertrag läuft aus');
+    if (ohneBerater) parts.push('ohne Berater');
+    if (aufWatchlist) parts.push('auf der Watchlist');
+    return parts.length > 0 ? parts.join(' · ') : 'Keine Filter gesetzt';
+  }, [searchName, selectedAges, agePlus, selectedPositions, selectedPotentials, selectedLeagueIds, nation, vereinslos, contractExpiring, ohneBerater, aufWatchlist]);
+
+  const togglePotential = (val: number) => {
+    setSelectedPotentials((prev) => {
+      const next = new Set(prev);
+      if (next.has(val)) next.delete(val);
+      else next.add(val);
+      return next;
+    });
   };
 
   const addedTmIds = useMemo(
@@ -627,6 +810,19 @@ export function SuchmaschineScreen() {
 
   const clubDisplay = (p: StipendiumSearchPlayer) =>
     p.is_vereinslos ? `vereinslos (zuletzt ${p.club_name || '?'})` : p.club_name || '';
+
+  // DB speichert teils "kein Beratereintrag" als Text — als leer behandeln
+  const isNoAgentValue = (name: string | null) => {
+    const n = (name || '').trim().toLowerCase();
+    return n === '' || n === 'kein beratereintrag' || n === 'kein eintrag' || n === '-' || n === '—';
+  };
+  // "ohne Berater"-Filter: kein Eintrag, explizit "ohne Berater" oder Familienangehörige
+  const countsAsNoAgent = (val: string | null) => {
+    const n = (val || '').trim().toLowerCase();
+    return isNoAgentValue(val) || n === 'ohne berater' || n.includes('familienangehörige');
+  };
+  const agentDisplay = (p: StipendiumSearchPlayer) =>
+    p.current_agent_company || (!isNoAgentValue(p.current_agent_name) ? p.current_agent_name! : '');
 
   const handleSort = (key: string) => {
     if (sortKey === key) {
@@ -642,21 +838,25 @@ export function SuchmaschineScreen() {
     const dir = sortAsc ? 1 : -1;
     return [...searchResults].sort((a, b) => {
       switch (sortKey) {
-        case 'nachname':
+        case 'name':
           return dir * splitName(a.player_name).last.localeCompare(splitName(b.player_name).last, 'de');
-        case 'vorname':
-          return dir * splitName(a.player_name).first.localeCompare(splitName(b.player_name).first, 'de');
+        case 'pos':
+          return dir * (a.position || 'zz').localeCompare(b.position || 'zz', 'de');
         case 'alter':
           return dir * ((a.age ?? 999) - (b.age ?? 999));
         case 'verein':
           return dir * clubDisplay(a).localeCompare(clubDisplay(b), 'de');
-        case 'liga':
-          return dir * (a.league_name || '').localeCompare(b.league_name || '', 'de');
+        case 'vertrag':
+          return dir * (a.contract_until || '9999').localeCompare(b.contract_until || '9999');
+        case 'berater':
+          return dir * (agentDisplay(a) || 'zzz').localeCompare(agentDisplay(b) || 'zzz', 'de');
+        case 'potential':
+          return dir * ((ratingsMap.get(a.id) ?? -1) - (ratingsMap.get(b.id) ?? -1));
         default:
           return 0;
       }
     });
-  }, [searchResults, sortKey, sortAsc]);
+  }, [searchResults, sortKey, sortAsc, ratingsMap]);
 
   // Spieler ins Sportstipendium aufnehmen (landet bei "Interessante Spieler")
   const handleAddToStipendium = async (player: StipendiumSearchPlayer) => {
@@ -775,22 +975,16 @@ export function SuchmaschineScreen() {
           ]}
           renderCell={(key) => {
             switch (key) {
-              case 'nachname':
+              case 'name':
                 return (
                   <Text style={[styles.tableCellBold, { color: RETRO.text }]} numberOfLines={1}>
-                    {last}
+                    {first ? `${last}, ${first}` : last}
                   </Text>
                 );
-              case 'vorname':
+              case 'pos':
                 return (
                   <Text style={[styles.tableCell, { color: RETRO.text }]} numberOfLines={1}>
-                    {first}
-                  </Text>
-                );
-              case 'alter':
-                return (
-                  <Text style={[styles.tableCell, { color: RETRO.text }]} numberOfLines={1}>
-                    {item.age !== null ? item.age : ''}
+                    {item.position || ''}
                   </Text>
                 );
               case 'verein':
@@ -802,16 +996,36 @@ export function SuchmaschineScreen() {
                     ]}
                     numberOfLines={1}
                   >
-                    {clubDisplay(item)}
+                    {item.is_vereinslos ? 'vereinslos' : item.club_name || ''}
                   </Text>
                 );
-              case 'liga':
+              case 'alter':
                 return (
-                  <Text style={[styles.tableCell, { color: RETRO.textMuted }]} numberOfLines={1}>
-                    {/* Vereinslos: keine Liga anzeigen (wäre nur die letzte Liga) */}
-                    {item.is_vereinslos ? '' : item.league_name || ''}
+                  <Text style={[styles.tableCell, { color: RETRO.text }]} numberOfLines={1}>
+                    {item.age !== null ? item.age : ''}
                   </Text>
                 );
+              case 'vertrag':
+                return (
+                  <Text style={[styles.tableCellMono, { color: RETRO.text }]} numberOfLines={1}>
+                    {formatContract(item.contract_until) || '—'}
+                  </Text>
+                );
+              case 'berater':
+                return (
+                  <Text style={[styles.tableCell, { color: RETRO.text }]} numberOfLines={1}>
+                    {agentDisplay(item) || 'kein Eintrag'}
+                  </Text>
+                );
+              case 'potential': {
+                const rating = ratingsMap.get(item.id);
+                if (rating == null) return <Text style={styles.tableCell}> </Text>;
+                return (
+                  <View style={[nc.potBadge, { backgroundColor: potentialColor(rating) }]}>
+                    <Text style={nc.potBadgeText}>{rating}</Text>
+                  </View>
+                );
+              }
               default:
                 return null;
             }
@@ -819,7 +1033,7 @@ export function SuchmaschineScreen() {
         />
       );
     },
-    [addedTmIds, addingId, colors, table.columnOrder, table.getColumnWidth]
+    [addedTmIds, addingId, colors, table.columnOrder, table.getColumnWidth, ratingsMap]
   );
 
   const renderEmpty = (text: string, hint: string) => (
@@ -834,127 +1048,140 @@ export function SuchmaschineScreen() {
   // Suchmaschine (Anstoss-3-Optik)
   // ==========================================================================
 
+  // Kleiner Auswahl-Button (grau auf weißer Karte, ausgewählt grün)
+  const filterBtn = (label: string, selected: boolean, onPress: () => void, minWidth = 34) => (
+    <TouchableOpacity
+      key={label}
+      onPress={onPress}
+      style={[nc.filterBtn, { minWidth }, HARD_SHADOW, selected && nc.filterBtnSelected]}
+      activeOpacity={0.7}
+    >
+      <Text style={[nc.filterBtnText, selected && nc.filterBtnTextSelected]}>{label}</Text>
+    </TouchableOpacity>
+  );
+
+  // Retro-Checkbox (Kasten + Label)
+  const checkbox = (label: string, checked: boolean, onToggle: () => void) => (
+    <TouchableOpacity key={label} style={nc.checkRow} onPress={onToggle} activeOpacity={0.7}>
+      <View style={[nc.checkBox, checked && nc.checkBoxChecked]}>
+        {checked && <Text style={nc.checkMark}>✓</Text>}
+      </View>
+      <Text style={nc.checkLabel}>{label}</Text>
+    </TouchableOpacity>
+  );
+
   const renderSearchPanel = () => (
-    <View style={retro.panel}>
-      <RetroHeaderBar title="Bitte tragen Sie die gewünschten Eigenschaften ein!" />
-
-      {/* Name */}
-      <View style={retro.row}>
-        <Text style={retro.rowLabel}>Name / Verein</Text>
-        <TextInput
-          style={retro.input}
-          value={searchName}
-          onChangeText={setSearchName}
-          onSubmitEditing={handleSearch}
-          returnKeyType="search"
-          placeholder=""
-        />
-      </View>
-
-      {/* Alter */}
-      <View style={retro.row}>
-        <Text style={retro.rowLabel}>Alter</Text>
-        <View style={retro.buttonWrap}>
-          {AGE_OPTIONS.map((age) => (
-            <RetroButton
-              key={age}
-              label={String(age)}
-              selected={selectedAges.has(age)}
-              onPress={() => toggleAge(age)}
-              minWidth={40}
+    <View>
+      <View style={nc.filterRow}>
+        {/* Karte SPIELER */}
+        <View style={[nc.card, nc.cardSpieler, HARD_SHADOW]}>
+          <View style={nc.chip}><Text style={RETRO_CHIP_TEXT as any}>SPIELER</Text></View>
+          <View style={nc.row}>
+            <Text style={nc.rowLabel}>NAME</Text>
+            <TextInput
+              style={[nc.input, HARD_SHADOW]}
+              value={searchName}
+              onChangeText={setSearchName}
+              onSubmitEditing={handleSearch}
+              returnKeyType="search"
+              placeholder="Spieler oder Verein eingeben …"
+              placeholderTextColor={RETRO.textMuted}
             />
-          ))}
-          <RetroButton label="34+" selected={agePlus} onPress={() => setAgePlus((v) => !v)} minWidth={48} />
+          </View>
+          <View style={nc.row}>
+            <Text style={nc.rowLabel}>ALTER</Text>
+            <View style={nc.btnWrap}>
+              {AGE_OPTIONS.map((age) => filterBtn(String(age), selectedAges.has(age), () => toggleAge(age)))}
+              {filterBtn('34+', agePlus, () => setAgePlus((v) => !v), 42)}
+            </View>
+          </View>
+          <View style={nc.row}>
+            <Text style={nc.rowLabel}>POSITION</Text>
+            <View style={nc.btnWrap}>
+              {POSITION_OPTIONS.map((pos) =>
+                filterBtn(pos.label, selectedPositions.has(pos.code), () => togglePosition(pos.code))
+              )}
+            </View>
+          </View>
+          <View style={[nc.row, { marginBottom: 4 }]}>
+            <Text style={nc.rowLabel}>POTENTIAL</Text>
+            <View style={nc.btnWrap}>
+              {POTENTIAL_OPTIONS.map((v) =>
+                filterBtn(String(v), selectedPotentials.has(v), () => togglePotential(v))
+              )}
+            </View>
+          </View>
+        </View>
+
+        {/* Karte VEREIN & STATUS */}
+        <View style={[nc.card, nc.cardVerein, HARD_SHADOW]}>
+          <View style={nc.chip}><Text style={RETRO_CHIP_TEXT as any}>VEREIN & STATUS</Text></View>
+          <View style={nc.row}>
+            <Text style={nc.rowLabel}>LAND</Text>
+            <View style={nc.dropdownWrap}>
+              <NationDropdown countries={nationOptions} selected={nation} onChange={setNation} />
+            </View>
+          </View>
+          <View style={nc.row}>
+            <Text style={nc.rowLabel}>{vereinslos ? 'LETZTE LIGA' : 'LIGEN'}</Text>
+            <View style={nc.dropdownWrap}>
+              <LeagueDropdown
+                options={leagueOptions}
+                selected={selectedLeagueIds}
+                onChange={setSelectedLeagueIds}
+              />
+            </View>
+          </View>
+          <View style={nc.checkGroup}>
+            {checkbox('vereinslos', vereinslos, () => setVereinslos((v) => !v))}
+            {checkbox('Vertrag läuft aus', contractExpiring, () => setContractExpiring((v) => !v))}
+            {checkbox('ohne Berater', ohneBerater, () => setOhneBerater((v) => !v))}
+            {checkbox('auf der Watchlist', aufWatchlist, () => setAufWatchlist((v) => !v))}
+          </View>
         </View>
       </View>
 
-      {/* Position */}
-      <View style={retro.row}>
-        <Text style={retro.rowLabel}>Position</Text>
-        <View style={retro.buttonWrap}>
-          {POSITION_OPTIONS.map((pos) => (
-            <RetroButton
-              key={pos.code}
-              label={pos.label}
-              selected={selectedPositions.has(pos.code)}
-              onPress={() => togglePosition(pos.code)}
-              minWidth={44}
-            />
-          ))}
-        </View>
-      </View>
-
-      <RetroHeaderBar title="Bitte wählen Sie die sonstigen Besonderheiten des Spielers!" />
-
-      {/* Ligen / letzte Liga */}
-      <View style={retro.row}>
-        <Text style={retro.rowLabel}>{vereinslos ? 'Letzte Liga' : 'Ligen'}</Text>
-        <View style={retro.dropdownWrap}>
-          <LeagueDropdown
-            options={leagueOptions}
-            selected={selectedLeagueIds}
-            onChange={setSelectedLeagueIds}
-          />
-        </View>
-      </View>
-
-      {/* Besonderheiten */}
-      <View style={retro.row}>
-        <Text style={retro.rowLabel} />
-        <View style={retro.buttonWrap}>
-          <RetroButton
-            label="vereinslos"
-            selected={vereinslos}
-            onPress={() => setVereinslos((v) => !v)}
-            minWidth={110}
-          />
-          <RetroButton
-            label="Vertrag muß auslaufen"
-            selected={contractExpiring}
-            onPress={() => setContractExpiring((v) => !v)}
-            minWidth={180}
-          />
-        </View>
-      </View>
-
-      {/* Aktionen */}
-      <View style={[retro.row, { justifyContent: 'flex-end' }]}>
-        <View style={retro.buttonWrap}>
-          <RetroButton label="Zurücksetzen" selected={false} onPress={handleReset} minWidth={110} />
-          <TouchableOpacity onPress={handleSearch} style={[retro.button, retro.searchButton]} disabled={searching}>
-            {searching ? (
-              <ActivityIndicator size="small" color={RETRO.text} />
-            ) : (
-              <Text style={[retro.buttonText, retro.searchButtonText]}>Suchen</Text>
-            )}
-          </TouchableOpacity>
-        </View>
+      {/* Statuszeile: aktive Filter + Aktionen */}
+      <View style={nc.actionStrip}>
+        <Text style={nc.summaryText} numberOfLines={1}>{filterSummary}</Text>
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity style={[nc.stripBtn, HARD_SHADOW]} onPress={handleReset} activeOpacity={0.7}>
+          <Text style={nc.stripBtnText}>Zurücksetzen</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[nc.stripBtn, nc.stripBtnGreen, HARD_SHADOW]}
+          onPress={handleSearch}
+          disabled={searching}
+          activeOpacity={0.7}
+        >
+          {searching ? (
+            <ActivityIndicator size="small" color="#ffffff" />
+          ) : (
+            <Text style={[nc.stripBtnText, nc.stripBtnTextGreen]}>Suchen</Text>
+          )}
+        </TouchableOpacity>
       </View>
     </View>
   );
 
   const renderContent = () => {
     const showResults = sortedResults !== null;
-    const useTable = showResults && !isMobile;
 
-    return (
-      <FlatList
-        style={styles.tabContent}
-        data={(showResults ? sortedResults : []) as any[]}
-        renderItem={(useTable ? renderTableRow : renderSearchResult) as any}
-        keyExtractor={(item: any) => item.id}
-        ListHeaderComponent={
-          <View>
-            {renderSearchPanel()}
-            {showResults && (
-              <Text style={[styles.sectionLabel, { color: RETRO.textMuted }]}>
-                {`${sortedResults!.length} Spieler gefunden` +
-                  (hiddenNoPosition > 0
-                    ? ` · ${hiddenNoPosition} weitere ohne Positionsangabe ausgeblendet`
-                    : '')}
-              </Text>
-            )}
-            {useTable && (
+    // Desktop: Filterkarten oben fest, Ergebnisse als eigene Karte mit interner Liste
+    if (!isMobile) {
+      return (
+        <View style={styles.tabContent}>
+          {renderSearchPanel()}
+          {showResults && (
+            <View style={[nc.resultCard, HARD_SHADOW]}>
+              <View style={[nc.chip, nc.chipGreen]}>
+                <Text style={RETRO_CHIP_TEXT as any}>{`ERGEBNISSE (${sortedResults!.length})`}</Text>
+              </View>
+              {hiddenNoPosition > 0 && (
+                <Text style={nc.resultHint}>
+                  {`${hiddenNoPosition} weitere ohne Positionsangabe ausgeblendet`}
+                </Text>
+              )}
               <View onLayout={(e) => setTableWidth(e.nativeEvent.layout.width)}>
                 {tableWidth > 0 && (
                   <TableHeader
@@ -974,6 +1201,43 @@ export function SuchmaschineScreen() {
                   />
                 )}
               </View>
+              <FlatList
+                style={nc.resultList}
+                data={sortedResults as any[]}
+                renderItem={renderTableRow as any}
+                keyExtractor={(item: any) => item.id}
+                ListEmptyComponent={
+                  !loading && !searching
+                    ? renderEmpty('Keine Spieler gefunden', 'Passe die Filter an und suche erneut.')
+                    : null
+                }
+                initialNumToRender={20}
+                maxToRenderPerBatch={30}
+                windowSize={10}
+              />
+            </View>
+          )}
+        </View>
+      );
+    }
+
+    // Mobile: eine Liste, Filter als Header, Treffer als Karten
+    return (
+      <FlatList
+        style={styles.tabContent}
+        data={(showResults ? sortedResults : []) as any[]}
+        renderItem={renderSearchResult as any}
+        keyExtractor={(item: any) => item.id}
+        ListHeaderComponent={
+          <View>
+            {renderSearchPanel()}
+            {showResults && (
+              <Text style={[styles.sectionLabel, { color: RETRO.textMuted }]}>
+                {`${sortedResults!.length} Spieler gefunden` +
+                  (hiddenNoPosition > 0
+                    ? ` · ${hiddenNoPosition} weitere ohne Positionsangabe ausgeblendet`
+                    : '')}
+              </Text>
             )}
           </View>
         }
@@ -991,18 +1255,15 @@ export function SuchmaschineScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: RETRO.page }]}>
-      {/* Verwaschenes Hintergrundfoto (schimmert durch die Flächen) */}
-      <Image
-        source={require('../../../assets/retro-bg.jpg')}
-        style={styles.bgImage as any}
-        resizeMode="cover"
-      />
-      {/* Header */}
-      <View style={[styles.header, { backgroundColor: RETRO.titleBar, borderBottomColor: RETRO.shadowDark }]}>
+      {/* Header (gelber Titelbalken) */}
+      <View style={[styles.header, { backgroundColor: RETRO.yellow }, HARD_SHADOW_LG]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Text style={[styles.backArrow, { color: RETRO.text }]}>{'←'}</Text>
         </TouchableOpacity>
         <Text style={[styles.headerTitle, { color: RETRO.text }]}>Suchmaschine</Text>
+        <View style={[nc.headerBox, HARD_SHADOW]}>
+          <Text style={nc.headerBoxText}>{initials || '–'}</Text>
+        </View>
       </View>
 
       {loading ? (
@@ -1216,8 +1477,8 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
   },
   backButton: {
     marginRight: 12,
@@ -1353,6 +1614,8 @@ const styles = StyleSheet.create({
   tableRow: {
     borderBottomWidth: 1,
     paddingVertical: 6,
+    // gleiche Einrückung wie der Tabellenkopf (headerRow paddingHorizontal 10)
+    paddingHorizontal: 10,
   },
   tableCell: {
     fontSize: 13,
@@ -1360,6 +1623,10 @@ const styles = StyleSheet.create({
   tableCellBold: {
     fontSize: 13,
     fontWeight: '600',
+  },
+  tableCellMono: {
+    fontSize: 12,
+    fontFamily: MONO,
   },
   tableActionCell: {
     flexDirection: 'row',
@@ -1522,5 +1789,216 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textAlign: 'center',
     maxWidth: 280,
+  },
+});
+
+// ============================================================================
+// Neue Karten-Optik (weiße Karten + blaue Chips, wie Dashboard/Spielerprofil)
+// ============================================================================
+
+const nc = StyleSheet.create({
+  filterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+    marginTop: 12,
+    marginBottom: 4,
+  },
+  card: {
+    backgroundColor: '#ffffff',
+    borderRadius: 2,
+    paddingHorizontal: 12,
+    paddingTop: 16,
+    paddingBottom: 10,
+  },
+  cardSpieler: {
+    flexGrow: 2,
+    flexShrink: 1,
+    flexBasis: 420,
+    minWidth: 320,
+  },
+  cardVerein: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 240,
+    minWidth: 240,
+  },
+  chip: {
+    ...RETRO_CHIP,
+  },
+  chipGreen: {
+    backgroundColor: '#1a5f2a',
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 7,
+  },
+  rowLabel: {
+    width: 92,
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 1.5,
+    fontFamily: MONO,
+    color: RETRO.textMuted,
+  },
+  input: {
+    flex: 1,
+    maxWidth: 560,
+    backgroundColor: RETRO.inputBg,
+    borderRadius: 0,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    fontSize: 13,
+    color: RETRO.text,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : {}),
+  },
+  btnWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    alignItems: 'center',
+    paddingVertical: 2,
+  },
+  filterBtn: {
+    backgroundColor: RETRO.face,
+    borderRadius: 0,
+    paddingHorizontal: 6,
+    paddingVertical: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Auswahl blau (Retro-Blau), nicht grün
+  filterBtnSelected: {
+    backgroundColor: RETRO.headerBg,
+  },
+  filterBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    fontFamily: MONO,
+    color: RETRO.text,
+  },
+  filterBtnTextSelected: {
+    color: '#ffffff',
+  },
+  dropdownWrap: {
+    flex: 1,
+    maxWidth: 320,
+  },
+  checkGroup: {
+    marginTop: 6,
+    marginBottom: 2,
+    gap: 8,
+  },
+  checkRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  checkBox: {
+    width: 15,
+    height: 15,
+    borderRadius: 0,
+    borderWidth: 1,
+    borderColor: RETRO.shadowDark,
+    backgroundColor: RETRO.inputBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkBoxChecked: {
+    backgroundColor: '#1a5f2a',
+    borderColor: '#1a5f2a',
+  },
+  checkMark: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#ffffff',
+    lineHeight: 13,
+  },
+  checkLabel: {
+    fontSize: 13,
+    color: RETRO.text,
+  },
+  actionStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 14,
+    marginBottom: 14,
+    paddingHorizontal: 2,
+  },
+  summaryText: {
+    fontSize: 11,
+    fontFamily: MONO,
+    color: RETRO.textMuted,
+    flexShrink: 1,
+  },
+  // Buttons auf Papier-Hintergrund: weiße Fläche (Retro-Regel)
+  stripBtn: {
+    backgroundColor: '#ffffff',
+    borderRadius: 0,
+    paddingHorizontal: 16,
+    paddingVertical: 7,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 110,
+  },
+  stripBtnGreen: {
+    backgroundColor: '#1a5f2a',
+  },
+  stripBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: RETRO.text,
+  },
+  stripBtnTextGreen: {
+    color: '#ffffff',
+  },
+  resultCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 2,
+    paddingHorizontal: 12,
+    paddingTop: 16,
+    paddingBottom: 8,
+    marginBottom: 14,
+    flexShrink: 1,
+    minHeight: 120,
+  },
+  resultHint: {
+    fontSize: 11,
+    fontFamily: MONO,
+    color: RETRO.textMuted,
+    marginBottom: 4,
+  },
+  resultList: {
+    flexGrow: 0,
+    flexShrink: 1,
+  },
+  potBadge: {
+    minWidth: 26,
+    height: 22,
+    paddingHorizontal: 5,
+    borderRadius: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+  },
+  potBadgeText: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  headerBox: {
+    backgroundColor: '#ffffff',
+    borderRadius: 2,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  headerBoxText: {
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: MONO,
+    color: RETRO.text,
   },
 });

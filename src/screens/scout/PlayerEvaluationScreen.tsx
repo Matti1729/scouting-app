@@ -122,6 +122,28 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
   const [hasChanges, setHasChanges] = useState(false);
   const hasChangesRef = useRef(false);
 
+  // Art/Uhrzeit/fussball.de-Link nachladen, wenn nur die matchId übergeben wurde
+  // (z. B. beim Öffnen eines Berichts aus dem Spielerprofil)
+  const [matchExtra, setMatchExtra] = useState<{ art?: string | null; zeit?: string | null; url?: string | null }>({});
+  useEffect(() => {
+    if (!params.matchId || (params.matchArt && params.fussballDeUrl)) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from('scouting_matches')
+        .select('match_type, match_time, fussball_de_url')
+        .eq('id', params.matchId)
+        .maybeSingle();
+      if (!cancelled && data) {
+        setMatchExtra({ art: data.match_type, zeit: data.match_time, url: data.fussball_de_url });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [params.matchId]);
+  const matchArt = params.matchArt || matchExtra.art || '';
+  const matchZeit = params.matchZeit || matchExtra.zeit || '';
+  const fussballDeUrl = params.fussballDeUrl || matchExtra.url || '';
+
   // Vereinswappen (über berater_clubs → Transfermarkt-CDN), rein optisch
   const [clubLogoUrl, setClubLogoUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -513,9 +535,9 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                 {ageGroup}
               </Text>
             </View>
-            {params.matchArt ? (
+            {matchArt ? (
               <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
-                {params.matchArt}
+                {matchArt}
               </Text>
             ) : null}
           </View>
@@ -523,9 +545,9 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
             <Text style={{ fontSize: 16, fontWeight: '800', color: RETRO.text }} numberOfLines={1}>
               {matchName || [firstName, lastName].filter(Boolean).join(' ')}
             </Text>
-            {params.fussballDeUrl ? (
+            {fussballDeUrl ? (
               <TouchableOpacity
-                onPress={() => Linking.openURL(params.fussballDeUrl)}
+                onPress={() => Linking.openURL(fussballDeUrl)}
                 activeOpacity={0.7}
                 hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
               >
@@ -538,7 +560,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
           </View>
           {matchDate ? (
             <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
-              {formatMatchDateGerman(matchDate)}{params.matchZeit ? ` · ${params.matchZeit}` : ''}
+              {formatMatchDateGerman(matchDate)}{matchZeit ? ` · ${matchZeit}` : ''}
             </Text>
           ) : null}
           <TouchableOpacity onPress={confirmClose} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>

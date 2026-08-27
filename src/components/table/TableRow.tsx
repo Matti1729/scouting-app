@@ -48,7 +48,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   cell: {
-    paddingHorizontal: 6,
+    // wie headerCell im TableHeader (4), damit Zellen exakt unter den Spaltentiteln stehen
+    paddingHorizontal: 4,
     justifyContent: 'center',
     alignItems: 'flex-start',
   },

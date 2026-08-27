@@ -225,6 +225,7 @@ export function DashboardScreen() {
         age: ageFromBirthDate(p.birth_date),
         position: positionCode(p.position),
         current_agent_name: p.current_agent_name,
+        current_agent_company: (p as any).current_agent_company ?? null,
         agent_url: p.agent_url ?? null,
         tm_player_id: p.tm_player_id || null,
         tm_profile_url: p.tm_profile_url || null,
@@ -278,9 +279,10 @@ export function DashboardScreen() {
     <SafeAreaView style={styles.container}>
       {/* Gelber Titelbalken */}
       <View style={[styles.headerBar, HARD_SHADOW_LG]}>
-        <Text style={styles.headerTitle}>Scouting Dashboard</Text>
-        <Text style={styles.headerSubtitle}>Spieler & Spiele im Blick</Text>
-        <View style={{ flex: 1 }} />
+        <View style={styles.headerTitleWrap}>
+          <Text style={styles.headerTitle}>Scouting Dashboard</Text>
+          <Text style={styles.headerSubtitle}>Spieler & Spiele im Blick</Text>
+        </View>
         <View style={[styles.headerBox, HARD_SHADOW]}>
           <Text style={styles.headerBoxText}>{todayHeader()}</Text>
         </View>
@@ -501,6 +503,13 @@ const styles = StyleSheet.create({
     backgroundColor: RETRO.yellow,
     paddingVertical: 12,
     paddingHorizontal: 20,
+  },
+  // Titel + MONO-Untertitel auf gemeinsamer Grundlinie
+  headerTitleWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 12,
   },
   headerTitle: {
     fontSize: 20,

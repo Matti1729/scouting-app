@@ -21,6 +21,7 @@ import { Ionicons } from '@expo/vector-icons';
 import {
   StipendiumSearchPlayer,
   PlayerTmDetails,
+  PlayerTmSeasonStats,
   fetchPlayerTmDetails,
   loadPlayerNote,
   savePlayerNote,
@@ -80,6 +81,18 @@ export function splitName(full: string): { first: string; last: string } {
 /** Saison-Kurzlabel aus TM-Saisonstartjahr: 2026 -> "26/27" */
 function seasonLabel(startYear: number): string {
   return `${String(startYear).slice(-2)}/${String(startYear + 1).slice(-2)}`;
+}
+
+/** "3 Spiele | 4 Tore | 3 Vorlagen" (Fallback nur Spiele, wenn keine Detailstatistik da ist) */
+function seasonStatsText(
+  stats: PlayerTmSeasonStats | null | undefined,
+  games: number | null | undefined
+): string {
+  if (!stats) return `${games ?? '—'} Spiele`;
+  const spiele = `${stats.games} ${stats.games === 1 ? 'Spiel' : 'Spiele'}`;
+  const tore = `${stats.goals} ${stats.goals === 1 ? 'Tor' : 'Tore'}`;
+  const vorlagen = `${stats.assists} ${stats.assists === 1 ? 'Vorlage' : 'Vorlagen'}`;
+  return `${spiele} | ${tore} | ${vorlagen}`;
 }
 
 /** Saison, in der ein Datum "DD.MM.YYYY" liegt (minus 1 Tag, damit der 01.07. noch zur Vorsaison zählt) */
@@ -304,15 +317,17 @@ export function PlayerDetailModal({
         <View style={styles.detailOverlay}>
           <TouchableWithoutFeedback>
             <View style={[styles.detailModal, HARD_SHADOW_LG]}>
-              {/* Namens-Balken (gelb): SPIELERPROFIL · Name · TM-Link · ✕ */}
+              {/* Namens-Balken (gelb): Name · SPIELERPROFIL (auf Namens-Grundlinie) · ✕ */}
               <View style={[styles.detailNameBar, HARD_SHADOW]}>
-                <Text style={styles.profileTag}>SPIELERPROFIL</Text>
-                <Text style={styles.detailName} numberOfLines={1}>
-                  {(() => {
-                    const n = splitName(p.player_name);
-                    return n.first ? `${n.last}, ${n.first}` : n.last;
-                  })()}
-                </Text>
+                <View style={styles.detailNameWrap}>
+                  <Text style={styles.detailName} numberOfLines={1}>
+                    {(() => {
+                      const n = splitName(p.player_name);
+                      return n.first ? `${n.last}, ${n.first}` : n.last;
+                    })()}
+                  </Text>
+                  <Text style={styles.profileTag}>SPIELERPROFIL</Text>
+                </View>
                 <TouchableOpacity onPress={handleClose} hitSlop={8}>
                   <Ionicons name="close" size={20} color={RETRO.text} />
                 </TouchableOpacity>
@@ -403,23 +418,23 @@ export function PlayerDetailModal({
 
               {/* Zeile 2: Einsätze · Berichte */}
               <View style={styles.cardGrid}>
-                <View style={[styles.card, HARD_SHADOW]}>
+                <View style={[styles.card, styles.cardEinsaetze, HARD_SHADOW]}>
                   {cardChip('EINSÄTZE')}
                   {cardRow(
                     `Saison ${tmDetails ? seasonLabel(tmDetails.seasonYear) : 'aktuell'}`,
                     tmLoading ? (
                       <ActivityIndicator size="small" color={RETRO.headerBg} />
                     ) : (
-                      `${tmDetails?.gamesCurrentSeason ?? '—'} Spiele`
+                      seasonStatsText(tmDetails?.statsCurrentSeason, tmDetails?.gamesCurrentSeason)
                     )
                   )}
                   {cardRow(
                     `Saison ${tmDetails ? seasonLabel(tmDetails.seasonYear - 1) : 'letzte'}`,
-                    tmLoading ? ' ' : `${tmDetails?.gamesLastSeason ?? '—'} Spiele`,
+                    tmLoading ? ' ' : seasonStatsText(tmDetails?.statsLastSeason, tmDetails?.gamesLastSeason),
                     true
                   )}
                 </View>
-                <View style={[styles.card, styles.cardWide, HARD_SHADOW]}>
+                <View style={[styles.card, styles.cardBerichte, HARD_SHADOW]}>
                   {cardChip(`BERICHTE${matchEvals.length > 0 ? ` (${matchEvals.length})` : ''}`)}
                   {evalsLoading ? (
                     <ActivityIndicator size="small" color={RETRO.headerBg} style={{ alignSelf: 'flex-start', margin: 4 }} />
@@ -628,11 +643,17 @@ const styles = StyleSheet.create({
     marginBottom: 6,
     gap: 8,
   },
+  // Name + Tag auf gemeinsamer Grundlinie, ✕ bleibt vertikal zentriert
+  detailNameWrap: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'baseline',
+  },
   detailName: {
     fontSize: 17,
     fontWeight: '700',
     color: RETRO.text,
-    flex: 1,
+    flexShrink: 1,
   },
   tmIcon: {
     width: 22,
@@ -665,7 +686,7 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     fontFamily: MONO,
     color: '#4a4a55',
-    marginRight: 4,
+    marginLeft: 14,
   },
   // Karten-Raster
   cardGrid: {
@@ -685,6 +706,20 @@ const styles = StyleSheet.create({
   },
   cardWide: {
     flex: 2,
+    minWidth: 320,
+  },
+  // Einsätze endet auf Höhe der Mitte der Verein-Karte (Zeile 1 = 3 gleiche Karten + 110px
+  // Potential). Basis-Differenz muss 110 sein; da border-box die Basis aufs Padding (24)
+  // floort, braucht Berichte 134 gegen die 0->24 der Einsätze-Karte.
+  cardEinsaetze: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 0,
+  },
+  cardBerichte: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 134,
     minWidth: 320,
   },
   // Schmale Potential-Karte (ganz rechts in Zeile 1)
