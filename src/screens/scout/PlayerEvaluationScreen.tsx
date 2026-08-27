@@ -38,6 +38,7 @@ import {
   isOnWatchlist,
   isPlaceholderName,
   normalizePlayerName,
+  namesCompatible,
 } from '../../services/beraterService';
 
 // Deutsches Datum mit Wochentag, z.B. "Mi, 26.08.26" (aus ISO oder DD.MM.YYYY)
@@ -353,16 +354,27 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         }
       }
 
-      // 2b. Fuzzy: Suche nach Nachname allein (wenn eindeutig im gleichen Verein)
-      if (lastName && currentClub) {
-        const { data: byLastName } = await supabase
-          .from('berater_players')
-          .select('id, player_name')
-          .ilike('player_name', `%${lastName}%`)
-          .limit(5);
-        if (byLastName?.length === 1) {
-          setBeraterPlayerId(byLastName[0].id);
-          return byLastName[0].id;
+      // 2b. Nachname + kompatible Vornamen (z.B. zwei Vornamen in der
+      //     Aufstellung, nur einer bei Transfermarkt) — nur bei eindeutigem
+      //     Treffer ohne Geburtsdatums-Widerspruch
+      if (lastName) {
+        const lastNorm = normalizePlayerName(lastName);
+        const myNorm = normalizePlayerName(playerName);
+        if (lastNorm.length >= 3) {
+          const { data: byLastName } = await supabase
+            .from('berater_players')
+            .select('id, player_name, normalized_name, birth_date')
+            .ilike('normalized_name', `%${lastNorm}`)
+            .limit(10);
+          const candidates = (byLastName || []).filter((c) => {
+            const cNorm = c.normalized_name || normalizePlayerName(c.player_name);
+            if (!namesCompatible(myNorm, cNorm)) return false;
+            return !(birthDateFromTM && c.birth_date && c.birth_date !== birthDateFromTM);
+          });
+          if (candidates.length === 1) {
+            setBeraterPlayerId(candidates[0].id);
+            return candidates[0].id;
+          }
         }
       }
     }

@@ -1192,6 +1192,23 @@ export function normalizePlayerName(name?: string | null): string {
 }
 
 /**
+ * Prüft, ob zwei normalisierte Namen denselben Spieler meinen können:
+ * gleicher Nachname (letztes Token) und die Vornamen des einen sind eine
+ * Teilmenge der Vornamen des anderen ("jan luca mueller" ~ "jan mueller").
+ * Einzeltoken-Namen matchen bewusst nicht (zu unsicher).
+ */
+export function namesCompatible(a: string, b: string): boolean {
+  const ta = a.split(' ').filter(Boolean);
+  const tb = b.split(' ').filter(Boolean);
+  if (ta.length < 2 || tb.length < 2) return false;
+  if (ta[ta.length - 1] !== tb[tb.length - 1]) return false; // Nachname muss passen
+  const fa = ta.slice(0, -1);
+  const fb = tb.slice(0, -1);
+  const [small, big] = fa.length <= fb.length ? [fa, fb] : [fb, fa];
+  return small.every((t) => big.includes(t));
+}
+
+/**
  * Gescoutete Spieler (ohne Verein, ohne TM-Profil) mit später aufgetauchten
  * Transfermarkt-Spielern zusammenführen: gleicher normalisierter Name und kein
  * Geburtsdatums-Widerspruch -> Berichte, Watchlist und Status wandern zum
@@ -1230,13 +1247,31 @@ export async function mergeObservedDuplicates(): Promise<number> {
       // 1) Bevorzugtes Ziel: eindeutiger TM-verknüpfter Datensatz gleichen Namens
       const { data: targets } = await supabase
         .from('berater_players')
-        .select('id, birth_date, tm_profile_url, club_id')
+        .select('id, normalized_name, birth_date, tm_profile_url, club_id')
         .eq('normalized_name', norm)
         .or('tm_profile_url.not.is.null,club_id.not.is.null')
         .limit(2);
-      const tmCandidates = (targets || []).filter(
+      let tmCandidates = (targets || []).filter(
         (t) => !group.some((s) => s.birth_date && t.birth_date && s.birth_date !== t.birth_date)
       );
+
+      // Kein exakter Treffer: Nachname + kompatible Vornamen versuchen
+      // (fussball.de führt z.B. zwei Vornamen, Transfermarkt nur einen)
+      if (tmCandidates.length === 0) {
+        const lastTok = norm.split(' ').pop();
+        if (lastTok && lastTok.length >= 3) {
+          const { data: fuzzy } = await supabase
+            .from('berater_players')
+            .select('id, normalized_name, birth_date, tm_profile_url, club_id')
+            .ilike('normalized_name', `%${lastTok}`)
+            .or('tm_profile_url.not.is.null,club_id.not.is.null')
+            .limit(10);
+          const compat = (fuzzy || [])
+            .filter((t) => t.normalized_name && namesCompatible(norm, t.normalized_name))
+            .filter((t) => !group.some((s) => s.birth_date && t.birth_date && s.birth_date !== t.birth_date));
+          if (compat.length === 1) tmCandidates = compat;
+        }
+      }
 
       let keeperId: string | null = null;
       let losers: typeof group = [];
@@ -1278,7 +1313,10 @@ export async function mergeObservedDuplicates(): Promise<number> {
 
       // 3) Unverknüpfte Berichte gleichen Namens andocken (jetzt eindeutig)
       const evalIds = (unlinkedEvals || [])
-        .filter((ev) => normalizePlayerName([ev.first_name, ev.last_name].filter(Boolean).join(' ')) === norm)
+        .filter((ev) => {
+          const evNorm = normalizePlayerName([ev.first_name, ev.last_name].filter(Boolean).join(' '));
+          return evNorm === norm || namesCompatible(evNorm, norm);
+        })
         .map((ev) => ev.id);
       if (evalIds.length > 0) {
         await supabase
