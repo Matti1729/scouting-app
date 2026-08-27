@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -43,6 +43,7 @@ import {
   areaAge,
   areaArt,
   stripAge,
+  shortVenueName,
   resolveGameVenue,
   saveGameVenue,
   AreaLeague,
@@ -374,7 +375,7 @@ const MATCH_COLUMNS: ColumnDef[] = [
   { key: 'ort', label: 'ORT', defaultFlex: 1.5, minWidth: 80 },
 ];
 
-export function MatchListScreen({ navigation }: any) {
+export function MatchListScreen({ navigation, route }: any) {
   const { colors, isDark } = useTheme();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
@@ -456,6 +457,26 @@ export function MatchListScreen({ navigation }: any) {
   const [hoveredMapKey, setHoveredMapKey] = useState<string | null>(null);
   // Detail-Modal für Umgebungs-Spiele (+ "Zu Meine Spiele hinzufügen")
   const [areaDetail, setAreaDetail] = useState<Match | null>(null);
+
+  // Vom Dashboard: "openMatchId" öffnet das Spiel-Popup, sobald die Daten da sind
+  const pendingOpenRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = route?.params?.openMatchId;
+    if (key) {
+      pendingOpenRef.current = key;
+      navigation.setParams?.({ openMatchId: undefined });
+    }
+  }, [route?.params?.openMatchId]);
+  useEffect(() => {
+    const target = pendingOpenRef.current;
+    if (!target) return;
+    const source = target.startsWith('area:') ? areaMatches : matches;
+    const m = source.find((x) => x.id === target);
+    if (m) {
+      pendingOpenRef.current = null;
+      setAreaDetail(m);
+    }
+  }, [areaMatches, matches]);
   const [addingAreaGame, setAddingAreaGame] = useState(false);
 
   // Aufstellung Import
@@ -2634,20 +2655,45 @@ export function MatchListScreen({ navigation }: any) {
                 {/* Gelber Namens-Balken */}
                 <View style={[HARD_SHADOW, {
                   flexDirection: 'row', alignItems: 'center', backgroundColor: RETRO.yellow,
-                  paddingVertical: 6, paddingHorizontal: 10, marginRight: 40, marginBottom: 10, gap: 8,
+                  paddingVertical: 6, paddingHorizontal: 10, marginBottom: 10, gap: 8,
                 }]}>
                   <Text style={{ fontSize: 16, fontWeight: '700', color: RETRO.text, flex: 1 }} numberOfLines={2}>
                     {areaDetail.spiel}
                   </Text>
+                  {areaDetail.fussballDeUrl ? (
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (Platform.OS === 'web') window.open(areaDetail.fussballDeUrl as string, '_blank');
+                        else Linking.openURL(areaDetail.fussballDeUrl as string);
+                      }}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <Image
+                        source={require('../../../assets/fussballde-logo.png')}
+                        style={{ width: 20, height: 20, borderWidth: 1, borderColor: RETRO.shadowDark }}
+                      />
+                    </TouchableOpacity>
+                  ) : null}
                   <TouchableOpacity onPress={() => setAreaDetail(null)} hitSlop={8}>
                     <Ionicons name="close" size={20} color={RETRO.text} />
                   </TouchableOpacity>
                 </View>
 
-                {infoRow('Uhrzeit', `${formatDateGerman(areaDetail.datum, areaDetail.datumEnde)}${areaDetail.zeit ? ` · ${areaDetail.zeit} Uhr` : ''}`)}
+                {infoRow('Datum', (
+                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'flex-end', gap: 8 }}>
+                    {areaDetail.datum === new Date().toISOString().slice(0, 10) ? (
+                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#15803d' }}>Heute</Text>
+                    ) : null}
+                    <Text style={{ fontSize: 14, fontWeight: '600', color: RETRO.text }}>
+                      {`${weekdayShort(areaDetail.datum) ? `${weekdayShort(areaDetail.datum)}, ` : ''}${formatDateGerman(areaDetail.datum, areaDetail.datumEnde)}`}
+                    </Text>
+                  </View>
+                ))}
+                {infoRow('Uhrzeit', areaDetail.zeit ? `${areaDetail.zeit} Uhr` : '—')}
+                {infoRow('Altersklasse', areaDetail.mannschaft || '—')}
                 {infoRow('Art', areaDetail.art)}
                 {areaDetail.ort
-                  ? infoRow('Spielstätte', (
+                  ? infoRow('Ort', (
                       <TouchableOpacity
                         style={{ flex: 1 }}
                         onPress={() => {
@@ -2655,25 +2701,12 @@ export function MatchListScreen({ navigation }: any) {
                           if (Platform.OS === 'web') window.open(`https://www.google.de/maps?q=${encodeURIComponent(q)}`, '_blank');
                         }}
                       >
-                        <Text style={{ fontSize: 13, fontWeight: '600', textAlign: 'right', color: '#2563eb' }} numberOfLines={2}>
-                          📍 {areaDetail.ort}
+                        <Text style={{ fontSize: 13, fontWeight: '600', textAlign: 'right', color: '#2563eb' }} numberOfLines={1}>
+                          📍 {shortVenueName(areaDetail.ort)}
                         </Text>
                       </TouchableOpacity>
                     ))
                   : null}
-
-                {/* fussball.de-Link */}
-                {areaDetail.fussballDeUrl && (
-                  <TouchableOpacity
-                    style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 9, paddingHorizontal: 14, alignSelf: 'flex-start', marginTop: 8 }]}
-                    onPress={() => {
-                      if (Platform.OS === 'web') window.open(areaDetail.fussballDeUrl as string, '_blank');
-                      else Linking.openURL(areaDetail.fussballDeUrl as string);
-                    }}
-                  >
-                    <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }}>⚽ Spiel auf fussball.de öffnen</Text>
-                  </TouchableOpacity>
-                )}
 
                 {/* Zu Meine Spiele hinzufügen */}
                 <View style={{ borderTopWidth: 1, borderTopColor: RETRO.rowBorder, marginTop: 14, paddingTop: 12 }}>
@@ -2711,7 +2744,7 @@ export function MatchListScreen({ navigation }: any) {
                       <TouchableOpacity
                         style={[HARD_SHADOW, {
                           backgroundColor: RETRO.headerBg, paddingVertical: 9, paddingHorizontal: 14,
-                          alignSelf: 'flex-start', borderWidth: 1, borderColor: '#223077',
+                          alignSelf: 'flex-end', borderWidth: 1, borderColor: '#223077',
                         }, BLUE_GRADIENT]}
                         onPress={handleAddAreaGameToMyGames}
                         disabled={addingAreaGame}

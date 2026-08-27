@@ -95,6 +95,27 @@ export function areaAge(g: AreaGame, leagueName: string): string {
   return 'Herren';
 }
 
+/** Langen Ort-String auf den Spielstätten-Namen kürzen:
+ *  "Kunstrasenplatz, Sportplatz Herringhausen-Eickum, Am Sportplatz 18, 32051 …"
+ *  -> "Sportplatz Herringhausen-Eickum"; "Stadion an der Gellertstraße" bleibt. */
+export function shortVenueName(ort?: string | null): string | null {
+  if (!ort) return null;
+  const parts = ort.split(',').map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 0) return null;
+  let i = 0;
+  // Führenden Platztyp ("Kunstrasenplatz", "Rasenplatz 2", "Kennel A-Platz") überspringen
+  if (parts.length > 1 && /platz\.?\s*\d*$/i.test(parts[0])) i = 1;
+  const name: string[] = [];
+  for (; i < parts.length; i++) {
+    const part = parts[i];
+    // Adresse erreicht? (PLZ, Hausnummer oder Straßenname)
+    if (/\d{4,}/.test(part) || /\d+\s*$/.test(part) || /(str\.|straße|weg|allee|gasse|ring)\s*$/i.test(part)) break;
+    name.push(part);
+    if (name.length >= 2) break;
+  }
+  return name.length ? name.join(', ') : parts[0];
+}
+
 /** "U19 SC Freiburg" -> "SC Freiburg" (Jahrgang steht in eigener Spalte) */
 export function stripAge(name: string): string {
   return (name || '')
