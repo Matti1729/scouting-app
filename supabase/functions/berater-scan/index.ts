@@ -64,6 +64,55 @@ function getSupabaseClient() {
 }
 
 // ============================================================================
+// GLOCKEN-ALARM (Abo auf Beraterstatus-Änderung eines Spielers)
+// ============================================================================
+
+/** Telegram-Nachricht über den Magnus-Bot (Token/Empfänger = Projekt-Secrets) */
+async function sendAgentAlertTelegram(playerName: string, oldAgent: string | null, newAgent: string | null) {
+  const token = Deno.env.get('TELEGRAM_BOT_TOKEN')
+  const users = (Deno.env.get('TELEGRAM_ALLOWED_USERS') || '')
+    .split(',').map((s) => s.trim()).filter(Boolean)
+  if (!token || users.length === 0) return
+  const text =
+    `🔔 Scouting-App: Bei ${playerName} hat sich der Beraterstatus geändert.\n` +
+    `${oldAgent || 'kein Berater'} → ${newAgent || 'kein Berater'}`
+  for (const chatId of users) {
+    await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: Number(chatId), text }),
+    }).catch((e) => console.log('Telegram alert failed:', e))
+  }
+}
+
+/** Falls der Spieler eine Glocke (Abo) hat: In-App-Notification + Telegram */
+async function fireAgentAlert(
+  supabase: any,
+  playerId: string,
+  playerName: string,
+  oldAgent: string | null,
+  newAgent: string | null
+) {
+  try {
+    const { data: sub } = await supabase
+      .from('berater_alert_subs')
+      .select('id')
+      .eq('player_id', playerId)
+      .maybeSingle()
+    if (!sub) return
+    await supabase.from('berater_alert_notifications').insert({
+      player_id: playerId,
+      player_name: playerName,
+      message: `Bei ${playerName} hat sich der Beraterstatus geändert.`,
+    })
+    await sendAgentAlertTelegram(playerName, oldAgent, newAgent)
+    console.log(`ALERT fired for ${playerName}`)
+  } catch (e) {
+    console.log('Agent alert error:', e)
+  }
+}
+
+// ============================================================================
 // TYPES
 // ============================================================================
 
@@ -589,6 +638,14 @@ function agentsAreDifferent(oldName: string | null, newName: string | null): boo
   return oldLower !== newLower
 }
 
+/** Gleiche Berater-ID in beiden TM-URLs? Dann hat sich nur die Agentur
+ *  umbenannt (z.B. Wasserman -> THE·TEAM, beide /berater/440) — kein Wechsel. */
+function sameAgencyId(oldUrl: string | null, newUrl: string | null): boolean {
+  const idOld = oldUrl?.match(/\/berater\/(\d+)/)?.[1]
+  const idNew = newUrl?.match(/\/berater\/(\d+)/)?.[1]
+  return !!idOld && !!idNew && idOld === idNew
+}
+
 // ============================================================================
 // AKTION: bootstrap_clubs
 // ============================================================================
@@ -803,7 +860,11 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
       const wasAlreadyScanned = !!existingPlayer.agent_updated_at
 
       // Prüfe auf Beraterwechsel (nur wenn vorher schon gescannt)
-      if (wasAlreadyScanned && agentsAreDifferent(existingPlayer.current_agent_name, agentInfo.agentName)) {
+      if (
+        wasAlreadyScanned &&
+        agentsAreDifferent(existingPlayer.current_agent_name, agentInfo.agentName) &&
+        !sameAgencyId(existingPlayer.agent_url, agentInfo.agentUrl)
+      ) {
         const oldHadRealAgent = !!normalizeAgentName(existingPlayer.current_agent_name)
         const newHasNoAgent = !normalizeAgentName(agentInfo.agentName)
 
@@ -848,6 +909,15 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
             tm_profile_url: sp.profileUrl,
           })
 
+        // Glocken-Abo: In-App-Benachrichtigung + Telegram über Magnus
+        await fireAgentAlert(
+          supabase,
+          existingPlayer.id,
+          sp.name,
+          existingPlayer.current_agent_name,
+          agentInfo.agentName
+        )
+
         changesDetected++
       } else if (existingPlayer.pending_agent_removal) {
         // Agents stimmen wieder überein → false alarm, pending aufheben
@@ -855,7 +925,10 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
       }
 
       // Spieler updaten (inkl. club_id falls Vereinswechsel)
-      const agentChanged = wasAlreadyScanned && agentsAreDifferent(existingPlayer.current_agent_name, agentInfo.agentName)
+      const agentChanged =
+        wasAlreadyScanned &&
+        agentsAreDifferent(existingPlayer.current_agent_name, agentInfo.agentName) &&
+        !sameAgencyId(existingPlayer.agent_url, agentInfo.agentUrl)
       const updateData: Record<string, any> = {
         club_id: clubId,
         player_name: agentInfo.fullName || sp.name,

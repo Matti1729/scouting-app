@@ -17,6 +17,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
+import { RETRO, RETRO_THEME, HARD_SHADOW, HARD_SHADOW_LG, MONO } from '../../theme/retro';
+import { RetroHeader } from '../../components/RetroHeader';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
@@ -43,7 +45,8 @@ import {
   mergeObservedDuplicates,
   ObservedPlayer,
 } from '../../services/beraterService';
-import { savePlayerNotesText } from '../../services/stipendiumService';
+import { savePlayerNotesText, fetchSearchPlayer, StipendiumSearchPlayer, positionCode, ageFromBirthDate, agentDisplayName } from '../../services/stipendiumService';
+import { PlayerDetailModal } from '../../components/PlayerDetailModal';
 import { RatingBar } from '../../components/evaluation/RatingBar';
 import { fetchAgentInfo } from '../../services/transfermarktService';
 
@@ -54,18 +57,26 @@ const MATCH_EVAL_COLUMNS: ColumnDef[] = [
 ];
 
 const WATCHLIST_COLUMNS: ColumnDef[] = [
-  { key: 'name', label: 'Name', defaultFlex: 1.5, minWidth: 100 },
-  { key: 'mv', label: 'Marktwert', defaultFlex: 1, minWidth: 60 },
-  { key: 'club', label: 'Verein', defaultFlex: 1.5, minWidth: 80 },
+  { key: 'name', label: 'Name', defaultFlex: 1.7, minWidth: 120 },
+  { key: 'mv', label: 'Marktwert', defaultFlex: 0.7, minWidth: 60 },
+  { key: 'club', label: 'Verein', defaultFlex: 1.4, minWidth: 80 },
   { key: 'agent', label: 'Berater', defaultFlex: 1.5, minWidth: 80 },
-  { key: 'notes', label: 'Notiz', defaultFlex: 0.3, minWidth: 30 },
-  { key: 'rating', label: 'Pot.', defaultFlex: 0.5, minWidth: 30 },
-  { key: 'added', label: 'Hinzugefügt', defaultFlex: 0.7, minWidth: 60 },
+  { key: 'rating', label: 'Pot.', defaultFlex: 0.4, minWidth: 34 },
+  { key: 'added', label: 'Hinzugefügt', defaultFlex: 0.7, minWidth: 70 },
 ];
+
+// Farbe wie im Potential-Schiebebalken (1-3 rot, 4-6 orange, 7-9 grün, 10 gold)
+function potentialColor(v: number): string {
+  if (v === 10) return '#F0C040';
+  if (v >= 7) return '#22c55e';
+  if (v >= 4) return '#e8930c';
+  return '#dc2626';
+}
 
 export function WatchlistScreen() {
   const navigation = useNavigation();
-  const { colors } = useTheme();
+  // Retro-Look (Anstoss-Optik): feste Palette statt Dark/Light-Theme
+  const colors = RETRO_THEME;
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
 
@@ -85,7 +96,9 @@ export function WatchlistScreen() {
 
   // Detail modal
   const [selectedPlayer, setSelectedPlayer] = useState<BeraterPlayer | null>(null);
-  const returnToPlayerRef = useRef<BeraterPlayer | null>(null);
+  const returnToPlayerRef = useRef<StipendiumSearchPlayer | null>(null);
+  // Neues geteiltes Spielerprofil (wie Dashboard/Suchmaschine)
+  const [detailPlayer, setDetailPlayer] = useState<StipendiumSearchPlayer | null>(null);
   const [playerHistory, setPlayerHistory] = useState<BeraterChange[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [matchEvaluations, setMatchEvaluations] = useState<MatchEvaluation[]>([]);
@@ -94,7 +107,7 @@ export function WatchlistScreen() {
   const [evaluations, setEvaluations] = useState<Map<string, PlayerEvaluation>>(new Map());
   const [modalRating, setModalRating] = useState<number | null>(null);
   const [modalNotes, setModalNotes] = useState('');
-  const [modalEvalStatus, setModalEvalStatus] = useState<'interessant' | 'nicht_interessant' | null>(null);
+  const [modalEvalStatus, setModalEvalStatus] = useState<'interessant' | 'nicht_interessant' | 'top_ziel' | null>(null);
   const notesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Tabs: Watchlist (Interessant-Shortlist) | Beobachtet (alle Spieler mit ≥1 Bericht)
@@ -122,7 +135,7 @@ export function WatchlistScreen() {
       if (returnToPlayerRef.current) {
         const player = returnToPlayerRef.current;
         returnToPlayerRef.current = null;
-        setTimeout(() => openPlayerDetail(player), 100);
+        setTimeout(() => setDetailPlayer(player), 100);
       }
     }, [fetchData])
   );
@@ -143,13 +156,13 @@ export function WatchlistScreen() {
   };
 
   const getAgentLabel = (player: BeraterPlayer): { text: string; color: string } => {
-    if (!player.current_agent_name || player.current_agent_name === 'kein Beratereintrag') {
-      return { text: 'kein Beratereintrag', color: colors.success };
-    }
     if (player.current_agent_name === 'Familienangehörige') {
       return { text: 'Familienangehörige', color: colors.warning };
     }
-    return { text: player.current_agent_name, color: colors.textSecondary };
+    // gleiche Regel wie überall: Agentur vor Personenname
+    const display = agentDisplayName(player.current_agent_name, player.current_agent_company);
+    if (!display) return { text: 'kein Beratereintrag', color: colors.success };
+    return { text: display, color: colors.textSecondary };
   };
 
   const calculateAge = (birthDate: string | null): string | null => {
@@ -219,6 +232,11 @@ export function WatchlistScreen() {
 
   const sortedWatchlist = useMemo(() => {
     return [...watchlist].sort((a, b) => {
+      // Top-Ziele ("sofort machen") stehen immer oben, egal wie sortiert wird
+      const topA = evaluations.get(a.player_id || '')?.status === 'top_ziel' ? 0 : 1;
+      const topB = evaluations.get(b.player_id || '')?.status === 'top_ziel' ? 0 : 1;
+      if (topA !== topB) return topA - topB;
+
       const dir = sortAsc ? 1 : -1;
       const pA = a.player;
       const pB = b.player;
@@ -239,49 +257,34 @@ export function WatchlistScreen() {
           return 0;
       }
     });
-  }, [watchlist, sortKey, sortAsc]);
+  }, [watchlist, sortKey, sortAsc, evaluations]);
 
   const sortIndicator = (key: SortKey) => sortKey === key ? (sortAsc ? ' \u25B2' : ' \u25BC') : '';
 
   // Modal handlers
+  // Öffnet das geteilte Spielerprofil (PlayerDetailModal) — wie im Dashboard
   const openPlayerDetail = async (player: BeraterPlayer) => {
-    setSelectedPlayer(player);
-    setPlayerHistory([]);
-    setMatchEvaluations([]);
-    setHistoryLoading(true);
-
-    // Bestehende Evaluation laden
-    const existingEval = evaluations.get(player.id);
-    const wlEntry = watchlist.find(w => w.player_id === player.id);
-    setModalRating(existingEval?.rating ?? wlEntry?.rating ?? null);
-    setModalNotes(existingEval?.notes ?? wlEntry?.notes ?? '');
-    setModalEvalStatus(existingEval?.status ?? null);
-
-    const [history, matchEvals] = await Promise.all([
-      loadPlayerHistory(player.id),
-      loadMatchEvaluationsForPlayer(player.player_name, player.tm_profile_url, player.id),
-    ]);
-    setPlayerHistory(history);
-    setMatchEvaluations(matchEvals);
-    setHistoryLoading(false);
-
-    // Profildaten nachladen wenn TM-URL vorhanden aber Geburtsdatum fehlt
-    if (player.tm_profile_url && !player.birth_date) {
-      fetchAgentInfo(player.tm_profile_url).then(result => {
-        if (result.success && result.agentInfo) {
-          const updates: Partial<BeraterPlayer> = {};
-          if (result.agentInfo.birthDate) updates.birth_date = result.agentInfo.birthDate;
-          if (result.agentInfo.agentName && !player.current_agent_name) updates.current_agent_name = result.agentInfo.agentName;
-          if (result.agentInfo.agentCompany && !player.current_agent_company) updates.current_agent_company = result.agentInfo.agentCompany;
-          if (Object.keys(updates).length > 0) {
-            import('../../config/supabase').then(({ supabase }) => {
-              supabase.from('berater_players').update(updates).eq('id', player.id);
-            });
-            setSelectedPlayer(prev => prev?.id === player.id ? { ...prev, ...updates } as BeraterPlayer : prev);
-          }
-        }
-      });
-    }
+    const sp = await fetchSearchPlayer(player.tm_player_id || null, player.player_name);
+    setDetailPlayer(
+      sp || {
+        id: player.id,
+        player_name: player.player_name,
+        birth_date: player.birth_date,
+        age: ageFromBirthDate(player.birth_date),
+        position: positionCode(player.position),
+        current_agent_name: player.current_agent_name,
+        current_agent_company: (player as any).current_agent_company ?? null,
+        agent_url: (player as any).agent_url ?? null,
+        tm_player_id: player.tm_player_id || null,
+        tm_profile_url: player.tm_profile_url || null,
+        market_value: (player as any).market_value ?? null,
+        contract_until: (player as any).contract_until ?? null,
+        is_vereinslos: !!(player as any).is_vereinslos,
+        club_name: (player as any).club_name || null,
+        club_tm_id: null,
+        league_name: (player as any).league_name || null,
+      }
+    );
   };
 
   const handleRemoveFromWatchlist = async () => {
@@ -404,14 +407,19 @@ export function WatchlistScreen() {
       <TouchableOpacity
         style={[
           styles.mobileCard,
-          { backgroundColor: evalColor?.bg || colors.surface, borderColor: colors.border },
-          evalColor && { borderLeftWidth: 3, borderLeftColor: evalColor.border },
+          { backgroundColor: colors.surface },
+          HARD_SHADOW,
         ]}
         onPress={() => openPlayerDetail(player)}
         activeOpacity={0.7}
       >
         <View style={styles.mobileCardHeader}>
           <View style={styles.mobileCardNameRow}>
+            {ev?.status === 'top_ziel' && (
+              <View style={styles.topZielBadge}>
+                <Text style={styles.topZielBadgeText}>TOP-ZIEL</Text>
+              </View>
+            )}
             <Text style={[styles.mobileCardName, { color: colors.text }]} numberOfLines={1}>
               {formatNameLastFirst(player.player_name)}
             </Text>
@@ -463,17 +471,18 @@ export function WatchlistScreen() {
         columnOrder={table.columnOrder}
         getColumnWidth={table.getColumnWidth}
         onPress={() => openPlayerDetail(player)}
-        style={[
-          styles.playerRow,
-          { borderBottomColor: colors.border },
-          evalColor && { backgroundColor: evalColor.bg, borderLeftWidth: 3, borderLeftColor: evalColor.border },
-        ]}
+        style={[styles.playerRow, { borderBottomColor: RETRO.rowBorder }]}
         renderCell={(key) => {
           switch (key) {
             case 'name':
               return (
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                  <Text style={[styles.playerColName, { color: colors.text }]} numberOfLines={1}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  {ev?.status === 'top_ziel' && (
+                    <View style={styles.topZielBadge}>
+                      <Text style={styles.topZielBadgeText}>TOP-ZIEL</Text>
+                    </View>
+                  )}
+                  <Text style={[styles.playerColName, { color: RETRO.text }]} numberOfLines={1}>
                     {formatNameLastFirst(player.player_name)}
                   </Text>
                   {age ? <Text style={[styles.playerColAge, { color: colors.textSecondary }]}>{age}</Text> : null}
@@ -481,34 +490,32 @@ export function WatchlistScreen() {
               );
             case 'mv':
               return (
-                <Text style={[{ fontSize: 11, color: colors.textSecondary }]} numberOfLines={1}>
-                  {player.market_value || '-'}
+                <Text style={styles.monoCell} numberOfLines={1}>
+                  {player.market_value || '–'}
                 </Text>
               );
             case 'club':
               return (
-                <Text style={[{ fontSize: 11, color: colors.textSecondary, fontStyle: player.is_vereinslos ? 'italic' : 'normal' }]} numberOfLines={1}>
+                <Text style={[{ fontSize: 13, color: RETRO.text, fontStyle: player.is_vereinslos ? 'italic' : 'normal' }]} numberOfLines={1}>
                   {player.is_vereinslos ? `zuletzt: ${player.club_name || ''}` : (player.club_name || '')}
                 </Text>
               );
             case 'agent':
               return (
-                <Text style={[{ fontSize: 11, color: agentLabel.color }]} numberOfLines={1}>
+                <Text style={[{ fontSize: 13, color: agentLabel.color }]} numberOfLines={1}>
                   {agentLabel.text}
                 </Text>
               );
-            case 'notes':
-              return hasNotes ? <Ionicons name="chatbubble-outline" size={13} color={colors.textSecondary} /> : null;
             case 'rating':
               return rating != null ? (
-                <View style={[styles.ratingBadge, { backgroundColor: rating >= 7 ? colors.success + '25' : rating >= 4 ? '#f5a623' + '25' : colors.error + '25' }]}>
-                  <Text style={[styles.ratingBadgeText, { color: rating >= 7 ? colors.success : rating >= 4 ? '#f5a623' : colors.error }]}>{rating}</Text>
+                <View style={[styles.potBadge, { backgroundColor: potentialColor(rating) }]}>
+                  <Text style={styles.potBadgeText}>{rating}</Text>
                 </View>
               ) : null;
             case 'added':
               return (
-                <Text style={[{ fontSize: 11, color: colors.textSecondary }]} numberOfLines={1}>
-                  {addedDate || '-'}
+                <Text style={styles.monoCell} numberOfLines={1}>
+                  {addedDate || '–'}
                 </Text>
               );
             default:
@@ -705,7 +712,7 @@ export function WatchlistScreen() {
                       getColumnWidth={matchEvalTable.getColumnWidth}
                       style={[styles.playerRow, { borderBottomColor: colors.border }]}
                       onPress={() => {
-                        returnToPlayerRef.current = selectedPlayer;
+                        returnToPlayerRef.current = selectedPlayer as any;
                         setSelectedPlayer(null);
                         setTimeout(() => {
                           (navigation as any).navigate('PlayerEvaluation', {
@@ -772,42 +779,34 @@ export function WatchlistScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      {/* Header */}
-      <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Text style={[styles.backArrow, { color: colors.text }]}>{'\u2190'}</Text>
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: colors.text }]}>
-          {viewTab === 'beobachtet' ? 'Beobachtet' : 'Watchlist'}
-        </Text>
-        {/* Tabs: Watchlist | Beobachtet */}
-        <View style={{ flexDirection: 'row', gap: 6, marginRight: 10 }}>
-          <TouchableOpacity
-            onPress={() => setViewTab('watchlist')}
-            style={{
-              paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1,
-              borderColor: viewTab === 'watchlist' ? colors.primary : colors.border,
-              backgroundColor: viewTab === 'watchlist' ? colors.primary + '18' : 'transparent',
-            }}
-          >
-            <Text style={{ fontSize: 13, fontWeight: viewTab === 'watchlist' ? '700' : '500', color: viewTab === 'watchlist' ? colors.primary : colors.textSecondary }}>
-              Watchlist ({watchlist.length})
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            onPress={() => setViewTab('beobachtet')}
-            style={{
-              paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, borderWidth: 1,
-              borderColor: viewTab === 'beobachtet' ? colors.primary : colors.border,
-              backgroundColor: viewTab === 'beobachtet' ? colors.primary + '18' : 'transparent',
-            }}
-          >
-            <Text style={{ fontSize: 13, fontWeight: viewTab === 'beobachtet' ? '700' : '500', color: viewTab === 'beobachtet' ? colors.primary : colors.textSecondary }}>
-              Beobachtet ({observed.length})
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+      {/* Header (gelber Titelbalken wie im Dashboard) */}
+      <RetroHeader
+        title={viewTab === 'beobachtet' ? 'Beobachtet' : 'Watchlist'}
+        subtitle={viewTab === 'beobachtet' ? 'Alle gesichteten Spieler' : 'Markierte Spieler im Blick'}
+        onBack={() => navigation.goBack()}
+        right={
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              onPress={() => setViewTab('watchlist')}
+              style={[styles.headerTab, HARD_SHADOW, viewTab === 'watchlist' && styles.headerTabActive]}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.headerTabText, viewTab === 'watchlist' && styles.headerTabTextActive]}>
+                {`Watchlist (${watchlist.length})`}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              onPress={() => setViewTab('beobachtet')}
+              style={[styles.headerTab, HARD_SHADOW, viewTab === 'beobachtet' && styles.headerTabActive]}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.headerTabText, viewTab === 'beobachtet' && styles.headerTabTextActive]}>
+                {`Beobachtet (${observed.length})`}
+              </Text>
+            </TouchableOpacity>
+          </View>
+        }
+      />
 
       {/* List */}
       {viewTab === 'beobachtet' ? (
@@ -829,11 +828,11 @@ export function WatchlistScreen() {
           renderItem={({ item }) => (
             <TouchableOpacity
               onPress={() => openPlayerDetail(item.player)}
-              style={{
+              style={[{
                 flexDirection: 'row', alignItems: 'center', gap: 10,
-                backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.border,
-                borderRadius: 10, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 8,
-              }}
+                backgroundColor: colors.surface,
+                borderRadius: 2, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 10,
+              }, HARD_SHADOW]}
               activeOpacity={0.7}
             >
               <View style={{ flex: 1 }}>
@@ -850,8 +849,11 @@ export function WatchlistScreen() {
               <View style={{ backgroundColor: '#2563eb', borderRadius: 10, minWidth: 26, paddingHorizontal: 6, paddingVertical: 3, alignItems: 'center' }}>
                 <Text style={{ fontSize: 12, fontWeight: '800', color: '#fff' }}>{item.reportCount}×</Text>
               </View>
-              <Text style={{ fontSize: 12, color: colors.textSecondary, minWidth: 70, textAlign: 'right' }}>
-                {item.lastMatchDate || ''}
+              <Text style={{ fontSize: 12, fontFamily: MONO, color: colors.textSecondary, minWidth: 70, textAlign: 'right' }}>
+                {/* Datum kann ISO oder DD.MM.YYYY sein — einheitlich deutsch anzeigen */}
+                {item.lastMatchDate && /^\d{4}-\d{2}-\d{2}/.test(item.lastMatchDate)
+                  ? item.lastMatchDate.slice(0, 10).split('-').reverse().join('.')
+                  : item.lastMatchDate || ''}
               </Text>
             </TouchableOpacity>
           )}
@@ -873,7 +875,7 @@ export function WatchlistScreen() {
         />
       ) : (
         <View
-          style={[styles.listCard, { borderColor: colors.border, backgroundColor: colors.surface }]}
+          style={[styles.listCard, { backgroundColor: colors.surface }, HARD_SHADOW]}
           onLayout={(e) => setTableWidth(e.nativeEvent.layout.width)}
         >
           {watchlist.length > 0 && tableWidth > 0 && (
@@ -910,7 +912,30 @@ export function WatchlistScreen() {
       )}
 
       {/* Detail Modal */}
-      {renderDetailSheet()}
+      {detailPlayer && (
+        <PlayerDetailModal
+          player={detailPlayer}
+          onClose={() => setDetailPlayer(null)}
+          onStatusChanged={() => fetchData()}
+          onOpenEvaluation={(ev) => {
+            returnToPlayerRef.current = detailPlayer;
+            setDetailPlayer(null);
+            (navigation as any).navigate('PlayerEvaluation', {
+              matchId: ev.match_id,
+              matchName: ev.match_name,
+              matchDate: ev.match_date,
+              mannschaft: ev.age_group,
+              playerName: `${ev.last_name || ''}, ${ev.first_name || ''}`,
+              playerNumber: ev.jersey_number,
+              playerPosition: ev.positions?.split(', ')[0] || null,
+              playerBirthDate: ev.birth_date,
+              agentName: ev.agent_name,
+              transfermarktUrl: ev.transfermarkt_url,
+              beraterPlayerId: detailPlayer.id,
+            });
+          }}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -922,8 +947,26 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
-    borderBottomWidth: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+  },
+  headerTab: {
+    backgroundColor: '#ffffff',
+    borderRadius: 2,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  headerTabActive: {
+    backgroundColor: RETRO.text,
+  },
+  headerTabText: {
+    fontSize: 12,
+    fontWeight: '700' as const,
+    fontFamily: MONO,
+    color: RETRO.text,
+  },
+  headerTabTextActive: {
+    color: RETRO.yellow,
   },
   backButton: {
     marginRight: 12,
@@ -949,11 +992,11 @@ const styles = StyleSheet.create({
   },
 
   // Desktop list card
+  // weiße Retro-Karte: randlos, nur harter Schatten
   listCard: {
     flex: 1,
     margin: 12,
-    borderWidth: 1,
-    borderRadius: 12,
+    borderRadius: 2,
     overflow: 'hidden',
   },
 
@@ -972,10 +1015,9 @@ const styles = StyleSheet.create({
 
   // Mobile card
   mobileCard: {
-    borderRadius: 12,
+    borderRadius: 2,
     padding: 14,
     marginBottom: 10,
-    borderWidth: 1,
   },
   mobileCardHeader: {
     flexDirection: 'row',
@@ -1034,7 +1076,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 10,
-    paddingVertical: 6,
+    paddingVertical: 8,
     borderBottomWidth: 1,
     minHeight: 38,
   },
@@ -1051,9 +1093,27 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   playerColName: {
-    fontSize: 12,
-    fontWeight: '500',
+    fontSize: 13,
+    fontWeight: '700',
     flexShrink: 1,
+  },
+  monoCell: {
+    fontSize: 12,
+    fontFamily: MONO,
+    color: RETRO.text,
+  },
+  potBadge: {
+    minWidth: 26,
+    height: 22,
+    paddingHorizontal: 5,
+    borderRadius: 2,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  potBadgeText: {
+    fontSize: 13,
+    fontWeight: '800' as const,
+    color: '#ffffff',
   },
   playerColAge: {
     fontSize: 11,
@@ -1307,6 +1367,20 @@ const styles = StyleSheet.create({
     alignItems: 'center' as const,
     justifyContent: 'center' as const,
     marginLeft: 6,
+  },
+  // "Sofort machen"-Markierung (goldenes Badge vor dem Namen)
+  topZielBadge: {
+    backgroundColor: '#F0C040',
+    borderRadius: 2,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    marginRight: 2,
+  },
+  topZielBadgeText: {
+    fontSize: 9,
+    fontWeight: '800' as const,
+    letterSpacing: 0.5,
+    color: '#14141e',
   },
   ratingBadgeText: {
     fontSize: 10,

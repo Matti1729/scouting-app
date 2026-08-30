@@ -1,10 +1,9 @@
 import React, { useMemo } from 'react';
-import { View, Text, TouchableOpacity, Image, Linking, StyleSheet, Platform, useWindowDimensions } from 'react-native';
+import { View, Text, TouchableOpacity, Image, Linking, StyleSheet, Platform } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
-import { MONO, HARD_SHADOW } from '../../theme/retro';
-import { Position, POSITION_LABELS } from '../../types';
+import { MONO, HARD_SHADOW, RETRO_CHIP, RETRO_CHIP_TEXT, RETRO } from '../../theme/retro';
+import { Position } from '../../types';
 import { Dropdown } from '../Dropdown';
-import { RatingBar } from './RatingBar';
 
 const POSITIONS: Position[] = ['TW', 'IV', 'LV', 'RV', 'DM', 'ZM', 'LM', 'RM', 'OM', 'LF', 'RF', 'ST'];
 const POSITION_OPTIONS = POSITIONS.map(pos => ({
@@ -37,200 +36,182 @@ const openUrl = (url: string) => {
   }
 };
 
+/** ISO "YYYY-MM-DD" -> "DD.MM.YYYY" */
+function formatIsoDate(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const parts = iso.split('-');
+  if (parts.length !== 3) return iso;
+  return `${parts[2]}.${parts[1]}.${parts[0]}`;
+}
+
+/** Farbe wie im Potential-Schiebebalken (1-3 rot, 4-6 orange, 7-9 grün, 10 gold) */
+function potentialColor(v: number): string {
+  if (v <= 0) return '#9a968e';
+  if (v === 10) return '#F0C040';
+  if (v >= 7) return '#22c55e';
+  if (v >= 4) return '#e8930c';
+  return '#dc2626';
+}
+
 interface EvalHeaderProps {
   jerseyNumber: string;
   firstName: string;
   lastName: string;
-  currentClub: string;
-  ageGroup: string;
   birthDate: string;
   positions: Position[];
   onPositionsChange: (positions: Position[]) => void;
-  matchName: string;
-  matchDate: string;
   overallRating: number;
   onRatingChange: (value: number) => void;
-  onClose: () => void;
   transfermarktUrl?: string;
-  agentName?: string;
   clubLogoUrl?: string | null;
+  /** Anzeigename des Vereins (z.B. "Borussia Dortmund U19") */
+  clubName?: string;
+  leagueName?: string | null;
+  contractUntil?: string | null; // ISO "YYYY-MM-DD"
+  marketValue?: string | null;
+  agentName?: string | null;
+  agentUrl?: string | null;
 }
 
+/**
+ * Kopfbereich des Scoutingberichts als Karten-Raster wie im Spielerprofil:
+ * ALLGEMEINES (Nummer/Name/TM · Alter · Position) · VEREIN · VERTRAG ·
+ * POTENTIAL (vollflächig gefärbt, Zahl + Slider).
+ */
 export function EvalHeader({
   jerseyNumber,
   firstName,
   lastName,
-  currentClub,
-  ageGroup,
   birthDate,
   positions,
   onPositionsChange,
-  matchName,
-  matchDate,
   overallRating,
   onRatingChange,
-  onClose,
   transfermarktUrl,
-  agentName,
   clubLogoUrl,
+  clubName,
+  leagueName,
+  contractUntil,
+  marketValue,
+  agentName,
+  agentUrl,
 }: EvalHeaderProps) {
   const { colors } = useTheme();
-  const { width } = useWindowDimensions();
-  const isDesktop = width >= 768;
   // Anzeige als "Name, Vorname" (wie in der Aufstellung)
   const displayName = [lastName, firstName].filter(Boolean).join(', ') || 'Spieler';
-  const age = useMemo(() => birthDate ? calculateAge(birthDate) : null, [birthDate]);
+  const age = useMemo(() => (birthDate ? calculateAge(birthDate) : null), [birthDate]);
 
-  const birthYear = birthDate ? birthDate.split('.')[2]?.slice(-2) : null;
+  // "15 J. (11.03.11)" — Geburtsjahr zweistellig
+  const birthShort = birthDate ? birthDate.replace(/\.(\d{2})(\d{2})$/, '.$2') : null;
+  const alterDisplay =
+    age !== null ? `${age} J.${birthShort ? ` (${birthShort})` : ''}` : birthShort || '—';
 
-  const alterDisplay = birthDate && age !== null
-    ? `${birthDate} · ${age} J.`
-    : (birthDate || (age !== null ? `${age} J.` : '-'));
+  const chip = (label: string) => (
+    <View style={styles.chip}>
+      <Text style={RETRO_CHIP_TEXT as any}>{label}</Text>
+    </View>
+  );
 
-  if (isDesktop) {
-    // Zwei Zeilen: 1. Name · TM · Position · Verein — 2. Alter · Berater · Potential
-    return (
-      <View style={[styles.container, HARD_SHADOW, { backgroundColor: colors.surface }]}>
-        <View style={styles.deskRow}>
-          <View style={[styles.mobileNameRow, styles.deskCellEven]}>
-            <View style={[styles.jerseyBadge, { borderColor: colors.inputBorder, backgroundColor: colors.surfaceSecondary }]}>
-              <Text style={[styles.jerseyBadgeText, { color: colors.text }]}>
-                {jerseyNumber || '?'}
-              </Text>
-            </View>
-            <Text style={[styles.deskValue, { color: colors.text }]} numberOfLines={1}>
-              {displayName}
-            </Text>
-          </View>
-          {transfermarktUrl ? (
-            <>
-              <View style={[styles.deskDivider, { backgroundColor: colors.border }]} />
-              <TouchableOpacity onPress={() => openUrl(transfermarktUrl)} activeOpacity={0.7} hitSlop={6}>
-                <Image
-                  source={require('../../../assets/transfermarkt-icon.jpg')}
-                  style={styles.tmLogoInline}
-                  resizeMode="cover"
-                />
-              </TouchableOpacity>
-            </>
-          ) : null}
-          <View style={[styles.deskDivider, { backgroundColor: colors.border }]} />
-          <View style={[styles.deskCell, styles.deskCellEven]}>
-            <Text style={[styles.deskLabel, { color: colors.textSecondary }]}>POSITION</Text>
-            <Dropdown
-              options={POSITION_OPTIONS}
-              value={positions as string[]}
-              onChange={(val) => onPositionsChange(val as Position[])}
-              placeholder="Pos."
-              multiSelect
-              compact
-            />
-          </View>
-          <View style={[styles.deskDivider, { backgroundColor: colors.border }]} />
-          <View style={[styles.deskCell, styles.deskCellEven, styles.clubRow]}>
-            {clubLogoUrl ? (
-              <Image source={{ uri: clubLogoUrl }} style={styles.clubLogo} resizeMode="contain" />
-            ) : null}
-            <Text style={[styles.deskValue, { color: colors.text }]} numberOfLines={1}>
-              {[currentClub, ageGroup].filter(Boolean).join(' ')}
-            </Text>
-          </View>
-        </View>
-        <View style={[styles.deskRow, styles.deskRow2, { borderTopColor: colors.inputBorder }]}>
-          <View style={[styles.deskCell, styles.deskCellEven]}>
-            <Text style={[styles.deskLabel, { color: colors.textSecondary }]}>ALTER</Text>
-            <Text style={[styles.deskValue, { color: colors.text }]} numberOfLines={1}>
-              {alterDisplay}
-            </Text>
-          </View>
-          <View style={[styles.deskDivider, { backgroundColor: colors.border }]} />
-          <View style={[styles.deskCell, styles.deskCellEven]}>
-            <Text style={[styles.deskLabel, { color: colors.textSecondary }]}>BERATER</Text>
-            <Text style={[styles.deskValue, { color: colors.text }]} numberOfLines={1}>
-              {agentName || '-'}
-            </Text>
-          </View>
-          <View style={[styles.deskDivider, { backgroundColor: colors.border }]} />
-          <View style={[styles.deskCell, styles.deskCellEven]}>
-            <Text style={[styles.deskLabel, { color: colors.textSecondary }]}>POTENTIAL</Text>
-            <RatingBar value={overallRating} onChange={onRatingChange} plain />
-          </View>
-        </View>
-      </View>
-    );
-  }
+  const row = (label: string, value: React.ReactNode, last = false) => (
+    <View style={[styles.cardRow, last && { borderBottomWidth: 0 }]}>
+      <Text style={styles.cardRowLabel}>{label}</Text>
+      {typeof value === 'string' ? (
+        <Text style={styles.cardRowValue} numberOfLines={1}>{value}</Text>
+      ) : (
+        value
+      )}
+    </View>
+  );
 
   return (
-    <View style={[styles.container, HARD_SHADOW, { backgroundColor: colors.surface }]}>
-      {/* Row 2: Nummer + Name + TM-Icon (Match-Info steht in der gelben Titelleiste) */}
-      <View style={styles.mobileNameRow}>
-        <View style={[styles.jerseyBadge, { borderColor: colors.inputBorder, backgroundColor: colors.surfaceSecondary }]}>
-          <Text style={[styles.jerseyBadgeText, { color: colors.text }]}>
-            {jerseyNumber || '?'}
-          </Text>
+    <View style={styles.grid}>
+      {/* ALLGEMEINES: Nummer + Name + TM · Alter · Position */}
+      <View style={[styles.card, HARD_SHADOW]}>
+        {chip('ALLGEMEINES')}
+        <View style={styles.nameRow}>
+          <View style={[styles.jerseyBadge, { borderColor: colors.inputBorder, backgroundColor: colors.surfaceSecondary }]}>
+            <Text style={[styles.jerseyBadgeText, { color: RETRO.text }]}>{jerseyNumber || '?'}</Text>
+          </View>
+          <Text style={styles.nameText} numberOfLines={1}>{displayName}</Text>
+          {transfermarktUrl ? (
+            <TouchableOpacity onPress={() => openUrl(transfermarktUrl)} activeOpacity={0.7} hitSlop={6}>
+              <Image source={require('../../../assets/tm-icon.png')} style={styles.tmIconSmall} />
+            </TouchableOpacity>
+          ) : null}
         </View>
-        <Text style={[styles.deskValue, { color: colors.text }]} numberOfLines={1}>
-          {displayName}
-        </Text>
-        {transfermarktUrl ? (
-          <TouchableOpacity onPress={() => openUrl(transfermarktUrl)} activeOpacity={0.7} hitSlop={6}>
-            <Image
-              source={require('../../../assets/transfermarkt-icon.jpg')}
-              style={styles.tmLogoInline}
-              resizeMode="cover"
-            />
+        {row('Alter', alterDisplay)}
+        {row(
+          'Position',
+          <Dropdown
+            options={POSITION_OPTIONS}
+            value={positions as string[]}
+            onChange={(val) => onPositionsChange(val as Position[])}
+            placeholder="Pos."
+            multiSelect
+            compact
+          />,
+          true
+        )}
+      </View>
+
+      {/* VEREIN */}
+      <View style={[styles.card, HARD_SHADOW]}>
+        {chip('VEREIN')}
+        {row(
+          'Verein',
+          <View style={styles.clubValue}>
+            {clubLogoUrl ? <Image source={{ uri: clubLogoUrl }} style={styles.clubLogo} resizeMode="contain" /> : null}
+            <Text style={styles.cardRowValue} numberOfLines={1}>{clubName || '—'}</Text>
+          </View>
+        )}
+        {row('Liga', leagueName || '—', true)}
+      </View>
+
+      {/* VERTRAG */}
+      <View style={[styles.card, HARD_SHADOW]}>
+        {chip('VERTRAG')}
+        {row('Vertrag bis', formatIsoDate(contractUntil) || '—')}
+        {row('Marktwert', marketValue || '—')}
+        {row(
+          'Berater',
+          agentName && agentName !== 'kein Beratereintrag' ? (
+            <View style={styles.clubValue}>
+              <Text style={styles.cardRowValue} numberOfLines={1}>{agentName}</Text>
+              {agentUrl ? (
+                <TouchableOpacity onPress={() => openUrl(agentUrl)} hitSlop={6}>
+                  <Image source={require('../../../assets/tm-icon.png')} style={styles.tmIconSmall} />
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : (
+            'kein Eintrag'
+          ),
+          true
+        )}
+      </View>
+
+      {/* POTENTIAL: vollflächig in der Bewertungsfarbe, Zahl + Slider */}
+      <View style={[styles.card, styles.cardPotential, HARD_SHADOW, { backgroundColor: potentialColor(overallRating) }]}>
+        {chip('POTENTIAL')}
+        {/* − Score + in einer Reihe, Zahl mittig wie im Spielerprofil */}
+        <View style={styles.ratingRow}>
+          <TouchableOpacity
+            style={[styles.stepBtn, HARD_SHADOW]}
+            onPress={() => onRatingChange(Math.max(1, overallRating - 1))}
+            activeOpacity={0.7}
+            hitSlop={4}
+          >
+            <Text style={styles.stepBtnText}>−</Text>
           </TouchableOpacity>
-        ) : null}
-      </View>
-
-      {/* Row 3: Club (mit Wappen) + Berater */}
-      <View style={[styles.mobileMetaRow, styles.clubRow]}>
-        {clubLogoUrl ? (
-          <Image source={{ uri: clubLogoUrl }} style={styles.clubLogo} resizeMode="contain" />
-        ) : null}
-        <Text style={[styles.mobileClubText, { color: colors.textSecondary }]} numberOfLines={1}>
-          {[currentClub, ageGroup].filter(Boolean).join(' ')}
-        </Text>
-      </View>
-      {agentName ? (
-        <Text style={[styles.mobileClubText, { color: colors.textSecondary }]} numberOfLines={1}>
-          Berater: {agentName}
-        </Text>
-      ) : null}
-
-      {/* Row 4: Position | Alter | Rating — tabellarisch mit Trennlinien */}
-      <View style={[styles.mobileInfoBar, { borderTopColor: colors.border }]}>
-        <View style={styles.mobileInfoCell}>
-          <Text style={[styles.mobileInfoLabel, styles.mobileInfoLabelWrap, { color: colors.textSecondary }]}>POSITION</Text>
-          <View style={styles.mobilePositionWrap}>
-            <Dropdown
-              options={POSITION_OPTIONS}
-              value={positions as string[]}
-              onChange={(val) => onPositionsChange(val as Position[])}
-              placeholder="Pos."
-              multiSelect
-              compact
-            />
-          </View>
-        </View>
-        <View style={[styles.mobileInfoDivider, { backgroundColor: colors.border }]} />
-        <View style={styles.mobileInfoCell}>
-          <Text style={[styles.mobileInfoLabel, styles.mobileInfoLabelWrap, { color: colors.textSecondary }]}>ALTER</Text>
-          <View style={{ alignItems: 'center' }}>
-            <Text style={[styles.mobileInfoValue, { color: colors.text }]}>
-              {age !== null ? `${age} J.` : '-'}
-            </Text>
-            {birthDate ? (
-              <Text style={{ fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>
-                {birthDate}
-              </Text>
-            ) : null}
-          </View>
-        </View>
-        <View style={[styles.mobileInfoDivider, { backgroundColor: colors.border }]} />
-        <View style={styles.mobileInfoCell}>
-          <Text style={[styles.mobileInfoLabel, styles.mobileInfoLabelWrap, { color: colors.textSecondary }]}>POTENTIAL</Text>
-          <RatingBar value={overallRating} onChange={onRatingChange} compact compactSize={36} />
+          <Text style={styles.potentialNumber}>{overallRating || '—'}</Text>
+          <TouchableOpacity
+            style={[styles.stepBtn, HARD_SHADOW]}
+            onPress={() => onRatingChange(Math.min(10, overallRating + 1))}
+            activeOpacity={0.7}
+            hitSlop={4}
+          >
+            <Text style={styles.stepBtnText}>+</Text>
+          </TouchableOpacity>
         </View>
       </View>
     </View>
@@ -238,167 +219,121 @@ export function EvalHeader({
 }
 
 const styles = StyleSheet.create({
-  container: {
-    borderRadius: 2, // Anstoss-Optik: eckig, randlos mit Schatten
-    padding: 16,
-    gap: 10,
-  },
-  // === Desktop: einzeilige Kopfleiste ===
-  deskRow: {
+  grid: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
+    flexWrap: 'wrap',
+    gap: 16,
+    marginBottom: 6,
   },
-  deskNameBlock: {
-    minWidth: 200,
-    maxWidth: 320,
-    gap: 2,
-  },
-  deskRow2: {
-    borderTopWidth: 1,
-    // Container-Padding = 16, Container-gap = 10: 10 + 6 = 16 über der Linie, 16 darunter
-    marginTop: 6,
-    paddingTop: 16,
-  },
-  deskDivider: {
-    width: 1,
-    alignSelf: 'stretch',
-  },
-  deskCell: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-  },
-  deskCellGrow: {
+  card: {
     flex: 1,
-    minWidth: 160,
-  },
-  deskCellEven: {
-    flex: 1,
-    minWidth: 0,
-  },
-  deskLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    letterSpacing: 2,
-    fontFamily: MONO,
-    lineHeight: 18,
-  },
-  deskValue: {
-    fontSize: 14,
-    fontWeight: '700',
-    lineHeight: 18,
-  },
-  clubRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  clubLogo: {
-    width: 18,
-    height: 18,
-  },
-  tmLogoInline: {
-    height: 18,
-    width: 18,
+    minWidth: 260,
+    backgroundColor: '#ffffff',
     borderRadius: 2,
-    marginLeft: 2,
+    paddingHorizontal: 12,
+    paddingTop: 16,
+    paddingBottom: 6,
   },
-  // === Top row (shared) ===
-  topRow: {
-    flexDirection: 'row',
+  cardPotential: {
+    flex: 0,
+    minWidth: 150,
+    maxWidth: 190,
     alignItems: 'center',
-  },
-  topSpacer: {
-    flex: 1,
-  },
-  matchInfo: {
-    fontSize: 12,
-    textAlign: 'center',
-    flex: 2,
-  },
-  topCloseWrap: {
-    flex: 1,
-    alignItems: 'flex-end',
-  },
-  closeButton: {
-    width: 30,
-    height: 30,
-    borderRadius: 15,
-    borderWidth: 1,
     justifyContent: 'center',
-    alignItems: 'center',
+    paddingBottom: 14,
+    paddingHorizontal: 14,
   },
-  closeText: {
-    fontSize: 14,
-    fontWeight: '600',
+  chip: {
+    ...(RETRO_CHIP as any),
   },
-  // === Mobile layout ===
-  mobileNameRow: {
+  nameRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e1d8',
   },
-  // Rückennummer exakt wie in der Aufstellung (PlayerRow)
   jerseyBadge: {
     width: 22,
     height: 22,
     borderRadius: 2,
     borderWidth: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
   },
   jerseyBadgeText: {
     fontSize: 11,
-    fontWeight: '600',
-  },
-  playerNameMobile: {
-    fontSize: 20,
     fontWeight: '700',
+  },
+  nameText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '700',
+    color: RETRO.text,
+  },
+  tmIconSmall: {
+    width: 20,
+    height: 20,
+    borderRadius: 2,
+  },
+  cardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e1d8',
+    minHeight: 34,
+  },
+  cardRowLabel: {
+    fontSize: 13,
+    color: RETRO.text,
+  },
+  cardRowValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: RETRO.text,
     flexShrink: 1,
   },
-  mobileMetaRow: {
+  clubValue: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: -4,
+    gap: 6,
+    flexShrink: 1,
   },
-  mobileClubText: {
-    fontSize: 13,
+  clubLogo: {
+    width: 18,
+    height: 18,
   },
-  mobileInfoBar: {
-    flexDirection: 'row',
-    borderTopWidth: 1,
-    paddingTop: 6,
-    marginTop: 4,
+  potentialNumber: {
+    fontSize: 52,
+    fontWeight: '800',
+    color: '#ffffff',
+    lineHeight: 60,
   },
-  mobileInfoCell: {
+  ratingRow: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    gap: 8,
+  },
+  // randlos + HARD_SHADOW wie alle Buttons, graue Retro-Fläche
+  stepBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 0,
+    backgroundColor: '#e6e2da',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingTop: 16,
-    paddingBottom: 2,
-    paddingHorizontal: 6,
   },
-  mobileInfoLabelWrap: {
-    position: 'absolute',
-    top: -4,
-    left: 6,
-  },
-  mobileInfoLabel: {
-    fontSize: 10,
-    fontWeight: '600',
-    letterSpacing: 0.5,
-  },
-  mobileInfoValue: {
-    fontSize: 24,
-    fontWeight: '700',
-  },
-  mobileInfoDivider: {
-    width: 1,
-    alignSelf: 'stretch',
-  },
-  mobilePositionWrap: {
-    alignSelf: 'center',
-    marginTop: 4,
+  stepBtnText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#14141e',
+    lineHeight: 16,
   },
 });

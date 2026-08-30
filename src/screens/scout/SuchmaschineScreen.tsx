@@ -27,8 +27,8 @@ import {
   searchStipendiumPlayers,
 } from '../../services/stipendiumService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
-import { loadLeagues, loadWatchlist, addToWatchlist, loadAllEvaluations } from '../../services/beraterService';
-import { useAuth } from '../../contexts/AuthContext';
+import { RetroHeader } from '../../components/RetroHeader';
+import { loadLeagues, loadWatchlist, addToWatchlist, loadAllEvaluations, loadAlertSubscriptionIds } from '../../services/beraterService';
 import { MONO, RETRO_CHIP, RETRO_CHIP_TEXT } from '../../theme/retro';
 import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
@@ -41,12 +41,34 @@ const RESULT_COLUMNS: ColumnDef[] = [
   { key: 'pos', label: 'Pos', defaultFlex: 0.4, minWidth: 44 },
   { key: 'verein', label: 'Verein', defaultFlex: 1.6, minWidth: 140 },
   { key: 'alter', label: 'Alter', defaultFlex: 0.5, minWidth: 50 },
-  { key: 'vertrag', label: 'Vertrag', defaultFlex: 0.9, minWidth: 90 },
+  { key: 'mv', label: 'Marktwert', defaultFlex: 0.8, minWidth: 80 },
   { key: 'berater', label: 'Berater', defaultFlex: 1.1, minWidth: 100 },
   { key: 'potential', label: 'Pot.', defaultFlex: 0.4, minWidth: 48 },
 ];
 
-type ResultSortKey = 'name' | 'pos' | 'verein' | 'alter' | 'vertrag' | 'berater' | 'potential';
+// Bei aktivem Beraterwechsel-Filter: Wechsel + Datum statt Marktwert/Berater
+const WECHSEL_COLUMNS: ColumnDef[] = [
+  { key: 'name', label: 'Name', defaultFlex: 1.4, minWidth: 130 },
+  { key: 'pos', label: 'Pos', defaultFlex: 0.4, minWidth: 44 },
+  { key: 'verein', label: 'Verein', defaultFlex: 1.3, minWidth: 120 },
+  { key: 'alter', label: 'Alter', defaultFlex: 0.5, minWidth: 50 },
+  { key: 'wechsel', label: 'Beraterwechsel', defaultFlex: 2, minWidth: 180 },
+  { key: 'wdatum', label: 'Datum', defaultFlex: 0.7, minWidth: 80 },
+  { key: 'potential', label: 'Pot.', defaultFlex: 0.4, minWidth: 48 },
+];
+
+type ResultSortKey = 'name' | 'pos' | 'verein' | 'alter' | 'mv' | 'berater' | 'potential' | 'wdatum';
+
+/** "750 Tsd. €" / "1,50 Mio. €" -> Zahl (für die Sortierung) */
+function parseMvNumber(mv: string | null): number {
+  if (!mv) return 0;
+  const num = parseFloat(mv.replace(/[^\d.,]/g, ' ').trim().replace(',', '.'));
+  if (isNaN(num)) return 0;
+  if (mv.includes('Mrd')) return num * 1000000000;
+  if (mv.includes('Mio')) return num * 1000000;
+  if (mv.includes('Tsd')) return num * 1000;
+  return num;
+}
 
 // Farbe wie im Potential-Schiebebalken (1-3 rot, 4-6 orange, 7-9 grün, 10 gold)
 function potentialColor(v: number): string {
@@ -140,8 +162,8 @@ function seasonOfDate(dateStr: string | null): string | null {
   return seasonLabel(startYear);
 }
 
-// Alter-Buttons: 14..33 plus "34+"
-const AGE_OPTIONS: number[] = Array.from({ length: 20 }, (_, i) => 14 + i);
+// Alter-Buttons: ≤14, 15..32, ≥33
+const AGE_OPTIONS: number[] = Array.from({ length: 19 }, (_, i) => 14 + i);
 
 // Positions-Buttons (TM-Kürzel)
 const POSITION_OPTIONS: { code: string; label: string }[] = [
@@ -561,7 +583,12 @@ export function SuchmaschineScreen() {
 
   // Ergebnistabelle (Desktop)
   const [tableWidth, setTableWidth] = useState(0);
-  const table = useTableColumns(RESULT_COLUMNS, tableWidth, 'suchmaschine_results_v3');
+  // Ergebnisse mit aktivem Wechsel-Filter? (steuert Spalten + Standard-Sortierung)
+  const [resultsWechsel, setResultsWechsel] = useState(false);
+  const activeColumns = resultsWechsel ? WECHSEL_COLUMNS : RESULT_COLUMNS;
+  const tableStandard = useTableColumns(RESULT_COLUMNS, tableWidth, 'suchmaschine_results_v6');
+  const tableWechsel = useTableColumns(WECHSEL_COLUMNS, tableWidth, 'suchmaschine_results_wechsel');
+  const table = resultsWechsel ? tableWechsel : tableStandard;
   const [sortKey, setSortKey] = useState<ResultSortKey>('name');
   const [sortAsc, setSortAsc] = useState(true);
 
@@ -583,10 +610,14 @@ export function SuchmaschineScreen() {
 
   // Scouting-Ratings (für den Potential-Filter): Bewertung vor Watchlist-Rating
   const [ratingsMap, setRatingsMap] = useState<Map<string, number>>(new Map());
-
-  // Initialen für die Kopfzeile (wie im Dashboard: erste 2 Zeichen der E-Mail)
-  const { session } = useAuth();
-  const initials = (session?.user?.email || '').slice(0, 2).toUpperCase();
+  // Bewertungsstatus je Spieler (nicht_interessant/top_ziel) fürs Ausgrauen/Filtern
+  const [statusMap, setStatusMap] = useState<Map<string, string>>(new Map());
+  const [hideUninteresting, setHideUninteresting] = useState(false);
+  // Beraterwechsel-Filter (Tracker-Integration): letzte N Tage, 0 = aus
+  const [wechselTage, setWechselTage] = useState(0);
+  // Glocken-Filter: nur Spieler mit aktivem Benachrichtigungs-Abo
+  const [nurGlocke, setNurGlocke] = useState(false);
+  const [alertIds, setAlertIds] = useState<Set<string>>(new Set());
 
   // Suchergebnisse
   const [searching, setSearching] = useState(false);
@@ -620,6 +651,7 @@ export function SuchmaschineScreen() {
   useEffect(() => {
     loadData();
     loadLeagueOptions();
+    loadAlertSubscriptionIds().then(setAlertIds).catch(() => {});
     Promise.all([loadWatchlist(), loadAllEvaluations()]).then(([wl, evals]) => {
       setWatchlistIds(new Set(wl.map((w) => w.player_id).filter(Boolean) as string[]));
       // Rating aus Bewertung, sonst aus Watchlist-Eintrag
@@ -627,10 +659,13 @@ export function SuchmaschineScreen() {
       for (const w of wl) {
         if (w.player_id && w.rating != null) map.set(w.player_id, w.rating);
       }
+      const statuses = new Map<string, string>();
       for (const [pid, ev] of evals) {
         if (ev.rating != null) map.set(pid, ev.rating);
+        statuses.set(pid, ev.status);
       }
       setRatingsMap(map);
+      setStatusMap(statuses);
     });
   }, []);
 
@@ -735,6 +770,7 @@ export function SuchmaschineScreen() {
       nation: nation || undefined,
       vereinslos,
       contractExpiring,
+      wechselTage: wechselTage || undefined,
     });
     // Filter, die nur der Screen kennt (Ratings/Watchlist), client-seitig
     let players = result.players;
@@ -751,6 +787,17 @@ export function SuchmaschineScreen() {
     }
     if (aufWatchlist) {
       players = players.filter((p) => watchlistIds.has(p.id));
+    }
+    if (hideUninteresting) {
+      players = players.filter((p) => statusMap.get(p.id) !== 'nicht_interessant');
+    }
+    if (nurGlocke) {
+      players = players.filter((p) => alertIds.has(p.id));
+    }
+    setResultsWechsel(wechselTage > 0);
+    if (wechselTage > 0) {
+      setSortKey('wdatum');
+      setSortAsc(false);
     }
     setSearchResults(players);
     setHiddenNoPosition(result.hiddenNoPosition);
@@ -769,6 +816,9 @@ export function SuchmaschineScreen() {
     setContractExpiring(false);
     setOhneBerater(false);
     setAufWatchlist(false);
+    setHideUninteresting(false);
+    setNurGlocke(false);
+    setWechselTage(0);
     setSearchResults(null);
   };
 
@@ -777,8 +827,8 @@ export function SuchmaschineScreen() {
     const parts: string[] = [];
     if (searchName.trim()) parts.push(`Name: ${searchName.trim()}`);
     if (selectedAges.size > 0 || agePlus) {
-      const ages = Array.from(selectedAges).sort((a, b) => a - b).map(String);
-      if (agePlus) ages.push('34+');
+      const ages = Array.from(selectedAges).sort((a, b) => a - b).map((a) => (a === 14 ? '≤14' : String(a)));
+      if (agePlus) ages.push('≥33');
       parts.push(`Alter: ${ages.join(', ')}`);
     }
     if (selectedPositions.size > 0) parts.push(`Position: ${Array.from(selectedPositions).join(', ')}`);
@@ -791,8 +841,11 @@ export function SuchmaschineScreen() {
     if (contractExpiring) parts.push('Vertrag läuft aus');
     if (ohneBerater) parts.push('ohne Berater');
     if (aufWatchlist) parts.push('auf der Watchlist');
+    if (hideUninteresting) parts.push('ohne Uninteressante');
+    if (nurGlocke) parts.push('Glocke aktiv');
+    if (wechselTage > 0) parts.push(`Beraterwechsel ${wechselTage} Tage`);
     return parts.length > 0 ? parts.join(' · ') : 'Keine Filter gesetzt';
-  }, [searchName, selectedAges, agePlus, selectedPositions, selectedPotentials, selectedLeagueIds, nation, vereinslos, contractExpiring, ohneBerater, aufWatchlist]);
+  }, [searchName, selectedAges, agePlus, selectedPositions, selectedPotentials, selectedLeagueIds, nation, vereinslos, contractExpiring, ohneBerater, aufWatchlist, hideUninteresting, nurGlocke, wechselTage]);
 
   const togglePotential = (val: number) => {
     setSelectedPotentials((prev) => {
@@ -844,14 +897,16 @@ export function SuchmaschineScreen() {
           return dir * (a.position || 'zz').localeCompare(b.position || 'zz', 'de');
         case 'alter':
           return dir * ((a.age ?? 999) - (b.age ?? 999));
+        case 'mv':
+          return dir * (parseMvNumber(a.market_value) - parseMvNumber(b.market_value));
         case 'verein':
           return dir * clubDisplay(a).localeCompare(clubDisplay(b), 'de');
-        case 'vertrag':
-          return dir * (a.contract_until || '9999').localeCompare(b.contract_until || '9999');
         case 'berater':
           return dir * (agentDisplay(a) || 'zzz').localeCompare(agentDisplay(b) || 'zzz', 'de');
         case 'potential':
           return dir * ((ratingsMap.get(a.id) ?? -1) - (ratingsMap.get(b.id) ?? -1));
+        case 'wdatum':
+          return dir * (a.last_change?.date || '').localeCompare(b.last_change?.date || '');
         default:
           return 0;
       }
@@ -925,6 +980,7 @@ export function SuchmaschineScreen() {
               backgroundColor: STIPENDIUM_YELLOW + '55',
               borderColor: RETRO.yellow,
             },
+            statusMap.get(item.id) === 'nicht_interessant' && { opacity: 0.4 },
           ]}
         >
           <View style={styles.entryInfo}>
@@ -951,7 +1007,7 @@ export function SuchmaschineScreen() {
         </TouchableOpacity>
       );
     },
-    [addedTmIds, addingId, colors]
+    [addedTmIds, addingId, colors, statusMap]
   );
 
   // ==========================================================================
@@ -962,6 +1018,7 @@ export function SuchmaschineScreen() {
     ({ item }: { item: StipendiumSearchPlayer }) => {
       const added = !!(item.tm_player_id && addedTmIds.has(item.tm_player_id));
       const { first, last } = splitName(item.player_name);
+      const uninteresting = statusMap.get(item.id) === 'nicht_interessant';
 
       return (
         <TableRow
@@ -972,6 +1029,7 @@ export function SuchmaschineScreen() {
             styles.tableRow,
             { borderBottomColor: RETRO.rowBorder },
             added && { backgroundColor: STIPENDIUM_YELLOW + '55' },
+            uninteresting && { opacity: 0.4 },
           ]}
           renderCell={(key) => {
             switch (key) {
@@ -1005,16 +1063,31 @@ export function SuchmaschineScreen() {
                     {item.age !== null ? item.age : ''}
                   </Text>
                 );
-              case 'vertrag':
+              case 'mv':
                 return (
                   <Text style={[styles.tableCellMono, { color: RETRO.text }]} numberOfLines={1}>
-                    {formatContract(item.contract_until) || '—'}
+                    {item.market_value || '–'}
                   </Text>
                 );
               case 'berater':
                 return (
                   <Text style={[styles.tableCell, { color: RETRO.text }]} numberOfLines={1}>
                     {agentDisplay(item) || 'kein Eintrag'}
+                  </Text>
+                );
+              case 'wechsel': {
+                const lc = item.last_change;
+                if (!lc) return null;
+                return (
+                  <Text style={[styles.tableCell, { color: RETRO.text }]} numberOfLines={1}>
+                    {`${lc.from || 'kein Berater'} → ${lc.to || 'kein Berater'}`}
+                  </Text>
+                );
+              }
+              case 'wdatum':
+                return (
+                  <Text style={[styles.tableCellMono, { color: RETRO.text }]} numberOfLines={1}>
+                    {item.last_change ? item.last_change.date.slice(0, 10).split('-').reverse().join('.') : ''}
                   </Text>
                 );
               case 'potential': {
@@ -1033,7 +1106,7 @@ export function SuchmaschineScreen() {
         />
       );
     },
-    [addedTmIds, addingId, colors, table.columnOrder, table.getColumnWidth, ratingsMap]
+    [addedTmIds, addingId, colors, table.columnOrder, table.getColumnWidth, ratingsMap, statusMap]
   );
 
   const renderEmpty = (text: string, hint: string) => (
@@ -1091,8 +1164,10 @@ export function SuchmaschineScreen() {
           <View style={nc.row}>
             <Text style={nc.rowLabel}>ALTER</Text>
             <View style={nc.btnWrap}>
-              {AGE_OPTIONS.map((age) => filterBtn(String(age), selectedAges.has(age), () => toggleAge(age)))}
-              {filterBtn('34+', agePlus, () => setAgePlus((v) => !v), 42)}
+              {AGE_OPTIONS.map((age) =>
+                filterBtn(age === 14 ? '≤14' : String(age), selectedAges.has(age), () => toggleAge(age))
+              )}
+              {filterBtn('≥33', agePlus, () => setAgePlus((v) => !v))}
             </View>
           </View>
           <View style={nc.row}>
@@ -1132,11 +1207,25 @@ export function SuchmaschineScreen() {
               />
             </View>
           </View>
-          <View style={nc.checkGroup}>
-            {checkbox('vereinslos', vereinslos, () => setVereinslos((v) => !v))}
-            {checkbox('Vertrag läuft aus', contractExpiring, () => setContractExpiring((v) => !v))}
-            {checkbox('ohne Berater', ohneBerater, () => setOhneBerater((v) => !v))}
-            {checkbox('auf der Watchlist', aufWatchlist, () => setAufWatchlist((v) => !v))}
+          <View style={nc.row}>
+            <Text style={nc.rowLabel}>WECHSEL</Text>
+            <View style={nc.btnWrap}>
+              {[7, 14, 30].map((d) =>
+                filterBtn(`${d} Tage`, wechselTage === d, () => setWechselTage((v) => (v === d ? 0 : d)), 52)
+              )}
+            </View>
+          </View>
+          <View style={nc.checkGroupCols}>
+            <View style={nc.checkCol}>
+              {checkbox('vereinslos', vereinslos, () => setVereinslos((v) => !v))}
+              {checkbox('Vertrag läuft aus', contractExpiring, () => setContractExpiring((v) => !v))}
+              {checkbox('ohne Berater', ohneBerater, () => setOhneBerater((v) => !v))}
+            </View>
+            <View style={nc.checkCol}>
+              {checkbox('auf der Watchlist', aufWatchlist, () => setAufWatchlist((v) => !v))}
+              {checkbox('Uninteressante ausblenden', hideUninteresting, () => setHideUninteresting((v) => !v))}
+              {checkbox('Glocke aktiv', nurGlocke, () => setNurGlocke((v) => !v))}
+            </View>
           </View>
         </View>
       </View>
@@ -1185,7 +1274,7 @@ export function SuchmaschineScreen() {
               <View onLayout={(e) => setTableWidth(e.nativeEvent.layout.width)}>
                 {tableWidth > 0 && (
                   <TableHeader
-                    columnDefs={RESULT_COLUMNS}
+                    columnDefs={activeColumns}
                     columnOrder={table.columnOrder}
                     getColumnWidth={table.getColumnWidth}
                     onResizeStart={table.onResizeStart}
@@ -1255,16 +1344,12 @@ export function SuchmaschineScreen() {
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: RETRO.page }]}>
-      {/* Header (gelber Titelbalken) */}
-      <View style={[styles.header, { backgroundColor: RETRO.yellow }, HARD_SHADOW_LG]}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Text style={[styles.backArrow, { color: RETRO.text }]}>{'←'}</Text>
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: RETRO.text }]}>Suchmaschine</Text>
-        <View style={[nc.headerBox, HARD_SHADOW]}>
-          <Text style={nc.headerBoxText}>{initials || '–'}</Text>
-        </View>
-      </View>
+      {/* Header (gelber Titelbalken wie im Dashboard) */}
+      <RetroHeader
+        title="Suchmaschine"
+        subtitle="Spielerdatenbank durchsuchen"
+        onBack={() => navigation.goBack()}
+      />
 
       {loading ? (
         <View style={styles.loadingContainer}>
@@ -1278,11 +1363,25 @@ export function SuchmaschineScreen() {
       {detailPlayer && (() => {
         const p = detailPlayer;
         const added = !!(p.tm_player_id && addedTmIds.has(p.tm_player_id));
-        const onWatchlist = watchlistIds.has(p.id);
         return (
           <PlayerDetailModal
             player={p}
             onClose={() => setDetailPlayer(null)}
+            onStatusChanged={(s) => {
+              setWatchlistIds((prev) => {
+                const next = new Set(prev);
+                if (s === 'watchlist' || s === 'top_ziel') next.add(p.id);
+                else next.delete(p.id);
+                return next;
+              });
+              setStatusMap((prev) => {
+                const next = new Map(prev);
+                if (s === 'uninteressant') next.set(p.id, 'nicht_interessant');
+                else if (s === 'top_ziel') next.set(p.id, 'top_ziel');
+                else next.set(p.id, 'interessant');
+                return next;
+              });
+            }}
             onOpenEvaluation={(ev) => {
               returnToPlayerRef.current = p;
               setDetailPlayer(null);
@@ -1308,7 +1407,7 @@ export function SuchmaschineScreen() {
                   </View>
                 ) : (
                   <TouchableOpacity
-                    style={[retro.button, styles.detailActionButton]}
+                    style={[styles.detailActionButton, { backgroundColor: '#ffffff' }, HARD_SHADOW]}
                     onPress={() => handleAddToStipendium(p)}
                     disabled={addingId === p.id}
                   >
@@ -1316,23 +1415,6 @@ export function SuchmaschineScreen() {
                       <ActivityIndicator size="small" color={RETRO.text} />
                     ) : (
                       <Text style={[styles.detailActionText, { color: RETRO.text }]}>+ Sportstipendium</Text>
-                    )}
-                  </TouchableOpacity>
-                )}
-                {onWatchlist ? (
-                  <View style={[styles.detailActionButton, { backgroundColor: '#1a5f2a' }]}>
-                    <Text style={[styles.detailActionText, { color: '#ffffff' }]}>auf der Watchlist</Text>
-                  </View>
-                ) : (
-                  <TouchableOpacity
-                    style={[retro.button, styles.detailActionButton]}
-                    onPress={() => handleAddToWatchlist(p)}
-                    disabled={addingWatchlist}
-                  >
-                    {addingWatchlist ? (
-                      <ActivityIndicator size="small" color={RETRO.text} />
-                    ) : (
-                      <Text style={[styles.detailActionText, { color: RETRO.text }]}>+ Watchlist</Text>
                     )}
                   </TouchableOpacity>
                 )}
@@ -1759,15 +1841,16 @@ const styles = StyleSheet.create({
   detailActionButton: {
     borderWidth: 0, // randlos, nur Schatten
     backgroundColor: '#ffffff', // weiße Fläche — hebt sich vom Papier-Hintergrund ab
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    minHeight: 24,
     alignItems: 'center',
     justifyContent: 'center',
     minWidth: 160,
     ...HARD_SHADOW, // gleicher Versatz-Schatten (unten + rechts) wie alle Flächen
   },
   detailActionText: {
-    fontSize: 13,
+    fontSize: 11,
     fontWeight: '600',
   },
 
@@ -1889,6 +1972,17 @@ const nc = StyleSheet.create({
   checkGroup: {
     marginTop: 6,
     marginBottom: 2,
+    gap: 8,
+  },
+  // Checkboxen zweispaltig (3 + 3), spart Höhe
+  checkGroupCols: {
+    flexDirection: 'row',
+    gap: 16,
+    marginTop: 6,
+    marginBottom: 2,
+  },
+  checkCol: {
+    flex: 1,
     gap: 8,
   },
   checkRow: {

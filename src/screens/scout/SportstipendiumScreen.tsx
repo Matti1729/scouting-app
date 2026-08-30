@@ -34,6 +34,7 @@ import {
   checkGoKandidatImPortal,
 } from '../../services/stipendiumService';
 import { PlayerDetailModal, splitName } from '../../components/PlayerDetailModal';
+import { RetroHeader } from '../../components/RetroHeader';
 
 /** Anzeige "Nachname, Vorname" (Namenszusätze wie "van" gehören zum Nachnamen) */
 function displayName(full: string): string {
@@ -458,36 +459,37 @@ export function SportstipendiumScreen() {
         style={styles.bgImage as any}
         resizeMode="cover"
       />
-      {/* Header (Fenster-Titelleiste) */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <Text style={styles.backArrow}>{'←'}</Text>
-        </TouchableOpacity>
-        <Text style={styles.headerTitle}>Sportstipendium</Text>
-        {/* Archiv: Drop-Ziel beim Ziehen + Klick öffnet die Archiv-Ansicht */}
-        <View
-          ref={(r) => {
-            columnRefs.current[ARCHIVE] = r as any;
-          }}
-          onLayout={measureColumns}
-        >
-          <TouchableOpacity
-            style={[
-              styles.archiveButton,
-              HARD_SHADOW,
-              hoveredColumn === ARCHIVE && {
-                borderColor: RETRO.headerBg,
-                borderWidth: 2,
-              },
-            ]}
-            onPress={() => setShowArchive(true)}
+      {/* Header (gelber Titelbalken wie im Dashboard) */}
+      <RetroHeader
+        title="Sportstipendium"
+        subtitle="Kandidaten im Prozess"
+        onBack={() => navigation.goBack()}
+        right={
+          /* Archiv: Drop-Ziel beim Ziehen + Klick öffnet die Archiv-Ansicht */
+          <View
+            ref={(r) => {
+              columnRefs.current[ARCHIVE] = r as any;
+            }}
+            onLayout={measureColumns}
           >
-            <Text style={styles.archiveIcon}>🗄️</Text>
-            <Text style={styles.archiveLabel}>Archiv</Text>
-            <Text style={styles.archiveCount}>{archivedEntries.length}</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
+            <TouchableOpacity
+              style={[
+                styles.archiveButton,
+                HARD_SHADOW,
+                hoveredColumn === ARCHIVE && {
+                  borderColor: RETRO.headerBg,
+                  borderWidth: 2,
+                },
+              ]}
+              onPress={() => setShowArchive(true)}
+            >
+              <Text style={styles.archiveIcon}>🗄️</Text>
+              <Text style={styles.archiveLabel}>Archiv</Text>
+              <Text style={styles.archiveCount}>{archivedEntries.length}</Text>
+            </TouchableOpacity>
+          </View>
+        }
+      />
 
       {loading ? (
         <View style={styles.loadingContainer}>

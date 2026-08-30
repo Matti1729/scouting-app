@@ -25,6 +25,7 @@ import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
 import { TableRow } from '../../components/table/TableRow';
+import { RetroHeader } from '../../components/RetroHeader';
 import { RatingBar } from '../../components/evaluation/RatingBar';
 import {
   BeraterPlayer,
@@ -198,7 +199,7 @@ export function BeraterstatusScreen() {
   const [evaluations, setEvaluations] = useState<Map<string, PlayerEvaluation>>(new Map());
   const [modalRating, setModalRating] = useState<number | null>(null);
   const [modalNotes, setModalNotes] = useState('');
-  const [modalEvalStatus, setModalEvalStatus] = useState<'interessant' | 'nicht_interessant' | null>(null);
+  const [modalEvalStatus, setModalEvalStatus] = useState<'interessant' | 'nicht_interessant' | 'top_ziel' | null>(null);
   const notesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ========== DATA LOADING ==========
@@ -1061,21 +1062,11 @@ export function BeraterstatusScreen() {
 
   const renderMobileHeader = () => (
     <>
-      <View style={[styles.mobileHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-        <TouchableOpacity
-          style={[styles.mobileMenuBtn, { backgroundColor: colors.surfaceSecondary }]}
-          onPress={() => navigation.navigate('Dashboard' as never)}
-        >
-          <Ionicons name="menu" size={24} color={colors.text} />
-        </TouchableOpacity>
-        <Text style={[styles.mobileHeaderTitle, { color: colors.text }]}>Beraterstatus</Text>
-        <TouchableOpacity
-          style={[styles.mobileProfileBtn, { backgroundColor: colors.primary }]}
-          onPress={() => navigation.navigate('Dashboard' as never)}
-        >
-          <Text style={[styles.mobileProfileInitials, { color: colors.primaryText }]}>SC</Text>
-        </TouchableOpacity>
-      </View>
+      <RetroHeader
+        title="Beraterstatus"
+        subtitle="Beraterwechsel im Blick"
+        onBack={() => navigation.navigate('Dashboard' as never)}
+      />
       <View style={[styles.mobileToolbar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
         <TouchableOpacity
           style={[styles.mobileBackBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
@@ -2148,12 +2139,11 @@ export function BeraterstatusScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header */}
       {isMobile ? renderMobileHeader() : (
-        <View style={[styles.header, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-            <Text style={[styles.backArrow, { color: colors.primary }]}>{'\u2190'}</Text>
-          </TouchableOpacity>
-          <Text style={[styles.headerTitle, { color: colors.text }]}>Beraterstatus-Tracker</Text>
-        </View>
+        <RetroHeader
+          title="Beraterstatus-Tracker"
+          subtitle="Beraterwechsel im Blick"
+          onBack={() => navigation.goBack()}
+        />
       )}
 
       {/* Scan Status */}

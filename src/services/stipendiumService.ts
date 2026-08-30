@@ -170,13 +170,14 @@ export function extractTmPlayerId(profileUrl: string | null | undefined): string
 
 export interface StipendiumSearchFilters {
   name?: string;
-  ages?: number[];          // exakte Alter (16..34), leer = alle
-  agePlus?: boolean;        // "34+" = 34 und älter
+  ages?: number[];          // exakte Alter (14..32), leer = alle; 14 = "14 und jünger"
+  agePlus?: boolean;        // "≥33" = 33 und älter
   positions?: string[];     // Positions-Kürzel (TW, IV, ...), leer = alle
   leagueIds?: string[];     // leer = alle Ligen; bei vereinslos = letzte Liga
   nation?: string;          // Länderkürzel der Liga (DE, AT, ...), leer = egal
   vereinslos?: boolean;
   contractExpiring?: boolean; // Vertrag endet spätestens zum nächsten 30.06.
+  wechselTage?: number;     // nur Spieler mit Beraterwechsel in den letzten N Tagen
 }
 
 // Positions-Kürzel: TM speichert teils volle Namen ("Offensives Mittelfeld"),
@@ -228,6 +229,8 @@ export interface StipendiumSearchPlayer {
   club_name: string | null;
   club_tm_id: string | null; // für das Vereinswappen (TM-Bild-URL)
   league_name: string | null;
+  /** Letzter Beraterwechsel (nur gesetzt, wenn mit wechselTage gesucht wurde) */
+  last_change?: { from: string | null; to: string | null; date: string } | null;
 }
 
 /** Alter aus "DD.MM.YYYY" berechnen */
@@ -269,11 +272,33 @@ function nextSeasonEnd(): string {
   return `${year}-06-30`;
 }
 
-/** Agentur-Namen aus TM-URL-Slugs enthalten "Middot" für den Mittelpunkt
- *  (the-middot-team = THE·TEAM) — zurückübersetzen */
+/** Agentur-Namen aus TM-URL-Slugs enthalten HTML-Entity-Reste:
+ *  "Middot" = · (the-middot-team = THE·TEAM), "Amp" = & (sport-amp-entertainment),
+ *  "Quot" = Anführungszeichen (quot-to-be-quot = "to be") */
 function cleanAgencyName(name: string | null): string | null {
   if (!name) return null;
-  return name.replace(/\s*\bmiddot\b\s*/gi, '·');
+  return name
+    .replace(/\s*\bmiddot\b\s*/gi, '·')
+    .replace(/\s\bamp\b\s/gi, ' & ')
+    // paarweise: quot X quot -> "X"; übrig gebliebene einzelne quot ebenfalls ersetzen
+    .replace(/\bquot\s+(.+?)\s+quot\b/gi, '"$1"')
+    .replace(/\s*\bquot\b\s*/gi, '"');
+}
+
+/** Einheitliche Berater-Anzeige überall: Agentur vor Personenname,
+ *  Platzhalter ("kein Beratereintrag") zählen als leer. */
+export function agentDisplayName(
+  name: string | null | undefined,
+  company: string | null | undefined
+): string | null {
+  const clean = (v: string | null | undefined): string | null => {
+    const c = cleanAgencyName(v ?? null);
+    if (!c) return null;
+    const n = c.trim().toLowerCase();
+    if (!n || n === 'kein beratereintrag' || n === 'kein eintrag' || n === '-' || n === '—') return null;
+    return c;
+  };
+  return clean(company) || clean(name);
 }
 
 /** DB-Zeile (berater_players + Verein/Liga) auf das Such-/Detailformat mappen */
@@ -561,9 +586,45 @@ export async function searchStipendiumPlayers(
     players = players.filter((p) => {
       if (p.age === null) return false;
       if (ageSet.has(p.age)) return true;
-      if (filters.agePlus && p.age >= 34) return true;
+      // Randwerte sind offen: "≤14" heißt 14 und jünger, "≥33" heißt 33 und älter
+      if (ageSet.has(14) && p.age < 14) return true;
+      if (filters.agePlus && p.age >= 33) return true;
       return false;
     });
+  }
+
+  // Beraterwechsel-Filter: nur Spieler mit Wechsel in den letzten N Tagen,
+  // angereichert um den letzten Wechsel (für die Zusatzspalten)
+  if (filters.wechselTage && filters.wechselTage > 0) {
+    const cutoff = new Date(Date.now() - filters.wechselTage * 86400000).toISOString();
+    const { data: changes, error: chErr } = await supabase
+      .from('berater_changes')
+      .select('player_id, previous_agent_name, previous_agent_company, new_agent_name, new_agent_company, detected_at')
+      .gte('detected_at', cutoff)
+      .order('detected_at', { ascending: false })
+      .limit(2000);
+    if (chErr) {
+      console.error('Error loading berater changes:', chErr);
+      return { players: [], total: 0, hiddenNoPosition };
+    }
+    // neuester Wechsel je Spieler
+    const latest = new Map<string, any>();
+    for (const c of (changes || []) as any[]) {
+      if (c.player_id && !latest.has(c.player_id)) latest.set(c.player_id, c);
+    }
+    players = players
+      .filter((p) => latest.has(p.id))
+      .map((p) => {
+        const c = latest.get(p.id);
+        return {
+          ...p,
+          last_change: {
+            from: agentDisplayName(c.previous_agent_name, c.previous_agent_company),
+            to: agentDisplayName(c.new_agent_name, c.new_agent_company),
+            date: c.detected_at,
+          },
+        };
+      });
   }
 
   return { players, total: players.length, hiddenNoPosition };

@@ -13,6 +13,7 @@ import {
   BackHandler,
   Image,
   Linking,
+  Modal,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../config/supabase';
@@ -24,6 +25,7 @@ import {
   BodyStructureData,
   SpeedAthleticismData,
 } from '../../types';
+import { agentDisplayName } from '../../services/stipendiumService';
 import { createEmptyBodyStructureData } from '../../utils/bodyStructureCalculation';
 import { createEmptySpeedAthleticismData } from '../../components/SpeedAthleticismSelector';
 import { EvalHeader } from '../../components/evaluation/EvalHeader';
@@ -31,6 +33,8 @@ import { KoerperCard } from '../../components/evaluation/KoerperCard';
 import { AthletikCard } from '../../components/evaluation/AthletikCard';
 import {
   savePlayerEvaluation as saveBeraterEval,
+  setScoutStatus,
+  deriveScoutStatus,
   deletePlayerEvaluation as deleteBeraterEval,
   loadPlayerEvaluation as loadBeraterEval,
   addToWatchlist,
@@ -177,8 +181,45 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
 
   // Berater-Evaluation + Watchlist Status
   const [beraterPlayerId, setBeraterPlayerId] = useState<string>(params.beraterPlayerId || '');
-  const [beraterEvalStatus, setBeraterEvalStatus] = useState<'interessant' | 'nicht_interessant' | null>(null);
+
+  // Vereins-/Vertragsdaten für die Kopfkarten (aus berater_players, falls verknüpft)
+  const [beraterInfo, setBeraterInfo] = useState<{
+    birth_date?: string | null;
+    club_name?: string | null;
+    league_name?: string | null;
+    contract_until?: string | null;
+    market_value?: string | null;
+    agent_name?: string | null;
+    agent_url?: string | null;
+  } | null>(null);
+  useEffect(() => {
+    if (!beraterPlayerId) return;
+    let cancelled = false;
+    supabase
+      .from('berater_players')
+      .select('birth_date, current_agent_name, current_agent_company, agent_url, market_value, contract_until, berater_clubs (club_name, berater_leagues (name))')
+      .eq('id', beraterPlayerId)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (cancelled || !data) return;
+        const d = data as any;
+        setBeraterInfo({
+          birth_date: d.birth_date,
+          club_name: d.berater_clubs?.club_name,
+          league_name: d.berater_clubs?.berater_leagues?.name,
+          contract_until: d.contract_until,
+          market_value: d.market_value,
+          agent_name: agentDisplayName(d.current_agent_name, d.current_agent_company),
+          agent_url: d.agent_url,
+        });
+      });
+    return () => { cancelled = true; };
+  }, [beraterPlayerId]);
+  const [beraterEvalStatus, setBeraterEvalStatus] = useState<'interessant' | 'nicht_interessant' | 'top_ziel' | null>(null);
   const [onWatchlist, setOnWatchlist] = useState(false);
+  // Nach dem Speichern: Vorschlag, den Spieler hochzustufen (7/8 -> Watchlist, 9/10 -> Top-Ziel)
+  const [statusPrompt, setStatusPrompt] = useState<{ target: 'watchlist' | 'top_ziel'; playerId: string } | null>(null);
+  const [statusPromptSaving, setStatusPromptSaving] = useState(false);
 
   // Bestehende Bewertung laden
   useEffect(() => {
@@ -509,7 +550,18 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       } else {
         hasChangesRef.current = false;
         setHasChanges(false);
-        navigation.goBack();
+        // Hochstufen vorschlagen: 7/8 -> Watchlist (nur von neutral aus),
+        // 9/10 -> Top-Ziel (auch von der Watchlist aus). Nie runterstufen,
+        // Uninteressant bleibt eine bewusste Entscheidung.
+        const pid = linkedPlayerId || beraterPlayerId || null;
+        const current = deriveScoutStatus(onWatchlist, beraterEvalStatus);
+        if (pid && overallRating >= 9 && current !== 'top_ziel' && current !== 'uninteressant') {
+          setStatusPrompt({ target: 'top_ziel', playerId: pid });
+        } else if (pid && (overallRating === 7 || overallRating === 8) && current === 'neutral') {
+          setStatusPrompt({ target: 'watchlist', playerId: pid });
+        } else {
+          navigation.goBack();
+        }
       }
     } catch (err: any) {
       Alert.alert('Fehler', err.message || 'Speichern fehlgeschlagen');
@@ -581,19 +633,19 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
               jerseyNumber={jerseyNumber}
               firstName={firstName}
               lastName={lastName}
-              currentClub={currentClub}
-              ageGroup={ageGroup}
-              birthDate={birthDateFromTM}
+              birthDate={beraterInfo?.birth_date || birthDateFromTM}
               positions={positions}
               onPositionsChange={setPositions}
-              matchName={matchName}
-              matchDate={matchDate}
               overallRating={overallRating}
               onRatingChange={setOverallRating}
-              onClose={confirmClose}
               transfermarktUrl={transfermarktUrl}
-              agentName={agentName}
               clubLogoUrl={clubLogoUrl}
+              clubName={beraterInfo?.club_name || [currentClub, ageGroup].filter(Boolean).join(' ')}
+              leagueName={beraterInfo?.league_name}
+              contractUntil={beraterInfo?.contract_until}
+              marketValue={beraterInfo?.market_value}
+              agentName={beraterInfo?.agent_name || agentName}
+              agentUrl={beraterInfo?.agent_url}
             />
 
             {/* Körper + Athletik + rechte Spalte (Report/Einordnung) */}
@@ -715,6 +767,51 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
           </ScrollView>
         </KeyboardAvoidingView>
       </View>
+
+      {/* Nach dem Speichern: Hochstufen vorschlagen (7/8 Watchlist, 9/10 Top-Ziel) */}
+      {statusPrompt && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => { setStatusPrompt(null); navigation.goBack(); }}>
+          <View style={styles.promptOverlay}>
+            <View style={[styles.promptBox, HARD_SHADOW_LG]}>
+              <View style={[styles.promptBar, HARD_SHADOW]}>
+                <Text style={styles.promptTitle}>
+                  {statusPrompt.target === 'top_ziel' ? 'Top-Ziel' : 'Watchlist'}
+                </Text>
+              </View>
+              <Text style={styles.promptText}>
+                {`${[firstName, lastName].filter(Boolean).join(' ')} wurde mit ${overallRating} bewertet. ` +
+                  (statusPrompt.target === 'top_ziel' ? 'Als Top-Ziel markieren?' : 'Zur Watchlist hinzufügen?')}
+              </Text>
+              <View style={styles.promptActions}>
+                <TouchableOpacity
+                  style={[styles.promptBtn, HARD_SHADOW]}
+                  onPress={() => { setStatusPrompt(null); navigation.goBack(); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.promptBtnText}>Nein</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.promptBtn, HARD_SHADOW, { backgroundColor: '#22c55e' }]}
+                  disabled={statusPromptSaving}
+                  onPress={async () => {
+                    if (statusPromptSaving) return;
+                    setStatusPromptSaving(true);
+                    await setScoutStatus(statusPrompt.playerId, statusPrompt.target);
+                    setStatusPromptSaving(false);
+                    setStatusPrompt(null);
+                    navigation.goBack();
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.promptBtnText, { color: '#ffffff' }]}>
+                    {statusPrompt.target === 'top_ziel' ? 'Top-Ziel' : 'Zur Watchlist'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
     </ThemeOverride>
   );
@@ -809,5 +906,58 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     borderWidth: 1,
     overflow: 'hidden',
+  },
+  // Hochstufen-Dialog nach dem Speichern
+  promptOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  promptBox: {
+    backgroundColor: '#e9e5dd',
+    borderRadius: 2,
+    width: 400,
+    maxWidth: '92%',
+    paddingBottom: 14,
+  },
+  promptBar: {
+    backgroundColor: RETRO.yellow,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    margin: 10,
+    marginBottom: 4,
+  },
+  promptTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: RETRO.text,
+  },
+  promptText: {
+    fontSize: 14,
+    color: RETRO.text,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  promptActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    paddingHorizontal: 14,
+  },
+  promptBtn: {
+    backgroundColor: '#ffffff',
+    borderRadius: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    minHeight: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  promptBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: RETRO.text,
   },
 });

@@ -9,6 +9,8 @@ interface RatingBarProps {
   compactSize?: number;
   /** Schlichte Retro-Variante: langer Slider + eckige Wert-Box (ohne Hex-Badge) */
   plain?: boolean;
+  /** Nur der Slider, helle Farben — für farbige Untergründe (Potential-Karte) */
+  bare?: boolean;
 }
 
 /** Generate flat-top hexagon polygon points as CSS clip-path */
@@ -119,7 +121,7 @@ function HexBadge({ value, size, color, bgColor, isGold }: { value: number; size
   );
 }
 
-export function RatingBar({ value, onChange, compact, compactSize, plain }: RatingBarProps) {
+export function RatingBar({ value, onChange, compact, compactSize, plain, bare }: RatingBarProps) {
   const { colors } = useTheme();
   const trackRef = useRef<View>(null);
   const trackLayoutRef = useRef({ x: 0, width: 0 });
@@ -196,19 +198,23 @@ export function RatingBar({ value, onChange, compact, compactSize, plain }: Rati
     <View
       ref={trackRef}
       onLayout={handleTrackLayout}
-      style={[styles.trackWrap, compact && styles.trackWrapCompact, plain && { width: '100%', height: 26 }, Platform.OS === 'web' && { cursor: 'pointer' } as any]}
+      style={[styles.trackWrap, compact && styles.trackWrapCompact, (plain || bare) && { width: '100%', height: 26 }, Platform.OS === 'web' && { cursor: 'pointer' } as any]}
       {...(Platform.OS !== 'web' ? panResponder.panHandlers : {})}
     >
-      <View style={[styles.track, compact && styles.trackCompact, { backgroundColor: colors.border }]}>
-        <View style={[styles.trackFill, { width: `${fillPercent}%`, backgroundColor: ratingColor }]} />
+      <View style={[styles.track, compact && styles.trackCompact, { backgroundColor: bare ? 'rgba(20, 20, 30, 0.25)' : colors.border }]}>
+        <View style={[styles.trackFill, { width: `${fillPercent}%`, backgroundColor: bare ? '#14141e' : ratingColor }]} />
       </View>
       <View style={[
         styles.thumb, compact && styles.thumbCompact,
-        plain && { top: 3 },
-        { left: `${fillPercent}%`, backgroundColor: ratingColor, borderColor: colors.surface },
+        (plain || bare) && { top: 3 },
+        { left: `${fillPercent}%`, backgroundColor: bare ? '#ffffff' : ratingColor, borderColor: bare ? '#14141e' : colors.surface },
       ]} />
     </View>
   );
+
+  if (bare) {
+    return <View style={{ width: '100%' }}>{renderSlider()}</View>;
+  }
 
   if (plain) {
     return (

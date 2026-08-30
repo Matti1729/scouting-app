@@ -51,7 +51,7 @@ import {
 import { GamesMapView, GameMapFeature } from '../../components/GamesMapView';
 import { Image } from 'react-native';
 
-import { RETRO, HARD_SHADOW, HARD_SHADOW_LG, BLUE_GRADIENT, RETRO_BTN, RETRO_THEME } from '../../theme/retro';
+import { RETRO, HARD_SHADOW, HARD_SHADOW_LG, BLUE_GRADIENT, RETRO_BTN, RETRO_THEME, MONO } from '../../theme/retro';
 import {
   pickAndExtractLineups,
   MediaSource,
@@ -98,6 +98,7 @@ import { loadBeraterStatusForLineup, BeraterStatusResult, loadReportCountsForLin
 import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
+import { RetroHeader } from '../../components/RetroHeader';
 import { TableRow } from '../../components/table/TableRow';
 
 // Dropdown Optionen
@@ -2497,60 +2498,56 @@ export function MatchListScreen({ navigation, route }: any) {
         </>
       ) : (
         <>
-        {/* Desktop: Fenster-Titelleiste (Anstoss-Optik wie Suchmaschine) */}
-        <View style={{
-          flexDirection: 'row', alignItems: 'center', padding: 16,
-          backgroundColor: RETRO.titleBar, borderBottomWidth: 1, borderBottomColor: RETRO.shadowDark,
-        }}>
-          <TouchableOpacity onPress={() => navigation.navigate('Dashboard')} style={{ marginRight: 12, padding: 4 }}>
-            <Text style={{ fontSize: 24, fontWeight: '600', color: RETRO.text }}>{'←'}</Text>
-          </TouchableOpacity>
-          <View style={{ flex: 1 }}>
-            <Text style={{ fontSize: 20, fontWeight: '700', color: RETRO.text }}>Spiele-Übersicht</Text>
-            <Text style={{ fontSize: 12, color: RETRO.textMuted }}>Termine der nächsten Spiele, Lehrgänge und Turniere</Text>
-          </View>
-          {/* Anstehend | Meine Spiele | DFB-Sync */}
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <TouchableOpacity
-              style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 },
-                viewTab === 'anstehend' && { backgroundColor: RETRO.faceSelected }]}
-              onPress={() => setViewTab('anstehend')}
-            >
-              <Text style={{ fontSize: 13, fontWeight: viewTab === 'anstehend' ? '700' : '600', color: RETRO.text }}>
-                Anstehend ({(() => {
-                  // Übernommene Umgebungs-Spiele nicht doppelt zählen
-                  const ownUrls = new Set(matches.map(m => m.fussballDeUrl).filter(Boolean));
-                  return matches.filter(m => !m.isArchived && !isMatchFinished(m.datum)).length
-                    + areaMatches.filter(a => !a.fussballDeUrl || !ownUrls.has(a.fussballDeUrl)).length;
-                })()})
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 },
-                viewTab === 'meine' && { backgroundColor: RETRO.faceSelected }]}
-              onPress={() => setViewTab('meine')}
-            >
-              <Text style={{ fontSize: 13, fontWeight: viewTab === 'meine' ? '700' : '600', color: RETRO.text }}>
-                Meine Spiele ({meineCount})
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 },
-                viewTab === 'archiv' && { backgroundColor: RETRO.faceSelected }]}
-              onPress={() => setViewTab('archiv')}
-            >
-              <Text style={{ fontSize: 13, fontWeight: viewTab === 'archiv' ? '700' : '600', color: RETRO.text }}>
-                Archiv ({archivedCount})
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 }]}
-              onPress={() => setShowDfbSyncModal(true)}
-            >
-              <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }}>DFB-Termine ↻</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
+        {/* Desktop: gelber Titelbalken (wie Dashboard) */}
+        <RetroHeader
+          title="Spiele-Übersicht"
+          subtitle="Spiele, Lehrgänge & Turniere"
+          onBack={() => navigation.navigate('Dashboard')}
+          right={
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {(
+                [
+                  {
+                    key: 'anstehend' as const,
+                    label: `Anstehend (${(() => {
+                      // Übernommene Umgebungs-Spiele nicht doppelt zählen
+                      const ownUrls = new Set(matches.map(m => m.fussballDeUrl).filter(Boolean));
+                      return matches.filter(m => !m.isArchived && !isMatchFinished(m.datum)).length
+                        + areaMatches.filter(a => !a.fussballDeUrl || !ownUrls.has(a.fussballDeUrl)).length;
+                    })()})`,
+                  },
+                  { key: 'meine' as const, label: `Meine Spiele (${meineCount})` },
+                  { key: 'archiv' as const, label: `Archiv (${archivedCount})` },
+                ]
+              ).map((t) => (
+                <TouchableOpacity
+                  key={t.key}
+                  style={[
+                    HARD_SHADOW,
+                    { backgroundColor: '#ffffff', borderRadius: 2, paddingVertical: 6, paddingHorizontal: 12 },
+                    viewTab === t.key && { backgroundColor: RETRO.text },
+                  ]}
+                  onPress={() => setViewTab(t.key)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={{
+                    fontSize: 12, fontWeight: '700', fontFamily: MONO,
+                    color: viewTab === t.key ? RETRO.yellow : RETRO.text,
+                  }}>
+                    {t.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={[HARD_SHADOW, { backgroundColor: '#ffffff', borderRadius: 2, paddingVertical: 6, paddingHorizontal: 12 }]}
+                onPress={() => setShowDfbSyncModal(true)}
+                activeOpacity={0.7}
+              >
+                <Text style={{ fontSize: 12, fontWeight: '700', fontFamily: MONO, color: RETRO.text }}>DFB-Termine ↻</Text>
+              </TouchableOpacity>
+            </View>
+          }
+        />
 
         {/* Desktop: Toolbar */}
         <View style={[styles.header, { backgroundColor: 'transparent', borderBottomWidth: 0 }, filterMenu ? ({ zIndex: 1000 } as any) : null]}>

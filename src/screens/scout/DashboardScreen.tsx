@@ -22,7 +22,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { RootStackParamList } from '../../navigation/types';
 import { RETRO, HARD_SHADOW, HARD_SHADOW_LG, MONO } from '../../theme/retro';
-import { loadScanStatus, BeraterStats, loadWatchlist, WatchlistEntry, loadAllEvaluations, PlayerEvaluation } from '../../services/beraterService';
+import { loadScanStatus, BeraterStats, loadWatchlist, WatchlistEntry, loadAllEvaluations, PlayerEvaluation, loadUnseenAlerts, markAlertSeen, AgentAlertNotification } from '../../services/beraterService';
 import { areaAge, areaArt, shortVenueName } from '../../services/areaGamesService';
 import { createMatch } from '../../services/matchService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
@@ -76,6 +76,25 @@ export function DashboardScreen() {
   const [beraterStats, setBeraterStats] = useState<BeraterStats | null>(null);
   const [todayGames, setTodayGames] = useState<TodayGame[]>([]);
   const [gameDetail, setGameDetail] = useState<TodayGame | null>(null);
+  // Glocken-Benachrichtigungen (Beraterstatus-Änderungen abonnierter Spieler)
+  const [alerts, setAlerts] = useState<AgentAlertNotification[]>([]);
+
+  const dismissAlert = (a: AgentAlertNotification) => {
+    markAlertSeen(a.id);
+    setAlerts((prev) => prev.filter((x) => x.id !== a.id));
+  };
+
+  const openAlertProfile = async (a: AgentAlertNotification) => {
+    dismissAlert(a);
+    if (!a.player_id) return;
+    const { data } = await supabase
+      .from('berater_players')
+      .select('tm_player_id, player_name')
+      .eq('id', a.player_id)
+      .maybeSingle();
+    const sp = await fetchSearchPlayer(data?.tm_player_id || null, data?.player_name || a.player_name);
+    if (sp) setDetailPlayer(sp);
+  };
   const [addingGame, setAddingGame] = useState(false);
   // Spielerprofil-Modal (identisch zur Suchmaschine)
   const [detailPlayer, setDetailPlayer] = useState<StipendiumSearchPlayer | null>(null);
@@ -106,6 +125,7 @@ export function DashboardScreen() {
 
     loadWatchlist().then(setWatchlist).catch(() => {});
     loadAllEvaluations().then(setEvaluations).catch(() => {});
+    loadUnseenAlerts().then(setAlerts).catch(() => {});
 
     supabase
       .from('stipendium_entries')
@@ -176,9 +196,14 @@ export function DashboardScreen() {
   const watchlistRating = (w: WatchlistEntry): number | null =>
     evaluations.get(w.player_id)?.rating ?? w.rating ?? null;
   const topWatchlist = [...watchlist]
-    .map((w) => ({ entry: w, rating: watchlistRating(w) }))
-    .filter((x) => x.rating !== null)
-    .sort((a, b) => (b.rating || 0) - (a.rating || 0))
+    .map((w) => ({
+      entry: w,
+      rating: watchlistRating(w),
+      topZiel: evaluations.get(w.player_id)?.status === 'top_ziel',
+    }))
+    .filter((x) => x.rating !== null || x.topZiel)
+    // Top-Ziele ("sofort machen") zuerst, danach höchstes Potential
+    .sort((a, b) => (a.topZiel === b.topZiel ? (b.rating || 0) - (a.rating || 0) : a.topZiel ? -1 : 1))
     .slice(0, 6);
 
   // Farbe wie im Potential-Schiebebalken
@@ -295,18 +320,16 @@ export function DashboardScreen() {
         {/* Kennzahlen-Karten */}
         <View style={styles.statRow}>
           {statCard('SPIELE', String(upcomingMatches), 'Eigene Spiele & Termine', 'ALLE SPIELE', () => navigation.navigate('MatchList'))}
-          {statCard(
-            'BERATERSTATUS',
-            beraterStats ? String(beraterStats.playersWithoutAgent) : '…',
-            'Spieler ohne Berater',
-            'ALLE ANZEIGEN',
-            () => navigation.navigate('Beraterstatus'),
-            beraterStats && beraterStats.recentChanges > 0
-              ? `${beraterStats.recentChanges} Wechsel in den letzten 7 Tagen`
-              : undefined
-          )}
           {statCard('WATCHLIST', String(watchlist.length), 'Spieler auf der Watchlist', 'WATCHLIST', () => navigation.navigate('Watchlist'))}
-          {statCard('SUCHMASCHINE', '—', 'Spieler nach Alter, Liga, Vertrag und Status durchsuchen', 'SUCHE ÖFFNEN', () => navigation.navigate('Suchmaschine'))}
+          {/* Suchmaschine übernimmt den Beraterstatus (Wechsel-Filter in der Suche) */}
+          {statCard(
+            'SUCHMASCHINE',
+            beraterStats && beraterStats.recentChanges > 0 ? String(beraterStats.recentChanges) : '—',
+            'Beraterwechsel in den letzten 7 Tagen',
+            'SUCHE ÖFFNEN',
+            () => navigation.navigate('Suchmaschine'),
+            beraterStats ? `${beraterStats.playersWithoutAgent} Spieler ohne Berater` : undefined
+          )}
           {statCard('SPORTSTIPENDIUM', String(stipendiumCount), 'Kandidaten im Prozess', 'ÖFFNEN', () => navigation.navigate('Sportstipendium'))}
         </View>
 
@@ -358,7 +381,7 @@ export function DashboardScreen() {
             {topWatchlist.length === 0 ? (
               <Text style={styles.emptyText}>Noch keine bewerteten Spieler auf der Watchlist</Text>
             ) : (
-              topWatchlist.map(({ entry: w, rating }, idx) => (
+              topWatchlist.map(({ entry: w, rating, topZiel }, idx) => (
                 <TouchableOpacity
                   key={w.id}
                   style={[styles.tableRow, idx === topWatchlist.length - 1 && { borderBottomWidth: 0 }]}
@@ -375,6 +398,11 @@ export function DashboardScreen() {
                       </Text>
                     ) : null}
                   </View>
+                  {topZiel && (
+                    <View style={styles.topZielBadge}>
+                      <Text style={styles.topZielBadgeText}>TOP-ZIEL</Text>
+                    </View>
+                  )}
                   <View style={[styles.potBadge, { backgroundColor: potentialColor(rating || 0) }]}>
                     <Text style={styles.potBadgeText}>{rating}</Text>
                   </View>
@@ -385,11 +413,41 @@ export function DashboardScreen() {
         </View>
       </ScrollView>
 
+      {/* Glocken-Benachrichtigung (Beraterstatus-Änderung eines abonnierten Spielers) */}
+      {alerts.length > 0 && !detailPlayer && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => dismissAlert(alerts[0])}>
+          <View style={styles.alertOverlay}>
+            <View style={[styles.alertBox, HARD_SHADOW_LG]}>
+              <View style={[styles.alertBar, HARD_SHADOW]}>
+                <View style={{ flex: 1, flexDirection: 'row', alignItems: 'baseline', gap: 10 }}>
+                  <Text style={styles.alertTitle}>Benachrichtigung</Text>
+                  <Text style={styles.alertTag}>BERATERSTATUS</Text>
+                </View>
+                <TouchableOpacity onPress={() => dismissAlert(alerts[0])} hitSlop={8}>
+                  <Ionicons name="close" size={18} color={RETRO.text} />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.alertText}>{alerts[0].message}</Text>
+              <View style={styles.alertActions}>
+                <TouchableOpacity
+                  style={[styles.alertBtn, HARD_SHADOW]}
+                  onPress={() => openAlertProfile(alerts[0])}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.alertBtnText}>Profil anzeigen</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
       {/* Spielerprofil (identisch zur Suchmaschine) */}
       {detailPlayer && (
         <PlayerDetailModal
           player={detailPlayer}
           onClose={() => setDetailPlayer(null)}
+          onStatusChanged={() => loadData()}
           onOpenEvaluation={(ev) => {
             returnToPlayerRef.current = detailPlayer;
             setDetailPlayer(null);
@@ -701,6 +759,80 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Glocken-Benachrichtigung (kleines Retro-Popup)
+  alertOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  alertBox: {
+    backgroundColor: RETRO.page,
+    borderRadius: 2,
+    width: 420,
+    maxWidth: '92%',
+    paddingBottom: 14,
+  },
+  alertBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: RETRO.yellow,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    margin: 10,
+    marginBottom: 4,
+  },
+  alertTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: RETRO.text,
+  },
+  alertTag: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 1.5,
+    fontFamily: MONO,
+    color: '#4a4a55',
+  },
+  alertText: {
+    fontSize: 14,
+    color: RETRO.text,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  alertActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    paddingHorizontal: 14,
+  },
+  alertBtn: {
+    backgroundColor: '#ffffff',
+    borderRadius: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    minHeight: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  alertBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: RETRO.text,
+  },
+  // "Sofort machen"-Markierung (goldenes Badge vor dem Namen)
+  topZielBadge: {
+    backgroundColor: '#F0C040',
+    borderRadius: 2,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+  },
+  topZielBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    color: '#14141e',
   },
   potBadgeText: {
     fontSize: 13,

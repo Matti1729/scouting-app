@@ -26,10 +26,18 @@ import {
   loadPlayerNote,
   savePlayerNote,
   fetchEntryAddedBy,
+  agentDisplayName,
 } from '../services/stipendiumService';
 import {
   loadMatchEvaluationsForPlayer,
   MatchEvaluation,
+  ScoutStatus,
+  deriveScoutStatus,
+  setScoutStatus,
+  isAlertSubscribed,
+  setAlertSubscription,
+  loadPlayerHistory,
+  BeraterChange,
 } from '../services/beraterService';
 import { MONO } from '../theme/retro';
 import { supabase } from '../config/supabase';
@@ -81,6 +89,31 @@ export function splitName(full: string): { first: string; last: string } {
 /** Saison-Kurzlabel aus TM-Saisonstartjahr: 2026 -> "26/27" */
 function seasonLabel(startYear: number): string {
   return `${String(startYear).slice(-2)}/${String(startYear + 1).slice(-2)}`;
+}
+
+/** ISO-Timestamp -> "28.08.2026" */
+function formatDateDE(dateStr: string | null): string | null {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return null;
+  return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
+}
+
+/** Dauer zwischen zwei ISO-Daten, z.B. "4 Monate" */
+function formatDurationBetween(fromDate: string, toDate: string): string {
+  const diffDays = Math.floor((new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000);
+  if (diffDays < 1) return '< 1 Tag';
+  if (diffDays < 7) return `${diffDays} ${diffDays === 1 ? 'Tag' : 'Tage'}`;
+  if (diffDays < 30) {
+    const weeks = Math.floor(diffDays / 7);
+    return `${weeks} ${weeks === 1 ? 'Woche' : 'Wochen'}`;
+  }
+  if (diffDays < 365) {
+    const months = Math.floor(diffDays / 30);
+    return `${months} ${months === 1 ? 'Monat' : 'Monate'}`;
+  }
+  const years = Math.floor(diffDays / 365);
+  return `${years} ${years === 1 ? 'Jahr' : 'Jahre'}`;
 }
 
 /** "3 Spiele | 4 Tore | 3 Vorlagen" (Fallback nur Spiele, wenn keine Detailstatistik da ist) */
@@ -146,12 +179,15 @@ export function PlayerDetailModal({
   onClose,
   actions,
   onOpenEvaluation,
+  onStatusChanged,
 }: {
   player: StipendiumSearchPlayer;
   onClose: () => void;
   actions?: React.ReactNode;
   /** Klick auf einen Bericht (öffnet die Spielbewertung) — optional */
   onOpenEvaluation?: (ev: MatchEvaluation) => void;
+  /** Nach Änderung des Scouting-Status (Watchlist/Top-Ziel/Uninteressant) — optional */
+  onStatusChanged?: (status: ScoutStatus) => void;
 }) {
   const [tmDetails, setTmDetails] = useState<PlayerTmDetails | null>(null);
   const [tmLoading, setTmLoading] = useState(false);
@@ -163,6 +199,131 @@ export function PlayerDetailModal({
   const [summaryLoading, setSummaryLoading] = useState(false);
   // Bewertung/Notiz aus dem Watchlist-System (berater_player_evaluations / berater_watchlist)
   const [wlRating, setWlRating] = useState<number | null>(null);
+  // Scouting-Status (neutral/watchlist/top_ziel/uninteressant)
+  const [scoutStatus, setScoutStatusState] = useState<ScoutStatus>('neutral');
+  const [statusSaving, setStatusSaving] = useState(false);
+  // Offene Nachfrage vor Entfernen/Wechsel eines gesetzten Status
+  const [pendingChange, setPendingChange] = useState<{ next: ScoutStatus; text: string } | null>(null);
+  // Glocke: Abo auf Beraterstatus-Änderungen
+  const [alertOn, setAlertOn] = useState(false);
+  const [alertSaving, setAlertSaving] = useState(false);
+  // Aufklappbarer Beraterverlauf in der Vertrag-Karte
+  const [verlaufOpen, setVerlaufOpen] = useState(false);
+  const [verlaufLoading, setVerlaufLoading] = useState(false);
+  const [verlauf, setVerlauf] = useState<BeraterChange[] | null>(null);
+
+  // TM-Links der früheren Agenturen (Agenturname -> agent_url)
+  const [verlaufUrls, setVerlaufUrls] = useState<Map<string, string>>(new Map());
+
+  const toggleVerlauf = () => {
+    const next = !verlaufOpen;
+    setVerlaufOpen(next);
+    if (next && verlauf === null && !verlaufLoading) {
+      setVerlaufLoading(true);
+      loadPlayerHistory(player.id)
+        .then(async (hist) => {
+          setVerlauf(hist);
+          // Agentur-URL über irgendeinen aktuellen Spieler derselben Agentur finden
+          const keys = new Set<string>();
+          for (const c of hist) {
+            // nur echte Agenturen nachschlagen (Platzhalter wie "kein Beratereintrag" nicht)
+            if (!agentDisplayName(c.previous_agent_name, c.previous_agent_company)) continue;
+            const k = c.previous_agent_company || c.previous_agent_name;
+            if (k) keys.add(k);
+          }
+          const urls = new Map<string, string>();
+          await Promise.all(
+            [...keys].map(async (k) => {
+              let r = await supabase
+                .from('berater_players')
+                .select('agent_url')
+                .eq('current_agent_company', k)
+                .not('agent_url', 'is', null)
+                .limit(1);
+              if (!r.data?.length) {
+                r = await supabase
+                  .from('berater_players')
+                  .select('agent_url')
+                  .eq('current_agent_name', k)
+                  .not('agent_url', 'is', null)
+                  .limit(1);
+              }
+              const url = (r.data?.[0] as any)?.agent_url;
+              if (url) urls.set(k, url);
+            })
+          );
+          setVerlaufUrls(urls);
+        })
+        .finally(() => setVerlaufLoading(false));
+    }
+  };
+
+  // Offene Nachfrage vor dem Ausschalten der Glocke
+  const [pendingAlertOff, setPendingAlertOff] = useState(false);
+
+  const applyAlert = async (next: boolean) => {
+    if (alertSaving) return;
+    setAlertSaving(true);
+    const ok = await setAlertSubscription(player.id, next);
+    if (ok) setAlertOn(next);
+    setAlertSaving(false);
+  };
+
+  const handleAlertPress = () => {
+    if (alertSaving) return;
+    // Ausschalten nur nach Nachfrage
+    if (alertOn) setPendingAlertOff(true);
+    else applyAlert(true);
+  };
+
+  const STATUS_LABELS: Record<Exclude<ScoutStatus, 'neutral'>, string> = {
+    uninteressant: 'Uninteressant',
+    watchlist: 'Watchlist',
+    top_ziel: 'Top-Ziel',
+  };
+
+  const applyStatus = async (next: ScoutStatus) => {
+    setStatusSaving(true);
+    const ok = await setScoutStatus(player.id, next);
+    if (ok) {
+      setScoutStatusState(next);
+      onStatusChanged?.(next);
+    }
+    setStatusSaving(false);
+  };
+
+  const handleStatusPress = (key: Exclude<ScoutStatus, 'neutral'>) => {
+    if (statusSaving) return;
+    const isActive = scoutStatus === key;
+    const next: ScoutStatus = isActive ? 'neutral' : key;
+    // Ein gesetzter Status wird nur nach Nachfrage entfernt oder gewechselt
+    if (scoutStatus !== 'neutral') {
+      const cur = STATUS_LABELS[scoutStatus as Exclude<ScoutStatus, 'neutral'>];
+      const text = next === 'neutral'
+        ? `„${cur}" wirklich entfernen?`
+        : `Wirklich von „${cur}" zu „${STATUS_LABELS[next as Exclude<ScoutStatus, 'neutral'>]}" wechseln?`;
+      setPendingChange({ next, text });
+      return;
+    }
+    applyStatus(next);
+  };
+
+  const renderStatusBtn = (b: { key: Exclude<ScoutStatus, 'neutral'>; idle: string; active: string; bg: string; fg: string }) => {
+    const isActive = scoutStatus === b.key;
+    return (
+      <TouchableOpacity
+        key={b.key}
+        style={[styles.statusBtn, HARD_SHADOW, isActive && { backgroundColor: b.bg }]}
+        disabled={statusSaving}
+        activeOpacity={0.7}
+        onPress={() => handleStatusPress(b.key)}
+      >
+        <Text style={[styles.statusBtnText, isActive && { color: b.fg }]}>
+          {isActive ? b.active : b.idle}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
   // Notizen + Erstkontakt (pro Spieler gespeichert)
   const [notes, setNotes] = useState('');
   const [firstContact, setFirstContact] = useState(''); // ISO "YYYY-MM-DD"
@@ -185,19 +346,26 @@ export function PlayerDetailModal({
     // Notizen: player_notes ist führend; falls leer, Watchlist-/Status-Notiz übernehmen
     // (die Systeme stammen aus verschiedenen Bauphasen und werden beim Speichern synchron gehalten)
     setWlRating(null);
+    setScoutStatusState('neutral');
+    setVerlaufOpen(false);
+    setVerlauf(null);
+    setVerlaufUrls(new Map());
+    setAlertOn(false);
+    isAlertSubscribed(player.id).then(setAlertOn);
     (async () => {
       const [n, evalRow, wlRow] = await Promise.all([
         loadPlayerNote(player.id),
-        supabase.from('berater_player_evaluations').select('notes, rating').eq('player_id', player.id).maybeSingle(),
+        supabase.from('berater_player_evaluations').select('notes, rating, status').eq('player_id', player.id).maybeSingle(),
         supabase.from('berater_watchlist').select('notes, rating').eq('player_id', player.id).maybeSingle(),
       ]);
-      const evalData = evalRow?.data as { notes: string | null; rating: number | null } | null;
+      const evalData = evalRow?.data as { notes: string | null; rating: number | null; status: string | null } | null;
       const wlData = wlRow?.data as { notes: string | null; rating: number | null } | null;
       const mergedNotes = n.notes || evalData?.notes || wlData?.notes || '';
       setNotes(mergedNotes);
       setFirstContact(n.first_contact_date || '');
       savedNote.current = { notes: n.notes || '', firstContact: n.first_contact_date || '' };
       setWlRating(evalData?.rating ?? wlData?.rating ?? null);
+      setScoutStatusState(deriveScoutStatus(!!wlData, evalData?.status));
     })();
     setAddedBy(null);
     if (player.tm_player_id) {
@@ -335,8 +503,8 @@ export function PlayerDetailModal({
               <ScrollView style={styles.detailScroll} showsVerticalScrollIndicator={false}>
               <View style={{ height: 10 }} />
 
-              {/* Zeile 1: Allgemeines · Verein · Vertrag */}
-              <View style={styles.cardGrid}>
+              {/* Zeile 1: Allgemeines · Verein · Vertrag (zIndex: Beraterverlauf-Dropdown liegt über Zeile 2) */}
+              <View style={[styles.cardGrid, { zIndex: 30 }]}>
                 <View style={[styles.card, HARD_SHADOW]}>
                   {cardChip('ALLGEMEINES')}
                   {cardRow('Position', p.position ? (POSITION_FULL[p.position] || p.position) : '—')}
@@ -379,26 +547,89 @@ export function PlayerDetailModal({
                   )}
                   {cardRow('Liga', p.is_vereinslos ? '—' : p.league_name || '—', true)}
                 </View>
-                <View style={[styles.card, HARD_SHADOW]}>
+                <View style={[styles.card, HARD_SHADOW, { zIndex: 30 }]}>
                   {cardChip('VERTRAG')}
                   {cardRow('Vertrag bis', contract || '—')}
                   {cardRow('Marktwert', p.market_value || '—')}
-                  {cardRow(
-                    'Berater',
-                    p.current_agent_name && p.current_agent_name !== 'kein Beratereintrag' ? (
-                      <View style={styles.agentValue}>
+                  {/* Berater-Zeile: Klick klappt den Beraterverlauf auf */}
+                  <View style={{ zIndex: 40 }}>
+                    {cardRow(
+                      'Berater',
+                      <TouchableOpacity style={styles.agentValue} onPress={toggleVerlauf} activeOpacity={0.7} hitSlop={4}>
                         <Text style={styles.cardRowValue} numberOfLines={1}>
-                          {p.current_agent_name}
+                          {agentDisplayName(p.current_agent_name, p.current_agent_company) || 'kein Eintrag'}
                         </Text>
                         {p.agent_url ? (
                           <TouchableOpacity onPress={() => openProfile(p.agent_url)} hitSlop={6}>
                             <Image source={require('../../assets/tm-icon.png')} style={styles.tmIconSmall} />
                           </TouchableOpacity>
                         ) : null}
+                        <Text style={styles.verlaufChevron}>{verlaufOpen ? '▾' : '▸'}</Text>
+                      </TouchableOpacity>,
+                      true
+                    )}
+                    {verlaufOpen && (
+                      <View style={[styles.verlaufDropdown, HARD_SHADOW_LG]}>
+                        <View style={styles.verlaufHeader}>
+                          <Text style={styles.verlaufHeaderText}>BERATERVERLAUF</Text>
+                        </View>
+                        {verlaufLoading || verlauf === null ? (
+                          <ActivityIndicator size="small" color={RETRO.headerBg} style={{ margin: 10 }} />
+                        ) : (
+                          <>
+                            {/* Aktuelle Phase */}
+                            <View style={[styles.verlaufRow, styles.verlaufRowCurrent]}>
+                              <View style={styles.verlaufAgentRow}>
+                                <Text style={styles.verlaufAgent} numberOfLines={1}>
+                                  {agentDisplayName(p.current_agent_name, p.current_agent_company) || 'kein Beratereintrag'}
+                                </Text>
+                                {p.agent_url ? (
+                                  <TouchableOpacity onPress={() => openProfile(p.agent_url)} hitSlop={6}>
+                                    <Image source={require('../../assets/tm-icon.png')} style={styles.verlaufTmIcon} />
+                                  </TouchableOpacity>
+                                ) : null}
+                              </View>
+                              <Text style={styles.verlaufMeta}>
+                                {verlauf[0] ? `seit ${formatDateDE(verlauf[0].detected_at)}` : 'aktuell'}
+                              </Text>
+                            </View>
+                            {/* Frühere Phasen (neueste zuerst) */}
+                            {verlauf.map((change, index) => {
+                              const start = verlauf[index + 1]?.detected_at || null;
+                              const agentKey = change.previous_agent_company || change.previous_agent_name;
+                              const hasRealAgent = !!agentDisplayName(change.previous_agent_name, change.previous_agent_company);
+                              const agentUrl = hasRealAgent && agentKey ? verlaufUrls.get(agentKey) : undefined;
+                              return (
+                                <View
+                                  key={change.id}
+                                  style={[styles.verlaufRow, index === verlauf.length - 1 && { borderBottomWidth: 0 }]}
+                                >
+                                  <View style={styles.verlaufAgentRow}>
+                                    <Text style={styles.verlaufAgent} numberOfLines={1}>
+                                      {agentDisplayName(change.previous_agent_name, change.previous_agent_company) || 'kein Berater'}
+                                    </Text>
+                                    {agentUrl ? (
+                                      <TouchableOpacity onPress={() => openProfile(agentUrl)} hitSlop={6}>
+                                        <Image source={require('../../assets/tm-icon.png')} style={styles.verlaufTmIcon} />
+                                      </TouchableOpacity>
+                                    ) : null}
+                                  </View>
+                                  <Text style={styles.verlaufMeta}>
+                                    {start
+                                      ? `${formatDateDE(start)} - ${formatDateDE(change.detected_at)} · ${formatDurationBetween(start, change.detected_at)}`
+                                      : `bis ${formatDateDE(change.detected_at)}`}
+                                  </Text>
+                                </View>
+                              );
+                            })}
+                            {verlauf.length === 0 && (
+                              <Text style={[styles.verlaufMeta, { padding: 10 }]}>Keine Wechsel erfasst</Text>
+                            )}
+                          </>
+                        )}
                       </View>
-                    ) : 'kein Eintrag',
-                    true
-                  )}
+                    )}
+                  </View>
                 </View>
                 <View style={[styles.card, styles.cardPotential, HARD_SHADOW, { backgroundColor: potentialColor(latestRating) }]}>
                   {cardChip('POTENTIAL')}
@@ -507,8 +738,100 @@ export function PlayerDetailModal({
                 </View>
               </View>
 
-              {/* Aktionen (vom Aufrufer definiert, z.B. + Sportstipendium / + Watchlist) */}
-              {actions ? <View style={styles.detailActions}>{actions}</View> : null}
+              {/* Fußzeile: links Scouting-Status (exklusiv), rechts Aktionen des Aufrufers */}
+              <View style={styles.detailFooter}>
+                {/* Links: Uninteressant + Aufrufer-Aktionen (z.B. + Sportstipendium) */}
+                <View style={styles.statusGroup}>
+                  {renderStatusBtn({ key: 'uninteressant', idle: 'Uninteressant', active: 'aussortiert', bg: '#dc2626', fg: '#ffffff' })}
+                  {actions ? <View style={styles.detailActions}>{actions}</View> : null}
+                </View>
+                {/* Rechts: Glocke + Watchlist + Top-Ziel */}
+                <View style={styles.statusGroup}>
+                  <TouchableOpacity
+                    style={[styles.statusBtn, HARD_SHADOW, alertOn && { backgroundColor: '#dc2626' }]}
+                    disabled={alertSaving}
+                    activeOpacity={0.7}
+                    onPress={handleAlertPress}
+                  >
+                    <Ionicons
+                      name={alertOn ? 'notifications' : 'notifications-outline'}
+                      size={14}
+                      color={alertOn ? '#ffffff' : RETRO.text}
+                    />
+                  </TouchableOpacity>
+                  {renderStatusBtn({ key: 'watchlist', idle: 'Watchlist', active: 'Watchlist', bg: '#22c55e', fg: '#ffffff' })}
+                  {renderStatusBtn({ key: 'top_ziel', idle: 'Top-Ziel', active: 'Top-Ziel', bg: '#22c55e', fg: '#ffffff' })}
+                </View>
+              </View>
+
+              {/* Nachfrage vor dem Ausschalten der Glocke */}
+              {pendingAlertOff && (
+                <Modal visible transparent animationType="fade" onRequestClose={() => setPendingAlertOff(false)}>
+                  <View style={styles.confirmOverlay}>
+                    <View style={[styles.confirmBox, HARD_SHADOW_LG]}>
+                      <View style={[styles.confirmBar, HARD_SHADOW]}>
+                        <Text style={styles.confirmTitle}>Benachrichtigung</Text>
+                      </View>
+                      <Text style={styles.confirmText}>
+                        Benachrichtigungen bei Beraterstatus-Änderung für diesen Spieler wirklich ausschalten?
+                      </Text>
+                      <View style={styles.confirmActions}>
+                        <TouchableOpacity
+                          style={[styles.statusBtn, HARD_SHADOW]}
+                          onPress={() => setPendingAlertOff(false)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.statusBtnText}>Abbrechen</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.statusBtn, HARD_SHADOW, { backgroundColor: '#dc2626' }]}
+                          onPress={() => {
+                            setPendingAlertOff(false);
+                            applyAlert(false);
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.statusBtnText, { color: '#ffffff' }]}>Ausschalten</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                </Modal>
+              )}
+
+              {/* Nachfrage vor dem Entfernen/Wechseln eines gesetzten Status */}
+              {pendingChange && (
+                <Modal visible transparent animationType="fade" onRequestClose={() => setPendingChange(null)}>
+                  <View style={styles.confirmOverlay}>
+                    <View style={[styles.confirmBox, HARD_SHADOW_LG]}>
+                      <View style={[styles.confirmBar, HARD_SHADOW]}>
+                        <Text style={styles.confirmTitle}>Status ändern</Text>
+                      </View>
+                      <Text style={styles.confirmText}>{pendingChange.text}</Text>
+                      <View style={styles.confirmActions}>
+                        <TouchableOpacity
+                          style={[styles.statusBtn, HARD_SHADOW]}
+                          onPress={() => setPendingChange(null)}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.statusBtnText}>Abbrechen</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.statusBtn, HARD_SHADOW, { backgroundColor: '#1a5f2a' }]}
+                          onPress={() => {
+                            const next = pendingChange.next;
+                            setPendingChange(null);
+                            applyStatus(next);
+                          }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.statusBtnText, { color: '#ffffff' }]}>Bestätigen</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                </Modal>
+              )}
               </ScrollView>
             </View>
           </TouchableWithoutFeedback>
@@ -748,7 +1071,7 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
   },
   summaryButton: {
-    alignSelf: 'flex-start',
+    alignSelf: 'flex-end',
     backgroundColor: 'rgba(230, 226, 218, 0.80)',
     borderRadius: 0,
     paddingVertical: 5,
@@ -827,14 +1150,139 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : {}),
   },
-  detailActions: {
+  // Aufklappbarer Beraterverlauf (Dropdown unter der Berater-Zeile)
+  verlaufChevron: {
+    fontSize: 14,
+    color: '#4a4a55',
+    marginLeft: 4,
+  },
+  verlaufDropdown: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    backgroundColor: '#ffffff',
+    borderRadius: 2,
+    zIndex: 100,
+  },
+  verlaufHeader: {
+    backgroundColor: '#14141e',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+  },
+  verlaufHeaderText: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    fontFamily: MONO,
+    color: RETRO.yellow,
+  },
+  verlaufRow: {
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e1d8',
+    gap: 2,
+  },
+  verlaufRowCurrent: {
+    backgroundColor: '#f7f0da',
+  },
+  verlaufAgentRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  verlaufAgent: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: RETRO.text,
+    flexShrink: 1,
+  },
+  verlaufTmIcon: {
+    width: 16,
+    height: 16,
+    borderRadius: 2,
+  },
+  verlaufMeta: {
+    fontSize: 10,
+    fontFamily: MONO,
+    color: '#4a4a55',
+  },
+  detailFooter: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'flex-end',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
     gap: 8,
     marginTop: 12,
     // Luft für den Versatz-Schatten, sonst schneidet der Scroll-Container ihn ab
     paddingBottom: 8,
     paddingRight: 6,
+  },
+  statusGroup: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  // Statusbutton auf Papier-Hintergrund: weiße Fläche (Retro-Regel), aktiv farbig
+  // Standard-Buttongröße der App (wie "Aktualisieren"): kompakt 5/10, Schrift 11/600
+  statusBtn: {
+    backgroundColor: '#ffffff',
+    borderRadius: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    minHeight: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  statusBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: RETRO.text,
+  },
+  detailActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  // Nachfrage-Dialog (Status entfernen/wechseln)
+  confirmOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  confirmBox: {
+    backgroundColor: '#e9e5dd',
+    borderRadius: 2,
+    width: 380,
+    maxWidth: '92%',
+    paddingBottom: 14,
+  },
+  confirmBar: {
+    backgroundColor: RETRO.yellow,
+    paddingVertical: 9,
+    paddingHorizontal: 14,
+    margin: 10,
+    marginBottom: 4,
+  },
+  confirmTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: RETRO.text,
+  },
+  confirmText: {
+    fontSize: 14,
+    color: RETRO.text,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  confirmActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    paddingHorizontal: 14,
   },
 });

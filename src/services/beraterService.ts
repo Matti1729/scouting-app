@@ -88,12 +88,17 @@ export interface WatchlistEntry {
 export interface PlayerEvaluation {
   id: string;
   player_id: string;
-  status: 'interessant' | 'nicht_interessant';
+  status: 'interessant' | 'nicht_interessant' | 'top_ziel';
   rating: number | null;
   notes: string | null;
   created_at: string;
   updated_at: string;
 }
+
+/** Scouting-Status eines Spielers (abgeleitet aus Watchlist + Bewertung):
+ *  neutral = gesichtet, keine Entscheidung · watchlist = beobachten ·
+ *  top_ziel = sofort machen · uninteressant = bewusst aussortiert */
+export type ScoutStatus = 'neutral' | 'watchlist' | 'top_ziel' | 'uninteressant';
 
 export type AgentFilter = 'all' | 'without_agent';
 export type AgeFilter = string; // 'all' | 'herren' | 'younger' | '2007' | '2008' | '2009' | '2010'
@@ -343,6 +348,117 @@ export async function addToWatchlist(playerId: string, notes?: string): Promise<
     return false;
   }
   return true;
+}
+
+// ============================================================================
+// GLOCKE: Abo auf Beraterstatus-Änderungen + In-App-Benachrichtigungen
+// ============================================================================
+
+export interface AgentAlertNotification {
+  id: string;
+  player_id: string | null;
+  player_name: string | null;
+  message: string;
+  created_at: string;
+}
+
+/** Hat der Spieler eine Glocke (Abo auf Beraterstatus-Änderungen)? */
+export async function isAlertSubscribed(playerId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from('berater_alert_subs')
+    .select('id')
+    .eq('player_id', playerId)
+    .maybeSingle();
+  return !!data;
+}
+
+/** Glocke an-/ausschalten */
+export async function setAlertSubscription(playerId: string, on: boolean): Promise<boolean> {
+  const query = on
+    ? supabase.from('berater_alert_subs').upsert({ player_id: playerId }, { onConflict: 'player_id' })
+    : supabase.from('berater_alert_subs').delete().eq('player_id', playerId);
+  const { error } = await query;
+  if (error) console.error('Error toggling alert subscription:', error);
+  return !error;
+}
+
+/** IDs aller Spieler mit aktiver Glocke (für den Suchmaschinen-Filter) */
+export async function loadAlertSubscriptionIds(): Promise<Set<string>> {
+  const { data, error } = await supabase.from('berater_alert_subs').select('player_id');
+  if (error) {
+    console.error('Error loading alert subscriptions:', error);
+    return new Set();
+  }
+  return new Set((data || []).map((r: any) => r.player_id).filter(Boolean));
+}
+
+/** Ungesehene Benachrichtigungen (älteste zuerst) */
+export async function loadUnseenAlerts(): Promise<AgentAlertNotification[]> {
+  const { data, error } = await supabase
+    .from('berater_alert_notifications')
+    .select('id, player_id, player_name, message, created_at')
+    .eq('seen', false)
+    .order('created_at', { ascending: true });
+  if (error) {
+    console.error('Error loading alerts:', error);
+    return [];
+  }
+  return data || [];
+}
+
+/** Benachrichtigung als gesehen markieren */
+export async function markAlertSeen(id: string): Promise<void> {
+  await supabase.from('berater_alert_notifications').update({ seen: true }).eq('id', id);
+}
+
+/** Status aus Watchlist-Mitgliedschaft + Bewertungsstatus ableiten */
+export function deriveScoutStatus(
+  onWatchlist: boolean,
+  evalStatus: string | null | undefined
+): ScoutStatus {
+  if (evalStatus === 'top_ziel') return 'top_ziel';
+  if (onWatchlist) return 'watchlist';
+  if (evalStatus === 'nicht_interessant') return 'uninteressant';
+  return 'neutral';
+}
+
+/**
+ * Scouting-Status setzen (exklusiv): pflegt Watchlist-Mitgliedschaft und
+ * berater_player_evaluations.status zusammen. Rating/Notizen bleiben erhalten.
+ */
+export async function setScoutStatus(playerId: string, status: ScoutStatus): Promise<boolean> {
+  try {
+    if (status === 'watchlist' || status === 'top_ziel') {
+      const ok = await addToWatchlist(playerId);
+      if (!ok) return false;
+    } else {
+      await removeFromWatchlist(playerId);
+    }
+
+    if (status === 'top_ziel' || status === 'uninteressant') {
+      const evalStatus = status === 'top_ziel' ? 'top_ziel' : 'nicht_interessant';
+      const { error } = await supabase
+        .from('berater_player_evaluations')
+        .upsert(
+          { player_id: playerId, status: evalStatus, updated_at: new Date().toISOString() },
+          { onConflict: 'player_id' }
+        );
+      if (error) throw error;
+    } else {
+      // neutral/watchlist: einen gesetzten Sonderstatus zurücknehmen, Zeile
+      // (mit Rating/Notizen) aber behalten
+      const { error } = await supabase
+        .from('berater_player_evaluations')
+        .update({ status: 'interessant', updated_at: new Date().toISOString() })
+        .eq('player_id', playerId)
+        .in('status', ['top_ziel', 'nicht_interessant']);
+      if (error) throw error;
+    }
+    return true;
+  } catch (e) {
+    console.error('Error setting scout status:', e);
+    return false;
+  }
 }
 
 /**
