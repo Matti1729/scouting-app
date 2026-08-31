@@ -135,6 +135,11 @@ export interface PlayerTmSeasonStats {
   assists: number;
 }
 
+export interface PlayerNationalTeam {
+  name: string;             // z.B. "England U21", "Deutschland U16"
+  countryId: number | null; // TM-Land-ID für die Länderflagge (CDN)
+}
+
 export interface PlayerTmDetails {
   seasonYear: number;
   gamesCurrentSeason: number | null;
@@ -142,6 +147,12 @@ export interface PlayerTmDetails {
   statsCurrentSeason: PlayerTmSeasonStats | null;
   statsLastSeason: PlayerTmSeasonStats | null;
   transfers: PlayerTmTransfer[];
+  nationalTeam: PlayerNationalTeam | null;
+}
+
+/** TM-Länderflagge (kleines PNG) zur TM-Land-ID */
+export function tmFlagUrl(countryId: number): string {
+  return `https://tmssl.akamaized.net/images/flagge/head/${countryId}.png`;
 }
 
 export async function fetchPlayerTmDetails(tmPlayerId: string): Promise<PlayerTmDetails | null> {
@@ -174,7 +185,12 @@ export interface StipendiumSearchFilters {
   agePlus?: boolean;        // "≥33" = 33 und älter
   positions?: string[];     // Positions-Kürzel (TW, IV, ...), leer = alle
   leagueIds?: string[];     // leer = alle Ligen; bei vereinslos = letzte Liga
-  nation?: string;          // Länderkürzel der Liga (DE, AT, ...), leer = egal
+  nations?: string[];       // Länderkürzel der Ligen (DE, AT, ...), leer = egal
+  clubIds?: string[];       // konkrete Mannschaften (berater_clubs.id), leer = alle
+  /** Basisnamen der ausgewählten Vereine (z.B. "Borussia Dortmund"): findet auch
+   *  per Bericht angelegte Spieler (U15/U16 ohne TM-Mannschaft) über den
+   *  Vereinsnamen im Scouting-Bericht */
+  clubBaseNames?: string[];
   vereinslos?: boolean;
   contractExpiring?: boolean; // Vertrag endet spätestens zum nächsten 30.06.
   wechselTage?: number;     // nur Spieler mit Beraterwechsel in den letzten N Tagen
@@ -251,7 +267,7 @@ export function ageFromBirthDate(birthDate: string | null): number | null {
 
 /** Suchtext normalisieren: Kleinschreibung + Diakritika entfernen,
  *  damit "uriel" auch "Uriël" findet und "o" auch "ö" */
-function normalizeSearch(text: string): string {
+export function normalizeSearch(text: string): string {
   return text
     .toLowerCase()
     .normalize('NFD')
@@ -295,7 +311,19 @@ export function agentDisplayName(
     const c = cleanAgencyName(v ?? null);
     if (!c) return null;
     const n = c.trim().toLowerCase();
-    if (!n || n === 'kein beratereintrag' || n === 'kein eintrag' || n === '-' || n === '—') return null;
+    // Platzhalter zählen als "kein Berater": kein Beratereintrag, k.A.,
+    // ohne Berater. "Familienangehörige" wird dagegen ANGEZEIGT (echter
+    // Eintrag) — zählt nur im "ohne Berater"-Filter als beraterlos.
+    const kompakt = n.replace(/\s/g, '');
+    if (
+      !n ||
+      n === 'kein beratereintrag' ||
+      n === 'kein eintrag' ||
+      n === 'ohne berater' ||
+      n === '-' ||
+      n === '—' ||
+      kompakt === 'k.a.'
+    ) return null;
     return c;
   };
   return clean(company) || clean(name);
@@ -492,6 +520,43 @@ export async function fetchPlayersClubInfo(tmPlayerIds: string[]): Promise<Recor
   return map;
 }
 
+export interface ClubOption {
+  id: string;
+  name: string;
+  league_id: string | null;
+  country: string | null; // Land der Liga — fürs Kaskadieren mit dem Land-Filter
+}
+
+/** Alle Mannschaften (berater_clubs) fürs Vereins-Dropdown der Suchmaschine.
+ *  Seitenweise laden, weil PostgREST bei 1000 Zeilen cappt. */
+export async function loadAllClubs(): Promise<ClubOption[]> {
+  const PAGE_SIZE = 1000;
+  const clubs: ClubOption[] = [];
+  for (let page = 0; ; page++) {
+    const { data, error } = await supabase
+      .from('berater_clubs')
+      .select('id, club_name, league_id, berater_leagues (country)')
+      .order('club_name', { ascending: true })
+      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    if (error) {
+      console.error('Error loading clubs:', error);
+      break;
+    }
+    for (const row of (data || []) as any[]) {
+      if (row.club_name) {
+        clubs.push({
+          id: row.id,
+          name: row.club_name,
+          league_id: row.league_id || null,
+          country: row.berater_leagues?.country || null,
+        });
+      }
+    }
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+  return clubs;
+}
+
 export async function searchStipendiumPlayers(
   filters: StipendiumSearchFilters
 ): Promise<{ players: StipendiumSearchPlayer[]; total: number; hiddenNoPosition: number }> {
@@ -501,10 +566,11 @@ export async function searchStipendiumPlayers(
     // Left-Join auf den Verein: auch gescoutete Spieler ohne Vereinszuordnung
     // (z.B. U16 ohne TM-Profil, per Bericht angelegt) sollen auffindbar sein.
     // Nur Liga-/Nations-Filter erzwingen den Inner-Join.
+    const hasNations = !!(filters.nations && filters.nations.length > 0);
     const hasClubFilter =
-      (filters.leagueIds && filters.leagueIds.length > 0) || !!filters.nation;
+      (filters.leagueIds && filters.leagueIds.length > 0) || hasNations;
     const clubJoin = hasClubFilter ? 'berater_clubs!inner' : 'berater_clubs';
-    const leagueJoin = filters.nation ? 'berater_leagues!inner' : 'berater_leagues';
+    const leagueJoin = hasNations ? 'berater_leagues!inner' : 'berater_leagues';
     let query = supabase
       .from('berater_players')
       .select(
@@ -524,8 +590,14 @@ export async function searchStipendiumPlayers(
       query = query.in('berater_clubs.league_id', filters.leagueIds);
     }
 
-    if (filters.nation) {
-      query = query.eq('berater_clubs.berater_leagues.country', filters.nation);
+    // Vereinsfilter: konkrete Mannschaften; Vereinslose zählen nicht mehr zu
+    // ihrem alten Verein (gleiche Regel wie bei der Vereins-Namenssuche)
+    if (filters.clubIds && filters.clubIds.length > 0) {
+      query = query.in('club_id', filters.clubIds).eq('is_vereinslos', false);
+    }
+
+    if (filters.nations && filters.nations.length > 0) {
+      query = query.in('berater_clubs.berater_leagues.country', filters.nations);
     }
 
     if (filters.contractExpiring) {
@@ -559,13 +631,107 @@ export async function searchStipendiumPlayers(
 
   let players: StipendiumSearchPlayer[] = allData.map(mapRowToSearchPlayer);
 
+  // Mannschaft aus Scouting-Berichten: per Bericht angelegte Spieler (kein
+  // TM-Verein) werden der Mannschaft zugeordnet, bei der der Bericht
+  // aufgenommen wurde ("Borussia Dortmund" + Altersklasse U16 des Spiels =
+  // "Borussia Dortmund U16"). Ein TM-Verein hat immer Vorrang. Bei mehreren
+  // Berichten zählt die höchste Altersklasse, bei Gleichstand der neueste
+  // Bericht (U15, drei Wochen später U16 => U16).
+  const agRank = (ag: string | null): number => {
+    if (!ag) return -1;
+    const m = ag.match(/u[-\s]?(\d{1,2})/i);
+    if (m) return parseInt(m[1], 10);
+    if (/herren|senior/i.test(ag)) return 99;
+    return -1;
+  };
+  const teamLabel = (club: string, ag: string | null): string => {
+    // Mannschafts-Suffix steht schon im Vereinsnamen? Dann nichts anhängen.
+    if (/\bu[-\s]?\d{1,2}\b|\bII\b|\bIII\b/i.test(club)) return club;
+    const m = (ag || '').match(/u[-\s]?(\d{1,2})/i);
+    return m ? `${club} U${m[1]}` : club;
+  };
+  // match_date liegt gemischt vor ("11.04.2026" und "2026-08-28") -> für den
+  // Vergleich auf ISO bringen
+  const isoDate = (d: string): string => {
+    const m = d.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : d;
+  };
+  const { data: allEvals } = await supabase
+    .from('player_evaluations')
+    .select('berater_player_id, current_club, age_group, match_date')
+    .not('berater_player_id', 'is', null)
+    .not('current_club', 'is', null);
+  const bestEval = new Map<string, { club: string; ag: string | null; date: string }>();
+  for (const ev of (allEvals || []) as any[]) {
+    if (!ev.berater_player_id || !ev.current_club) continue;
+    const cand = { club: ev.current_club, ag: ev.age_group || null, date: isoDate(ev.match_date || '') };
+    const prev = bestEval.get(ev.berater_player_id);
+    if (
+      !prev ||
+      agRank(cand.ag) > agRank(prev.ag) ||
+      (agRank(cand.ag) === agRank(prev.ag) && cand.date > prev.date)
+    ) {
+      bestEval.set(ev.berater_player_id, cand);
+    }
+  }
+  for (const p of players) {
+    if (!p.club_name && !p.is_vereinslos) {
+      const be = bestEval.get(p.id);
+      if (be) p.club_name = teamLabel(be.club, be.ag);
+    }
+  }
+
+  // Vereinsfilter-Ergänzung: Bericht-Spieler ohne TM-Mannschaft über den
+  // Basisnamen des ausgewählten Vereins mitnehmen
+  if (filters.clubIds && filters.clubIds.length > 0 && filters.clubBaseNames && filters.clubBaseNames.length > 0) {
+    // Token-Vergleich statt Präfix: "TSG 1899 Hoffenheim" matcht auch
+    // "TSG Hoffenheim U15" (Jahreszahlen zählen nicht, alle übrigen
+    // Namensbestandteile müssen im Berichts-Verein vorkommen)
+    const baseTokens = (name: string) =>
+      normalizeSearch(name)
+        .split(/\s+/)
+        .filter((t) => t.length >= 3 && !/^\d+$/.test(t));
+    const bases = filters.clubBaseNames
+      .map((b) => ({ norm: normalizeSearch(b), tokens: baseTokens(b) }))
+      .filter((b) => b.norm.length > 0);
+    const matchesBase = (club: string) =>
+      bases.some((b) =>
+        b.tokens.length > 0 ? b.tokens.every((t) => club.includes(t)) : club.startsWith(b.norm)
+      );
+    const have = new Set(players.map((p) => p.id));
+    const extraIds: string[] = [];
+    for (const [pid, be] of bestEval) {
+      if (have.has(pid)) continue;
+      if (matchesBase(normalizeSearch(be.club))) extraIds.push(pid);
+    }
+    if (extraIds.length > 0) {
+      const { data: extra } = await supabase
+        .from('berater_players')
+        .select(SEARCH_PLAYER_SELECT)
+        .eq('is_active', true)
+        .in('id', extraIds);
+      for (const row of (extra || []) as any[]) {
+        const p = mapRowToSearchPlayer(row);
+        if (p.is_vereinslos) continue;
+        if (!p.club_name) {
+          const be = bestEval.get(p.id);
+          p.club_name = be ? teamLabel(be.club, be.ag) : null;
+        }
+        players.push(p);
+      }
+      players.sort((a, b) => a.player_name.localeCompare(b.player_name, 'de'));
+    }
+  }
+
   // Namens-/Vereinsfilter client-seitig und akzent-unabhängig ("uriel" findet "Uriël")
   if (filters.name?.trim()) {
     const needle = normalizeSearch(filters.name.trim());
     players = players.filter(
       (p) =>
         normalizeSearch(p.player_name).includes(needle) ||
-        (p.club_name !== null && normalizeSearch(p.club_name).includes(needle))
+        // Vereinssuche: Vereinslose nicht über ihren ALTEN Verein finden
+        // (die tauchen nur über den vereinslos-Filter oder ihren Namen auf)
+        (!p.is_vereinslos && p.club_name !== null && normalizeSearch(p.club_name).includes(needle))
     );
   }
 

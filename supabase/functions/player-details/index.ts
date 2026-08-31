@@ -79,6 +79,36 @@ async function fetchGamesBySeason(playerId: string): Promise<Record<number, Seas
   }
 }
 
+interface NationalTeamInfo {
+  name: string
+  countryId: number | null
+}
+
+/** Aktuelle Nationalmannschaft (clubAssignment type=nationalTeam) inkl. Land */
+async function fetchNationalTeam(playerId: string): Promise<NationalTeamInfo | null> {
+  try {
+    const r = await fetch(`https://tmapi.transfermarkt.technology/player/${playerId}`, {
+      headers: { ...FETCH_HEADERS, Accept: 'application/json' },
+    })
+    if (!r.ok) return null
+    const j = await r.json()
+    const assignments: any[] = j?.data?.clubAssignments || []
+    const nat = assignments.filter((a) => a?.type === 'nationalTeam').pop()
+    if (!nat?.clubId) return null
+    // locale=de: deutsche Teamnamen ("Deutschland U16" statt "Germany U16")
+    const rc = await fetch(`https://tmapi.transfermarkt.technology/club/${nat.clubId}?locale=de`, {
+      headers: { ...FETCH_HEADERS, Accept: 'application/json' },
+    })
+    if (!rc.ok) return null
+    const jc = await rc.json()
+    const name = jc?.data?.name
+    if (!name) return null
+    return { name, countryId: jc?.data?.baseDetails?.countryId ?? null }
+  } catch {
+    return null
+  }
+}
+
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
@@ -95,9 +125,10 @@ serve(async (req: Request) => {
     const now = new Date()
     const seasonYear = now.getMonth() + 1 >= 7 ? now.getFullYear() : now.getFullYear() - 1
 
-    const [transfers, gamesBySeason] = await Promise.all([
+    const [transfers, gamesBySeason, nationalTeam] = await Promise.all([
       fetchTransfers(pid),
       fetchGamesBySeason(pid),
+      fetchNationalTeam(pid),
     ])
 
     const cur = gamesBySeason ? gamesBySeason[seasonYear] : null
@@ -110,6 +141,7 @@ serve(async (req: Request) => {
       statsCurrentSeason: gamesBySeason ? cur || { games: 0, goals: 0, assists: 0 } : null,
       statsLastSeason: gamesBySeason ? last || { games: 0, goals: 0, assists: 0 } : null,
       transfers,
+      nationalTeam,
     })
   } catch (e) {
     return json({ success: false, error: String(e) }, 200)

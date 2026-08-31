@@ -293,7 +293,7 @@ const styles = StyleSheet.create({
     gap: 5,
   },
   playerName: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
   },
   playerJahrgang: {

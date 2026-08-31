@@ -170,14 +170,14 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   stageLabel: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
   },
   stageDescription: {
     fontSize: 13,
   },
   hint: {
-    fontSize: 12,
+    fontSize: 11,
     fontStyle: 'italic',
   },
 });

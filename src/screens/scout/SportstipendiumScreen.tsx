@@ -837,7 +837,7 @@ const styles = StyleSheet.create({
     color: RETRO.text,
   },
   cardDetails: {
-    fontSize: 12,
+    fontSize: 13,
     marginTop: 3,
     color: RETRO.textMuted,
   },
@@ -854,13 +854,13 @@ const styles = StyleSheet.create({
   },
   // Gleicher Stil wie die vereinslos-Zeile (kursiv, dünn)
   cardClub: {
-    fontSize: 12,
+    fontSize: 13,
     fontStyle: 'italic',
     color: RETRO.textMuted,
     flexShrink: 1,
   },
   cardClubMuted: {
-    fontSize: 12,
+    fontSize: 13,
     fontStyle: 'italic',
     color: RETRO.textMuted,
     flexShrink: 1,
@@ -887,7 +887,7 @@ const styles = StyleSheet.create({
     borderColor: RETRO.shadowDark,
   },
   archiveIcon: {
-    fontSize: 15,
+    fontSize: 14,
   },
   archiveLabel: {
     fontSize: 14,
@@ -925,13 +925,13 @@ const styles = StyleSheet.create({
     backgroundColor: RETRO.headerBg,
   },
   archiveModalTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
     flex: 1,
     color: RETRO.headerText,
   },
   archiveHint: {
-    fontSize: 12,
+    fontSize: 11,
     marginBottom: 12,
     color: RETRO.textMuted,
   },
@@ -948,12 +948,12 @@ const styles = StyleSheet.create({
     borderColor: RETRO.shadowDark,
   },
   restoreButtonText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: RETRO.text,
   },
   archiveReason: {
-    fontSize: 12,
+    fontSize: 13,
     fontStyle: 'italic',
     color: RETRO.textMuted,
     marginTop: 4,

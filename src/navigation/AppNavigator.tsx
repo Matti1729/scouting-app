@@ -4,7 +4,6 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { DashboardScreen } from '../screens/scout/DashboardScreen';
 import { MatchListScreen } from '../screens/scout/MatchListScreen';
 import { PlayerEvaluationScreen } from '../screens/scout/PlayerEvaluationScreen';
-import { BeraterstatusScreen } from '../screens/scout/BeraterstatusScreen';
 import { WatchlistScreen } from '../screens/scout/WatchlistScreen';
 import { SportstipendiumScreen } from '../screens/scout/SportstipendiumScreen';
 import { SuchmaschineScreen } from '../screens/scout/SuchmaschineScreen';
@@ -54,7 +53,6 @@ export function AppNavigator() {
           animation: 'fade',
         }}
       />
-      <Stack.Screen name="Beraterstatus" component={BeraterstatusScreen} />
       <Stack.Screen name="Watchlist" component={WatchlistScreen} />
       <Stack.Screen name="Sportstipendium" component={SportstipendiumScreen} />
       <Stack.Screen name="Suchmaschine" component={SuchmaschineScreen} />

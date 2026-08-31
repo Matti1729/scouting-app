@@ -46,12 +46,6 @@ interface TodayGame {
 
 const WEEKDAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 
-/** "Mi, 27.08." */
-function todayShort(): string {
-  const d = new Date();
-  return `${WEEKDAYS[d.getDay()]}, ${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
-}
-
 /** "Do, 27.08.26" für die Kopfzeile */
 function todayHeader(): string {
   const d = new Date();
@@ -275,8 +269,8 @@ export function DashboardScreen() {
     else Linking.openURL(url);
   };
 
-  const chip = (title: string) => (
-    <View style={[styles.chip, HARD_SHADOW]}>
+  const chip = (title: string, green?: boolean) => (
+    <View style={[styles.chip, green && styles.chipGreen, HARD_SHADOW]}>
       <Text style={styles.chipText}>{title}</Text>
     </View>
   );
@@ -337,9 +331,9 @@ export function DashboardScreen() {
         <View style={styles.bottomRow}>
           {/* Heutige Spiele */}
           <View style={[styles.panelCard, styles.panelHeute, HARD_SHADOW]}>
-            {chip(`HEUTE${todayGames.length > 0 ? ` (${todayGames.length})` : ''}`)}
+            {chip(`HEUTE${todayGames.length > 0 ? ` (${todayGames.length})` : ''}`, true)}
             <View style={styles.tableHead}>
-              <Text style={[styles.tableHeadText, styles.colDatum]}>DATUM</Text>
+              <Text style={[styles.tableHeadText, styles.colDatum]}>UHRZEIT</Text>
               <Text style={[styles.tableHeadText, styles.colBegegnung]}>BEGEGNUNG</Text>
               <Text style={[styles.tableHeadText, styles.colLiga]}>ALTERSKLASSE</Text>
               <View style={styles.colChevron} />
@@ -355,7 +349,7 @@ export function DashboardScreen() {
                   activeOpacity={0.7}
                 >
                   <Text style={[styles.tableCellMono, styles.colDatum]} numberOfLines={1}>
-                    {todayShort()}{g.zeit ? ` ${g.zeit}` : ''}
+                    {g.zeit || '—'}
                   </Text>
                   <Text style={[styles.tableCell, styles.colBegegnung]} numberOfLines={1}>
                     {g.begegnung}
@@ -373,9 +367,9 @@ export function DashboardScreen() {
 
           {/* Zuletzt zur Watchlist hinzugefügt */}
           <View style={[styles.panelCard, styles.panelWatchlist, HARD_SHADOW]}>
-            {chip('WATCHLIST')}
+            {chip('TOP-POTENTIALE', true)}
             <View style={styles.tableHead}>
-              <Text style={[styles.tableHeadText, { flex: 1 }]}>HÖCHSTES POTENTIAL</Text>
+              <Text style={[styles.tableHeadText, { flex: 1 }]}>SPIELER</Text>
               <Text style={styles.tableHeadText}>POT.</Text>
             </View>
             {topWatchlist.length === 0 ? (
@@ -615,6 +609,10 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     paddingTop: 20,
   },
+  // Grün wie der ERGEBNISSE-Chip in der Suchmaschine
+  chipGreen: {
+    backgroundColor: '#1a5f2a',
+  },
   chip: {
     position: 'absolute',
     top: -10,
@@ -733,13 +731,13 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   tableCellMono: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     fontFamily: MONO,
     color: RETRO.textMuted,
   },
   colDatum: {
-    width: 138,
+    width: 70,
   },
   colBegegnung: {
     flex: 1,
@@ -785,7 +783,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   alertTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
     color: RETRO.text,
   },
@@ -829,7 +827,7 @@ const styles = StyleSheet.create({
     paddingVertical: 1,
   },
   topZielBadgeText: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '800',
     letterSpacing: 0.5,
     color: '#14141e',
@@ -912,7 +910,7 @@ const styles = StyleSheet.create({
     color: RETRO.text,
   },
   detailHeute: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '800',
     color: '#15803d',
   },

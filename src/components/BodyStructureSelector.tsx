@@ -387,7 +387,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   prognosisLabel: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
   },
   prognosisValue: {
@@ -395,7 +395,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   incompleteHint: {
-    fontSize: 12,
+    fontSize: 11,
     textAlign: 'center',
     marginTop: 8,
     fontStyle: 'italic',

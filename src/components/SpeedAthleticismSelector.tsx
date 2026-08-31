@@ -235,7 +235,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   hintText: {
-    fontSize: 12,
+    fontSize: 11,
     fontStyle: 'italic',
   },
   chipsContainer: {

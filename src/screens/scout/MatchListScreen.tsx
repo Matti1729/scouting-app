@@ -2334,7 +2334,7 @@ export function MatchListScreen({ navigation, route }: any) {
               paddingHorizontal: 10, paddingVertical: 6, marginTop: 8,
               flexDirection: 'row', alignItems: 'center', gap: 8,
             }}>
-              <Text style={{ flex: 1, fontSize: 12, color: isDark ? '#fcd34d' : '#92400e' }}>
+              <Text style={{ flex: 1, fontSize: 13, color: isDark ? '#fcd34d' : '#92400e' }}>
                 ⚠️ {parts.join(' · ')}
               </Text>
               {!chg.missing && (
@@ -2342,7 +2342,7 @@ export function MatchListScreen({ navigation, route }: any) {
                   onPress={() => handleApplyMatchChange(item.id)}
                   style={{ backgroundColor: '#f59e0b', borderRadius: 6, paddingHorizontal: 10, paddingVertical: 4 }}
                 >
-                  <Text style={{ fontSize: 12, fontWeight: '600', color: '#451a03' }}>Übernehmen</Text>
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#451a03' }}>Übernehmen</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -2679,7 +2679,7 @@ export function MatchListScreen({ navigation, route }: any) {
                 {infoRow('Datum', (
                   <View style={{ flex: 1, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'flex-end', gap: 8 }}>
                     {areaDetail.datum === new Date().toISOString().slice(0, 10) ? (
-                      <Text style={{ fontSize: 12, fontWeight: '800', color: '#15803d' }}>Heute</Text>
+                      <Text style={{ fontSize: 13, fontWeight: '800', color: '#15803d' }}>Heute</Text>
                     ) : null}
                     <Text style={{ fontSize: 14, fontWeight: '600', color: RETRO.text }}>
                       {`${weekdayShort(areaDetail.datum) ? `${weekdayShort(areaDetail.datum)}, ` : ''}${formatDateGerman(areaDetail.datum, areaDetail.datumEnde)}`}
@@ -2803,7 +2803,7 @@ export function MatchListScreen({ navigation, route }: any) {
                           {formatDateGerman(item.datum, item.datumEnde)}{item.zeit ? ` · ${item.zeit} Uhr` : ''} · {item.mannschaft}
                         </Text>
                         <View style={{ backgroundColor: badge.backgroundColor, paddingHorizontal: 5, paddingVertical: 1 }}>
-                          <Text style={{ color: badge.color, fontSize: 9, fontWeight: '700' }}>{item.art}</Text>
+                          <Text style={{ color: badge.color, fontSize: 10, fontWeight: '700' }}>{item.art}</Text>
                         </View>
                       </View>
                       <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '600', marginTop: 2 }} numberOfLines={1}>
@@ -3478,7 +3478,7 @@ export function MatchListScreen({ navigation, route }: any) {
                             );
                           }}
                         >
-                          <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>🔍 HTML</Text>
+                          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>🔍 HTML</Text>
                         </TouchableOpacity>
                       )}
                     </View>
@@ -3524,7 +3524,7 @@ export function MatchListScreen({ navigation, route }: any) {
             <Text style={[styles.confirmText, { color: colors.textSecondary, marginBottom: 16 }]}>
               Lädt {getDFBTermineCount()} DFB-Nationalmannschaftstermine und {getHallenTermineCount()} Hallenturniere.
             </Text>
-            <Text style={[{ color: colors.textSecondary, fontSize: 12, marginBottom: 16, textAlign: 'center' }]}>
+            <Text style={[{ color: colors.textSecondary, fontSize: 13, marginBottom: 16, textAlign: 'center' }]}>
               Daten: Lehrgänge, EM-Quali, Länderspiele, Sichtungen, Hallenturniere{'\n'}
               Jahrgänge: U13 - U21{'\n'}
               Stand: {getLastUpdateDisplay()}
@@ -3978,7 +3978,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   backButtonText: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '500',
   },
   searchContainer: {
@@ -4023,7 +4023,7 @@ const styles = StyleSheet.create({
     color: '#1a1a1a',
   },
   mobileHeaderTitle: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '600',
     color: '#1a1a1a',
   },
@@ -4032,7 +4032,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   desktopHeaderTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     textAlign: 'center',
   },
@@ -4141,7 +4141,7 @@ const styles = StyleSheet.create({
     borderColor: '#1a1a1a',
   },
   mobileIconBtnText: {
-    fontSize: 18,
+    fontSize: 16,
     color: '#64748b',
   },
   toolbarCheckbox: {
@@ -4208,7 +4208,7 @@ const styles = StyleSheet.create({
   },
   floatingExportBtnText: {
     color: '#fff',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
   },
   floatingAddBtn: {
@@ -4231,7 +4231,7 @@ const styles = StyleSheet.create({
   },
   floatingAddBtnText: {
     color: '#1a1a1a',
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: '300',
   },
   tableHeader: {
@@ -4294,7 +4294,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   matchCardDate: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#64748b',
     marginLeft: 8,
   },
@@ -4310,7 +4310,7 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   matchCardResult: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     marginTop: 2,
   },
@@ -4327,7 +4327,7 @@ const styles = StyleSheet.create({
     marginRight: 8,
   },
   matchCardLocation: {
-    fontSize: 12,
+    fontSize: 13,
   },
   matchCardCheckbox: {
     width: 20,
@@ -4345,7 +4345,7 @@ const styles = StyleSheet.create({
   },
   matchCardCheckmark: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   // Empty State
@@ -4359,7 +4359,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   emptyText: {
-    fontSize: 15,
+    fontSize: 14,
     color: '#64748b',
     marginBottom: 16,
   },
@@ -4406,7 +4406,7 @@ const styles = StyleSheet.create({
   },
   checkmark: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   cell: {
@@ -4455,7 +4455,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   ergebnisText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
   },
   // Modal Styles
@@ -4657,7 +4657,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   mobileMenuItemText: {
-    fontSize: 15,
+    fontSize: 14,
   },
   mobileMenuButton: {
     position: 'absolute',
@@ -4676,7 +4676,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   mobileMenuButtonText: {
-    fontSize: 22,
+    fontSize: 24,
     fontWeight: 'bold',
   },
   modalInfoCenter: {
@@ -4698,7 +4698,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
     textAlign: 'center',
   },
@@ -4707,7 +4707,7 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   fussballDeLink: {
-    fontSize: 12,
+    fontSize: 13,
     marginTop: 2,
     textDecorationLine: 'underline',
   },
@@ -4763,7 +4763,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
   },
   lineupTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '600',
     marginBottom: 12,
   },
@@ -4819,7 +4819,7 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   subsTitle: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '600',
     marginTop: 12,
     marginBottom: 6,
@@ -4855,7 +4855,7 @@ const styles = StyleSheet.create({
   },
   playerNameInput: {
     flex: 1,
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
     paddingHorizontal: 6,
     paddingVertical: 4,
@@ -4950,7 +4950,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   tmSearchText: {
-    fontSize: 12,
+    fontSize: 13,
     fontStyle: 'italic',
   },
   resultBadge: {
@@ -4980,7 +4980,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   addMatchTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
   },
   addMatchBody: {
@@ -4994,7 +4994,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   sectionLabel: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
   },
   urlInputRow: {
@@ -5108,13 +5108,13 @@ const styles = StyleSheet.create({
     padding: 24,
   },
   confirmTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
     marginBottom: 12,
     textAlign: 'center',
   },
   confirmText: {
-    fontSize: 15,
+    fontSize: 14,
     lineHeight: 22,
     marginBottom: 24,
     textAlign: 'center',
@@ -5150,7 +5150,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
   },
   addPlayerTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '700',
   },
   addPlayerBody: {
@@ -5279,11 +5279,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   tmLinkText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '500',
   },
   tmLinkArrow: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
   },
   tmLoadingContainer: {
@@ -5352,7 +5352,7 @@ const styles = StyleSheet.create({
     padding: 20,
   },
   sourceModalTitle: {
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: '600',
     marginBottom: 16,
     textAlign: 'center',

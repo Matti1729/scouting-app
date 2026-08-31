@@ -11,6 +11,10 @@ interface RatingBarProps {
   plain?: boolean;
   /** Nur der Slider, helle Farben — für farbige Untergründe (Potential-Karte) */
   bare?: boolean;
+  /** Maximalwert der Skala (Standard 10) */
+  max?: number;
+  /** bare ohne Griff: nur die schmale Linie (wie der Potential-Regler) */
+  noThumb?: boolean;
 }
 
 /** Generate flat-top hexagon polygon points as CSS clip-path */
@@ -121,7 +125,7 @@ function HexBadge({ value, size, color, bgColor, isGold }: { value: number; size
   );
 }
 
-export function RatingBar({ value, onChange, compact, compactSize, plain, bare }: RatingBarProps) {
+export function RatingBar({ value, onChange, compact, compactSize, plain, bare, max = 10, noThumb }: RatingBarProps) {
   const { colors } = useTheme();
   const trackRef = useRef<View>(null);
   const trackLayoutRef = useRef({ x: 0, width: 0 });
@@ -139,8 +143,8 @@ export function RatingBar({ value, onChange, compact, compactSize, plain, bare }
     const { x, width } = trackLayoutRef.current;
     if (width === 0) return 0;
     const ratio = Math.max(0, Math.min(1, (pageX - x) / width));
-    return Math.round(ratio * 10);
-  }, []);
+    return Math.round(ratio * max);
+  }, [max]);
 
   const handleTrackLayout = useCallback((_e: LayoutChangeEvent) => {
     trackRef.current?.measureInWindow((x, _y, w) => {
@@ -192,7 +196,7 @@ export function RatingBar({ value, onChange, compact, compactSize, plain, bare }
     })
   ).current;
 
-  const fillPercent = (value / 10) * 100;
+  const fillPercent = (Math.min(value, max) / max) * 100;
 
   const renderSlider = () => (
     <View
@@ -201,14 +205,16 @@ export function RatingBar({ value, onChange, compact, compactSize, plain, bare }
       style={[styles.trackWrap, compact && styles.trackWrapCompact, (plain || bare) && { width: '100%', height: 26 }, Platform.OS === 'web' && { cursor: 'pointer' } as any]}
       {...(Platform.OS !== 'web' ? panResponder.panHandlers : {})}
     >
-      <View style={[styles.track, compact && styles.trackCompact, { backgroundColor: bare ? 'rgba(20, 20, 30, 0.25)' : colors.border }]}>
+      <View style={[styles.track, compact && styles.trackCompact, noThumb && { height: 3 }, { backgroundColor: bare ? 'rgba(20, 20, 30, 0.25)' : colors.border }]}>
         <View style={[styles.trackFill, { width: `${fillPercent}%`, backgroundColor: bare ? '#14141e' : ratingColor }]} />
       </View>
-      <View style={[
-        styles.thumb, compact && styles.thumbCompact,
-        (plain || bare) && { top: 3 },
-        { left: `${fillPercent}%`, backgroundColor: bare ? '#ffffff' : ratingColor, borderColor: bare ? '#14141e' : colors.surface },
-      ]} />
+      {!noThumb && (
+        <View style={[
+          styles.thumb, compact && styles.thumbCompact,
+          (plain || bare) && { top: 3 },
+          { left: `${fillPercent}%`, backgroundColor: bare ? '#ffffff' : ratingColor, borderColor: bare ? '#14141e' : colors.surface },
+        ]} />
+      )}
     </View>
   );
 

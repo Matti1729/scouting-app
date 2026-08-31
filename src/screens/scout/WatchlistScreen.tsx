@@ -156,10 +156,8 @@ export function WatchlistScreen() {
   };
 
   const getAgentLabel = (player: BeraterPlayer): { text: string; color: string } => {
-    if (player.current_agent_name === 'Familienangehörige') {
-      return { text: 'Familienangehörige', color: colors.warning };
-    }
-    // gleiche Regel wie überall: Agentur vor Personenname
+    // gleiche Regel wie überall: Agentur vor Personenname; "Familienangehörige"
+    // wird angezeigt, zählt nur im ohne-Berater-Filter als beraterlos
     const display = agentDisplayName(player.current_agent_name, player.current_agent_company);
     if (!display) return { text: 'kein Beratereintrag', color: colors.success };
     return { text: display, color: colors.textSecondary };
@@ -536,246 +534,6 @@ export function WatchlistScreen() {
     </View>
   );
 
-  // Detail modal (identical to BeraterstatusScreen)
-  const renderDetailSheet = () => {
-    if (!selectedPlayer) return null;
-    const agentLabel = getAgentLabel(selectedPlayer);
-    const age = calculateAge(selectedPlayer.birth_date);
-    const sinceDate = formatDateDE(selectedPlayer.agent_since);
-    const ratingOptions: (number | null)[] = [null, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-
-    return (
-      <Modal
-        visible={!!selectedPlayer}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSelectedPlayer(null)}
-      >
-        <TouchableOpacity
-          style={[styles.modalOverlay, !isMobile && styles.modalOverlayDesktop]}
-          activeOpacity={1}
-          onPress={() => setSelectedPlayer(null)}
-        >
-          <TouchableOpacity
-            activeOpacity={1}
-            style={[styles.detailSheet, { backgroundColor: colors.background, borderColor: colors.border }, !isMobile && styles.detailSheetDesktop]}
-            onPress={() => {}}
-          >
-            {/* Top-Bar mit Close-Button */}
-            <View style={styles.detailTopBar}>
-              <View style={{ flex: 1 }} />
-              <TouchableOpacity
-                style={[styles.closeButton, { borderColor: colors.border }]}
-                onPress={() => setSelectedPlayer(null)}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.closeButtonText, { color: colors.textSecondary }]}>✕</Text>
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView bounces={false} showsVerticalScrollIndicator={false} style={{ flex: 1 }} contentContainerStyle={{ padding: 16, gap: 16, paddingBottom: 40 }}>
-              {/* Header Card */}
-              <View style={[styles.detailHeaderCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
-                <View style={styles.detailNameRow}>
-                  <Text style={[styles.detailName, { color: colors.text }]} numberOfLines={1}>
-                    {selectedPlayer.player_name}
-                  </Text>
-                  <View style={{ flex: 1 }} />
-                  <TouchableOpacity onPress={handleOpenProfile} activeOpacity={0.7}>
-                    <Image
-                      source={require('../../../assets/transfermarkt-logo.png')}
-                      style={styles.tmLogo}
-                      resizeMode="contain"
-                    />
-                  </TouchableOpacity>
-                </View>
-                <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: -4 }}>
-                  {[selectedPlayer.club_name, selectedPlayer.league_name].filter(Boolean).join(' · ')}
-                </Text>
-                <View style={[styles.detailInfoBar, { borderTopColor: colors.border }]}>
-                  <View style={styles.detailInfoCell}>
-                    <Text style={[styles.detailInfoLabel, styles.detailInfoLabelPos, { color: colors.textSecondary }]}>MARKTWERT</Text>
-                    <View style={{ alignItems: 'center' }}>
-                      <Text style={[styles.detailInfoValue, { color: colors.text, fontSize: isMobile ? 24 : 36 }]} numberOfLines={1}>
-                        {selectedPlayer.market_value || '-'}
-                      </Text>
-                      <Text style={{ fontSize: isMobile ? 11 : 14, color: 'transparent', marginTop: 2 }}>{'\u00A0'}</Text>
-                    </View>
-                  </View>
-                  <View style={[styles.detailInfoDivider, { backgroundColor: colors.border }]} />
-                  <View style={styles.detailInfoCell}>
-                    <Text style={[styles.detailInfoLabel, styles.detailInfoLabelPos, { color: colors.textSecondary }]}>ALTER</Text>
-                    <View style={{ alignItems: 'center' }}>
-                      <Text style={[styles.detailInfoValue, { color: colors.text, fontSize: isMobile ? 24 : 36 }]}>
-                        {age || '-'}
-                      </Text>
-                      {selectedPlayer.birth_date ? (
-                        <Text style={{ fontSize: isMobile ? 11 : 14, color: colors.textSecondary, marginTop: 2 }}>
-                          {selectedPlayer.birth_date}
-                        </Text>
-                      ) : null}
-                    </View>
-                  </View>
-                  <View style={[styles.detailInfoDivider, { backgroundColor: colors.border }]} />
-                  <View style={styles.detailInfoCell}>
-                    <Text style={[styles.detailInfoLabel, styles.detailInfoLabelPos, { color: colors.textSecondary }]}>POTENTIAL</Text>
-                    <RatingBar value={modalRating ?? 0} onChange={(v) => handleRatingChange(v || null)} compact compactSize={isMobile ? 36 : 52} />
-                  </View>
-                </View>
-              </View>
-
-              {/* Beraterstatus */}
-              <View style={[styles.detailSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>BERATERSTATUS</Text>
-                {historyLoading ? (
-                  <ActivityIndicator size="small" color={colors.primary} style={{ marginTop: 8 }} />
-                ) : (
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.hTimeline}>
-                    <View style={[styles.hTimelineCard, styles.hTimelineCardCurrent, { backgroundColor: agentLabel.color + '15', borderColor: agentLabel.color }]}>
-                      <Text style={[styles.hTimelineAgent, { color: agentLabel.color }]} numberOfLines={2}>
-                        {agentLabel.text}
-                      </Text>
-                      {selectedPlayer.current_agent_company && (() => {
-                        const name = (selectedPlayer.current_agent_name || '').toLowerCase().replace(/[-\s]/g, '');
-                        const company = selectedPlayer.current_agent_company.toLowerCase().replace(/[-\s]/g, '');
-                        return !company.includes(name) && !name.includes(company);
-                      })() && (
-                        <Text style={[styles.hTimelineCompany, { color: colors.textSecondary }]} numberOfLines={1}>
-                          {selectedPlayer.current_agent_company}
-                        </Text>
-                      )}
-                      <Text style={[styles.hTimelineDuration, { color: colors.textSecondary }]}>
-                        {sinceDate ? `seit ${sinceDate}` : 'aktuell'}
-                      </Text>
-                    </View>
-                    {playerHistory.map((change, index) => {
-                      const agentName = change.previous_agent_name || 'kein Berater';
-                      const phaseEndDate = change.detected_at;
-                      const phaseStartDate = playerHistory[index + 1]?.detected_at || null;
-                      const phaseDuration = phaseStartDate ? formatDurationBetween(phaseStartDate, phaseEndDate) : null;
-                      return (
-                        <View key={change.id} style={[styles.hTimelineCard, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}>
-                          <Text style={[styles.hTimelineAgent, { color: colors.text }]} numberOfLines={2}>{agentName}</Text>
-                          {phaseDuration && <Text style={[styles.hTimelineDuration, { color: colors.textSecondary }]}>{phaseDuration}</Text>}
-                          <Text style={[styles.hTimelineDate, { color: colors.textSecondary }]}>
-                            {phaseStartDate ? formatDateDE(phaseStartDate) : '?'} – {formatDateDE(phaseEndDate)}
-                          </Text>
-                        </View>
-                      );
-                    })}
-                  </ScrollView>
-                )}
-              </View>
-
-              {/* Notizen */}
-              <View style={[styles.detailSection, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>NOTIZEN</Text>
-                <TextInput
-                  style={[styles.notesInput, { color: colors.text, backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
-                  value={modalNotes}
-                  onChangeText={handleNotesChange}
-                  placeholder="Notizen zum Spieler..."
-                  placeholderTextColor={colors.textSecondary}
-                  multiline
-                  numberOfLines={3}
-                  textAlignVertical="top"
-                />
-              </View>
-
-              {/* Spielbewertungen */}
-              <View
-                style={[styles.detailSection, { backgroundColor: colors.surface, borderColor: colors.border }]}
-                onLayout={(e) => setDetailTableWidth(e.nativeEvent.layout.width - 32)}
-              >
-                <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>SPIELBEWERTUNGEN</Text>
-                {detailTableWidth > 0 && (
-                  <TableHeader
-                    columnDefs={MATCH_EVAL_COLUMNS}
-                    columnOrder={matchEvalTable.columnOrder}
-                    getColumnWidth={matchEvalTable.getColumnWidth}
-                    onResizeStart={matchEvalTable.onResizeStart}
-                    onDragStart={matchEvalTable.onDragStart}
-                    resizingKey={matchEvalTable.resizingKey}
-                    draggingKey={matchEvalTable.draggingKey}
-                    dragOverKey={matchEvalTable.dragOverKey}
-                    colors={colors}
-                    setHeaderRef={matchEvalTable.setHeaderRef}
-                  />
-                )}
-                {matchEvaluations.length === 0 ? (
-                  <Text style={{ fontSize: 13, color: colors.textSecondary, paddingVertical: 8 }}>-</Text>
-                ) : (
-                  matchEvaluations.map((ev) => (
-                    <TableRow
-                      key={ev.id}
-                      columnOrder={matchEvalTable.columnOrder}
-                      getColumnWidth={matchEvalTable.getColumnWidth}
-                      style={[styles.playerRow, { borderBottomColor: colors.border }]}
-                      onPress={() => {
-                        returnToPlayerRef.current = selectedPlayer as any;
-                        setSelectedPlayer(null);
-                        setTimeout(() => {
-                          (navigation as any).navigate('PlayerEvaluation', {
-                            matchId: ev.match_id,
-                            matchName: ev.match_name,
-                            matchDate: ev.match_date,
-                            mannschaft: ev.age_group,
-                            playerName: `${ev.last_name || ''}, ${ev.first_name || ''}`,
-                            playerNumber: ev.jersey_number,
-                            playerPosition: ev.positions?.split(', ')[0] || null,
-                            playerBirthDate: ev.birth_date,
-                            agentName: ev.agent_name,
-                            transfermarktUrl: ev.transfermarkt_url,
-                          });
-                        }, 300);
-                      }}
-                      renderCell={(key) => {
-                        switch (key) {
-                          case 'date':
-                            return <Text style={{ fontSize: 11, color: colors.textSecondary }} numberOfLines={1}>{ev.match_date || '-'}</Text>;
-                          case 'match':
-                            return <Text style={{ fontSize: 11, color: colors.text }} numberOfLines={1}>{ev.match_name || '-'}</Text>;
-                          case 'agegroup':
-                            return <Text style={{ fontSize: 11, color: colors.textSecondary }} numberOfLines={1}>{ev.age_group || '-'}</Text>;
-                          default:
-                            return null;
-                        }
-                      }}
-                    />
-                  ))
-                )}
-              </View>
-            </ScrollView>
-
-            {/* Eval-Buttons */}
-            <View style={[styles.evalButtonRow, { borderTopColor: colors.border }]}>
-              <TouchableOpacity
-                style={[styles.evalButton, modalEvalStatus === 'nicht_interessant' ? { backgroundColor: colors.error } : { backgroundColor: colors.border }]}
-                onPress={() => handleEvaluation('nicht_interessant')}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.evalButtonText, { color: modalEvalStatus === 'nicht_interessant' ? '#fff' : colors.textSecondary }]}>Uninteressant</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.evalButton, modalEvalStatus === 'interessant' ? { backgroundColor: colors.success } : { backgroundColor: colors.border }]}
-                onPress={() => handleEvaluation('interessant')}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.evalButtonText, { color: modalEvalStatus === 'interessant' ? '#fff' : colors.textSecondary }]}>Interessant</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.evalButton, { backgroundColor: colors.warning }]}
-                onPress={handleRemoveFromWatchlist}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.evalButtonText, { color: '#fff' }]}>Von Watchlist entfernen</Text>
-              </TouchableOpacity>
-            </View>
-          </TouchableOpacity>
-        </TouchableOpacity>
-      </Modal>
-    );
-  };
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
@@ -836,10 +594,10 @@ export function WatchlistScreen() {
               activeOpacity={0.7}
             >
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 15, fontWeight: '600', color: colors.text }} numberOfLines={1}>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }} numberOfLines={1}>
                   {item.player.player_name}
                 </Text>
-                <Text style={{ fontSize: 12, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
+                <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
                   {[item.player.club_name, item.player.birth_date, item.player.position].filter(Boolean).join(' · ') || '—'}
                 </Text>
               </View>
@@ -847,9 +605,9 @@ export function WatchlistScreen() {
                 <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primary }}>{item.lastRating}/10</Text>
               )}
               <View style={{ backgroundColor: '#2563eb', borderRadius: 10, minWidth: 26, paddingHorizontal: 6, paddingVertical: 3, alignItems: 'center' }}>
-                <Text style={{ fontSize: 12, fontWeight: '800', color: '#fff' }}>{item.reportCount}×</Text>
+                <Text style={{ fontSize: 11, fontWeight: '800', color: '#fff' }}>{item.reportCount}×</Text>
               </View>
-              <Text style={{ fontSize: 12, fontFamily: MONO, color: colors.textSecondary, minWidth: 70, textAlign: 'right' }}>
+              <Text style={{ fontSize: 11, fontFamily: MONO, color: colors.textSecondary, minWidth: 70, textAlign: 'right' }}>
                 {/* Datum kann ISO oder DD.MM.YYYY sein — einheitlich deutsch anzeigen */}
                 {item.lastMatchDate && /^\d{4}-\d{2}-\d{2}/.test(item.lastMatchDate)
                   ? item.lastMatchDate.slice(0, 10).split('-').reverse().join('.')
@@ -1038,10 +796,10 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   mobileCardAge: {
-    fontSize: 12,
+    fontSize: 13,
   },
   mobileCardMV: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
   },
   mobileCardRow2: {
@@ -1051,7 +809,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   mobileCardClubInline: {
-    fontSize: 12,
+    fontSize: 13,
     flex: 1,
     flexShrink: 1,
   },
@@ -1063,7 +821,7 @@ const styles = StyleSheet.create({
     flexShrink: 0,
   },
   mobileCardAgentText: {
-    fontSize: 12,
+    fontSize: 13,
     fontWeight: '500',
   },
   mobileCardAdded: {
@@ -1098,7 +856,7 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   monoCell: {
-    fontSize: 12,
+    fontSize: 13,
     fontFamily: MONO,
     color: RETRO.text,
   },
@@ -1274,7 +1032,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   watchlistMiniText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
 
@@ -1377,7 +1135,7 @@ const styles = StyleSheet.create({
     marginRight: 2,
   },
   topZielBadgeText: {
-    fontSize: 9,
+    fontSize: 10,
     fontWeight: '800' as const,
     letterSpacing: 0.5,
     color: '#14141e',

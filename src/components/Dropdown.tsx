@@ -252,11 +252,11 @@ const styles = StyleSheet.create({
     minWidth: 52,
   },
   buttonText: {
-    fontSize: 15,
+    fontSize: 14,
     flex: 1,
   },
   buttonTextCompact: {
-    fontSize: 12,
+    fontSize: 13,
     flex: 1,
   },
   chevron: {
@@ -304,7 +304,7 @@ const styles = StyleSheet.create({
   },
   checkmark: {
     color: '#fff',
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   optionText: {

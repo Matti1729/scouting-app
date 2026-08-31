@@ -23,6 +23,7 @@ import {
   PlayerTmDetails,
   PlayerTmSeasonStats,
   fetchPlayerTmDetails,
+  tmFlagUrl,
   loadPlayerNote,
   savePlayerNote,
   fetchEntryAddedBy,
@@ -164,6 +165,13 @@ const POSITION_FULL: Record<string, string> = {
   RA: 'Rechtsaußen',
   ST: 'Stürmer',
 };
+
+// "Familienangehörige" wird als Eintrag angezeigt, gilt aber farblich als
+// beraterlos (grün) — wie "kein Beratereintrag"
+function isBeraterlos(name: string | null, company: string | null): boolean {
+  const d = agentDisplayName(name, company);
+  return !d || d.toLowerCase().includes('familienangehörige');
+}
 
 function openProfile(url: string | null) {
   if (!url) return;
@@ -531,7 +539,8 @@ export function PlayerDetailModal({
                   {cardRow(
                     'Verein',
                     <View style={styles.detailClubValue}>
-                      {p.club_tm_id ? (
+                      {/* bei Vereinslosen kein Wappen des alten Vereins */}
+                      {!p.is_vereinslos && p.club_tm_id ? (
                         <Image
                           source={{ uri: `https://tmssl.akamaized.net/images/wappen/head/${p.club_tm_id}.png` }}
                           style={styles.detailClubLogo}
@@ -545,7 +554,26 @@ export function PlayerDetailModal({
                       </Text>
                     </View>
                   )}
-                  {cardRow('Liga', p.is_vereinslos ? '—' : p.league_name || '—', true)}
+                  {cardRow('Liga', p.is_vereinslos ? '—' : p.league_name || '—')}
+                  {/* Aktueller Nationalspieler: Mannschaft + Länderflagge (aus TM-Details) */}
+                  {cardRow(
+                    'Nationalspieler',
+                    tmDetails?.nationalTeam ? (
+                      <View style={styles.detailClubValue}>
+                        {tmDetails.nationalTeam.countryId ? (
+                          <Image
+                            source={{ uri: tmFlagUrl(tmDetails.nationalTeam.countryId) }}
+                            style={styles.natFlag}
+                            resizeMode="contain"
+                          />
+                        ) : null}
+                        <Text style={styles.detailClubText} numberOfLines={1}>
+                          {tmDetails.nationalTeam.name}
+                        </Text>
+                      </View>
+                    ) : '—',
+                    true
+                  )}
                 </View>
                 <View style={[styles.card, HARD_SHADOW, { zIndex: 30 }]}>
                   {cardChip('VERTRAG')}
@@ -556,10 +584,16 @@ export function PlayerDetailModal({
                     {cardRow(
                       'Berater',
                       <TouchableOpacity style={styles.agentValue} onPress={toggleVerlauf} activeOpacity={0.7} hitSlop={4}>
-                        <Text style={styles.cardRowValue} numberOfLines={1}>
-                          {agentDisplayName(p.current_agent_name, p.current_agent_company) || 'kein Eintrag'}
+                        <Text
+                          style={[
+                            styles.cardRowValue,
+                            isBeraterlos(p.current_agent_name, p.current_agent_company) && { color: '#15803d' },
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {agentDisplayName(p.current_agent_name, p.current_agent_company) || 'kein Beratereintrag'}
                         </Text>
-                        {p.agent_url ? (
+                        {p.agent_url && agentDisplayName(p.current_agent_name, p.current_agent_company) ? (
                           <TouchableOpacity onPress={() => openProfile(p.agent_url)} hitSlop={6}>
                             <Image source={require('../../assets/tm-icon.png')} style={styles.tmIconSmall} />
                           </TouchableOpacity>
@@ -580,10 +614,16 @@ export function PlayerDetailModal({
                             {/* Aktuelle Phase */}
                             <View style={[styles.verlaufRow, styles.verlaufRowCurrent]}>
                               <View style={styles.verlaufAgentRow}>
-                                <Text style={styles.verlaufAgent} numberOfLines={1}>
+                                <Text
+                                  style={[
+                                    styles.verlaufAgent,
+                                    isBeraterlos(p.current_agent_name, p.current_agent_company) && { color: '#15803d' },
+                                  ]}
+                                  numberOfLines={1}
+                                >
                                   {agentDisplayName(p.current_agent_name, p.current_agent_company) || 'kein Beratereintrag'}
                                 </Text>
-                                {p.agent_url ? (
+                                {p.agent_url && agentDisplayName(p.current_agent_name, p.current_agent_company) ? (
                                   <TouchableOpacity onPress={() => openProfile(p.agent_url)} hitSlop={6}>
                                     <Image source={require('../../assets/tm-icon.png')} style={styles.verlaufTmIcon} />
                                   </TouchableOpacity>
@@ -606,7 +646,7 @@ export function PlayerDetailModal({
                                 >
                                   <View style={styles.verlaufAgentRow}>
                                     <Text style={styles.verlaufAgent} numberOfLines={1}>
-                                      {agentDisplayName(change.previous_agent_name, change.previous_agent_company) || 'kein Berater'}
+                                      {agentDisplayName(change.previous_agent_name, change.previous_agent_company) || 'kein Beratereintrag'}
                                     </Text>
                                     {agentUrl ? (
                                       <TouchableOpacity onPress={() => openProfile(agentUrl)} hitSlop={6}>
@@ -923,7 +963,7 @@ const styles = StyleSheet.create({
     borderBottomColor: '#c6c2ba',
   },
   reportDate: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
     color: '#4a4a55',
     minWidth: 78,
@@ -973,7 +1013,7 @@ const styles = StyleSheet.create({
     alignItems: 'baseline',
   },
   detailName: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
     color: RETRO.text,
     flexShrink: 1,
@@ -995,9 +1035,15 @@ const styles = StyleSheet.create({
     width: 20,
     height: 20,
   },
+  // Länderflagge (breiter als hoch, wie TM sie liefert)
+  natFlag: {
+    width: 20,
+    height: 13,
+  },
+  // gleiche Schrift wie die übrigen Kartenwerte (z.B. Position)
   detailClubText: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 13,
+    fontWeight: '700',
     color: RETRO.text,
     textAlign: 'right',
     flexShrink: 1,
@@ -1269,7 +1315,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   confirmTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
     color: RETRO.text,
   },

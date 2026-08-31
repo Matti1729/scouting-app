@@ -15,7 +15,6 @@ export type RootStackParamList = {
     playerPosition?: string;
     playerBirthYear?: string;
   };
-  Beraterstatus: undefined;
   Watchlist: undefined;
   Sportstipendium: undefined;
   Suchmaschine: undefined;

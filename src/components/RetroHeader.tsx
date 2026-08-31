@@ -73,7 +73,7 @@ const styles = StyleSheet.create({
     marginRight: -4,
   },
   backArrow: {
-    fontSize: 22,
+    fontSize: 20,
     fontWeight: '600',
     color: RETRO.text,
   },

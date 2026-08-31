@@ -930,7 +930,7 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   promptTitle: {
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '700',
     color: RETRO.text,
   },

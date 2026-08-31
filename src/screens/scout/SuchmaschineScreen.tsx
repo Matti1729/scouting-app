@@ -22,11 +22,16 @@ import { useTheme } from '../../contexts/ThemeContext';
 import {
   StipendiumEntry,
   StipendiumSearchPlayer,
+  ClubOption,
   loadStipendiumEntries,
   addStipendiumEntry,
   searchStipendiumPlayers,
+  loadAllClubs,
+  normalizeSearch,
+  agentDisplayName,
 } from '../../services/stipendiumService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
+import { RatingBar } from '../../components/evaluation/RatingBar';
 import { RetroHeader } from '../../components/RetroHeader';
 import { loadLeagues, loadWatchlist, addToWatchlist, loadAllEvaluations, loadAlertSubscriptionIds } from '../../services/beraterService';
 import { MONO, RETRO_CHIP, RETRO_CHIP_TEXT } from '../../theme/retro';
@@ -50,14 +55,16 @@ const RESULT_COLUMNS: ColumnDef[] = [
 const WECHSEL_COLUMNS: ColumnDef[] = [
   { key: 'name', label: 'Name', defaultFlex: 1.4, minWidth: 130 },
   { key: 'pos', label: 'Pos', defaultFlex: 0.4, minWidth: 44 },
-  { key: 'verein', label: 'Verein', defaultFlex: 1.3, minWidth: 120 },
+  { key: 'verein', label: 'Verein', defaultFlex: 1.2, minWidth: 110 },
   { key: 'alter', label: 'Alter', defaultFlex: 0.5, minWidth: 50 },
-  { key: 'wechsel', label: 'Beraterwechsel', defaultFlex: 2, minWidth: 180 },
+  { key: 'mv', label: 'Marktwert', defaultFlex: 0.7, minWidth: 80 },
+  { key: 'wvorher', label: 'Berater vorher', defaultFlex: 1.1, minWidth: 100 },
+  { key: 'wneu', label: 'Berater neu', defaultFlex: 1.1, minWidth: 100 },
   { key: 'wdatum', label: 'Datum', defaultFlex: 0.7, minWidth: 80 },
   { key: 'potential', label: 'Pot.', defaultFlex: 0.4, minWidth: 48 },
 ];
 
-type ResultSortKey = 'name' | 'pos' | 'verein' | 'alter' | 'mv' | 'berater' | 'potential' | 'wdatum';
+type ResultSortKey = 'name' | 'pos' | 'verein' | 'alter' | 'mv' | 'berater' | 'potential' | 'wdatum' | 'wvorher' | 'wneu';
 
 /** "750 Tsd. €" / "1,50 Mio. €" -> Zahl (für die Sortierung) */
 function parseMvNumber(mv: string | null): number {
@@ -68,6 +75,13 @@ function parseMvNumber(mv: string | null): number {
   if (mv.includes('Mio')) return num * 1000000;
   if (mv.includes('Tsd')) return num * 1000;
   return num;
+}
+
+// Marktwert-Korridor: Euro-Zahl -> Anzeige "750 Tsd. €" / "1,5 Mio. €"
+function formatMvStep(v: number): string {
+  if (v >= 1_000_000) return `${String(Math.round((v / 1_000_000) * 100) / 100).replace('.', ',')} Mio. €`;
+  if (v >= 1_000) return `${String(Math.round(v / 10) / 100).replace('.', ',')} Tsd. €`;
+  return `${v} €`;
 }
 
 // Farbe wie im Potential-Schiebebalken (1-3 rot, 4-6 orange, 7-9 grün, 10 gold)
@@ -425,7 +439,7 @@ const ldStyles = StyleSheet.create({
     justifyContent: 'center',
   },
   checkmark: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
     lineHeight: 15,
   },
@@ -435,6 +449,17 @@ const ldStyles = StyleSheet.create({
   },
   chevron: {
     fontSize: 13,
+  },
+  searchInput: {
+    fontSize: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderBottomWidth: 1,
+  },
+  moreHint: {
+    fontSize: 11,
+    fontFamily: MONO,
+    padding: 10,
   },
   clearRow: {
     paddingHorizontal: 12,
@@ -455,34 +480,118 @@ const ldStyles = StyleSheet.create({
   },
 });
 
-// Einfaches Einzelauswahl-Dropdown für die Nation ("Egal" = kein Filter)
-function NationDropdown({
-  countries,
+// Vereins-Dropdown: alle Vereine mit ihren Mannschaften, Suchfeld oben,
+// Mehrfachauswahl einzelner Mannschaften oder ganzer Vereine
+interface ClubGroup {
+  key: string;
+  label: string;             // Vereinsname (Basis, z.B. "Borussia Dortmund")
+  ids: string[];             // alle Mannschafts-IDs des Vereins
+  children: ClubOption[];    // die einzelnen Mannschaften (voller Name)
+}
+
+/** "Borussia Dortmund U19" -> "Borussia Dortmund" (Mannschafts-Suffix abtrennen) */
+function baseClubName(name: string): string {
+  return name.replace(/\s+(U-?\d{1,2}|II|III|IV|B|2|Amateure|Jugend)$/i, '').trim() || name;
+}
+
+const CLUB_LIST_CAP = 60; // Dropdown flüssig halten — Rest über die Suche erreichbar
+
+function ClubDropdown({
+  clubs,
   selected,
   onChange,
 }: {
-  countries: string[];
-  selected: string | null;
-  onChange: (code: string | null) => void;
+  clubs: ClubOption[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState('');
   const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
   const btnRef = useRef<View>(null);
 
   const openModal = () => {
     btnRef.current?.measureInWindow((x, y, w, h) => {
       setPos({ top: y + h + 4, left: x, width: w });
+      setSearch('');
       setOpen(true);
     });
   };
 
-  const label = (code: string) =>
-    `${COUNTRY_FLAGS[code] || ''} ${COUNTRY_NAMES[code] || code}`.trim();
+  // Mannschaften zu Vereinen gruppieren
+  const groups = useMemo<ClubGroup[]>(() => {
+    const byBase = new Map<string, ClubOption[]>();
+    for (const c of clubs) {
+      const base = baseClubName(c.name);
+      const list = byBase.get(base);
+      if (list) list.push(c);
+      else byBase.set(base, [c]);
+    }
+    return Array.from(byBase.entries())
+      .map(([base, teams]) => ({
+        key: base,
+        label: base,
+        ids: teams.map((t) => t.id),
+        children: teams,
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'de'));
+  }, [clubs]);
 
-  const pick = (code: string | null) => {
-    onChange(code);
-    setOpen(false);
+  // Suche: Verein ODER einzelne Mannschaft matcht; Trefferliste gecappt
+  const { visible, hiddenCount } = useMemo(() => {
+    const needle = normalizeSearch(search.trim());
+    const matching = !needle
+      ? groups
+      : groups.filter(
+          (g) =>
+            normalizeSearch(g.label).includes(needle) ||
+            g.children.some((c) => normalizeSearch(c.name).includes(needle))
+        );
+    return {
+      visible: matching.slice(0, CLUB_LIST_CAP),
+      hiddenCount: Math.max(0, matching.length - CLUB_LIST_CAP),
+    };
+  }, [groups, search]);
+
+  const isChecked = (ids: string[]) => ids.length > 0 && ids.every((id) => selected.has(id));
+  const isPartial = (ids: string[]) => !isChecked(ids) && ids.some((id) => selected.has(id));
+
+  const toggleIds = (ids: string[]) => {
+    const next = new Set(selected);
+    if (isChecked(ids)) ids.forEach((id) => next.delete(id));
+    else ids.forEach((id) => next.add(id));
+    onChange(next);
   };
+
+  const toggleExpand = (key: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const displayText = useMemo(() => {
+    if (selected.size === 0) return 'Alle';
+    const names = clubs.filter((c) => selected.has(c.id)).map((c) => c.name);
+    if (names.length <= 2) return names.join(', ');
+    return `${names.length} Mannschaften ausgewählt`;
+  }, [selected, clubs]);
+
+  const renderCheckbox = (checked: boolean, partial: boolean) => (
+    <View
+      style={[
+        ldStyles.checkbox,
+        { borderColor: RETRO.shadowDark },
+        (checked || partial) && { backgroundColor: RETRO.headerBg, borderColor: RETRO.headerBg },
+      ]}
+    >
+      {checked && <Text style={[ldStyles.checkmark, { color: RETRO.white }]}>✓</Text>}
+      {partial && <Text style={[ldStyles.checkmark, { color: RETRO.white }]}>−</Text>}
+    </View>
+  );
 
   return (
     <View>
@@ -492,7 +601,7 @@ function NationDropdown({
         onPress={openModal}
       >
         <Text style={[ldStyles.buttonText, { color: RETRO.text }]} numberOfLines={1}>
-          {selected ? label(selected) : 'Egal'}
+          {displayText}
         </Text>
         <Text style={[ldStyles.buttonChevron, { color: RETRO.textMuted }]}>▼</Text>
       </TouchableOpacity>
@@ -509,24 +618,328 @@ function NationDropdown({
                     borderColor: RETRO.shadowDark,
                     top: pos.top,
                     left: pos.left,
-                    minWidth: Math.max(pos.width, 180),
+                    minWidth: Math.max(pos.width, 280),
                   },
                 ]}
               >
-                {[null, ...countries].map((code) => (
+                {/* Suchfeld oben: tippen -> Vorschläge */}
+                <TextInput
+                  value={search}
+                  onChangeText={setSearch}
+                  placeholder="Verein suchen …"
+                  placeholderTextColor={RETRO.textMuted}
+                  autoFocus
+                  style={[
+                    ldStyles.searchInput,
+                    { color: RETRO.text, borderBottomColor: RETRO.rowBorder },
+                    Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : null,
+                  ]}
+                />
+
+                {/* Leeren */}
+                <TouchableOpacity
+                  style={[ldStyles.clearRow, { borderBottomColor: RETRO.rowBorder }]}
+                  onPress={() => onChange(new Set())}
+                >
+                  <Text style={[ldStyles.clearText, { color: selected.size > 0 ? '#b02020' : RETRO.textMuted }]}>
+                    Leeren — alle Häkchen entfernen
+                  </Text>
+                </TouchableOpacity>
+
+                <ScrollView style={ldStyles.list} keyboardShouldPersistTaps="handled">
+                  {visible.map((g) => {
+                    const single = g.children.length === 1;
+                    const isExpanded = expanded.has(g.key) || !!search.trim();
+                    return (
+                      <View key={g.key}>
+                        <View style={[ldStyles.row, { paddingLeft: 12 }]}>
+                          <TouchableOpacity style={ldStyles.rowMain} onPress={() => toggleIds(g.ids)}>
+                            {renderCheckbox(isChecked(g.ids), isPartial(g.ids))}
+                            <Text style={[ldStyles.rowLabel, { color: RETRO.text }]} numberOfLines={1}>
+                              {single ? g.children[0].name : g.label}
+                            </Text>
+                          </TouchableOpacity>
+                          {!single && (
+                            <TouchableOpacity onPress={() => toggleExpand(g.key)} style={ldStyles.chevronButton} hitSlop={8}>
+                              <Text style={[ldStyles.chevron, { color: RETRO.textMuted }]}>
+                                {isExpanded ? '▾' : '▸'}
+                              </Text>
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                        {!single && isExpanded && g.children.map((c) => (
+                          <View key={c.id} style={[ldStyles.row, { paddingLeft: 36 }]}>
+                            <TouchableOpacity style={ldStyles.rowMain} onPress={() => toggleIds([c.id])}>
+                              {renderCheckbox(selected.has(c.id), false)}
+                              <Text style={[ldStyles.rowLabel, { color: RETRO.text }]} numberOfLines={1}>
+                                {c.name}
+                              </Text>
+                            </TouchableOpacity>
+                          </View>
+                        ))}
+                      </View>
+                    );
+                  })}
+                  {hiddenCount > 0 && (
+                    <Text style={[ldStyles.moreHint, { color: RETRO.textMuted }]}>
+                      … {hiddenCount} weitere Vereine — Namen eingeben, um sie zu finden
+                    </Text>
+                  )}
+                  {visible.length === 0 && (
+                    <Text style={[ldStyles.moreHint, { color: RETRO.textMuted }]}>Kein Verein gefunden</Text>
+                  )}
+                </ScrollView>
+
+                <TouchableOpacity
+                  style={[ldStyles.doneButton, { backgroundColor: RETRO.headerBg }]}
+                  onPress={() => setOpen(false)}
+                >
+                  <Text style={[ldStyles.doneText, { color: RETRO.white }]}>
+                    Fertig{selected.size > 0 ? ` (${selected.size})` : ''}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+    </View>
+  );
+}
+
+// Länder-Dropdown mit Häkchen (Mehrfachauswahl, wie das Liga-Dropdown)
+function NationDropdown({
+  countries,
+  selected,
+  onChange,
+}: {
+  countries: string[];
+  selected: Set<string>;
+  onChange: (next: Set<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const btnRef = useRef<View>(null);
+
+  const openModal = () => {
+    btnRef.current?.measureInWindow((x, y, w, h) => {
+      setPos({ top: y + h + 4, left: x, width: w });
+      setOpen(true);
+    });
+  };
+
+  const label = (code: string) =>
+    `${COUNTRY_FLAGS[code] || ''} ${COUNTRY_NAMES[code] || code}`.trim();
+
+  const toggle = (code: string) => {
+    const next = new Set(selected);
+    if (next.has(code)) next.delete(code);
+    else next.add(code);
+    onChange(next);
+  };
+
+  const displayText =
+    selected.size === 0
+      ? 'Egal'
+      : selected.size <= 2
+        ? [...selected].map((c) => COUNTRY_NAMES[c] || c).join(', ')
+        : `${selected.size} Länder ausgewählt`;
+
+  return (
+    <View>
+      <TouchableOpacity
+        ref={btnRef as any}
+        style={[ldStyles.button, { backgroundColor: RETRO.inputBg }, HARD_SHADOW]}
+        onPress={openModal}
+      >
+        <Text style={[ldStyles.buttonText, { color: RETRO.text }]} numberOfLines={1}>
+          {displayText}
+        </Text>
+        <Text style={[ldStyles.buttonChevron, { color: RETRO.textMuted }]}>▼</Text>
+      </TouchableOpacity>
+
+      <Modal visible={open} transparent animationType="none" onRequestClose={() => setOpen(false)}>
+        <TouchableWithoutFeedback onPress={() => setOpen(false)}>
+          <View style={ldStyles.overlay}>
+            <TouchableWithoutFeedback>
+              <View
+                style={[
+                  ldStyles.dropdown,
+                  {
+                    backgroundColor: RETRO.white,
+                    borderColor: RETRO.shadowDark,
+                    top: pos.top,
+                    left: pos.left,
+                    minWidth: Math.max(pos.width, 200),
+                  },
+                ]}
+              >
+                {/* Leeren */}
+                <TouchableOpacity
+                  style={[ldStyles.clearRow, { borderBottomColor: RETRO.rowBorder }]}
+                  onPress={() => onChange(new Set())}
+                >
+                  <Text style={[ldStyles.clearText, { color: selected.size > 0 ? '#b02020' : RETRO.textMuted }]}>
+                    Leeren — alle Häkchen entfernen
+                  </Text>
+                </TouchableOpacity>
+
+                {countries.map((code) => {
+                  const checked = selected.has(code);
+                  return (
+                    <TouchableOpacity
+                      key={code}
+                      style={[ldStyles.rowMain, { paddingHorizontal: 12 }]}
+                      onPress={() => toggle(code)}
+                    >
+                      <View
+                        style={[
+                          ldStyles.checkbox,
+                          { borderColor: RETRO.shadowDark },
+                          checked && { backgroundColor: RETRO.headerBg, borderColor: RETRO.headerBg },
+                        ]}
+                      >
+                        {checked && <Text style={[ldStyles.checkmark, { color: RETRO.white }]}>✓</Text>}
+                      </View>
+                      <Text style={[ldStyles.rowLabel, { color: RETRO.text }]} numberOfLines={1}>
+                        {label(code)}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+
+                <TouchableOpacity
+                  style={[ldStyles.doneButton, { backgroundColor: RETRO.headerBg }]}
+                  onPress={() => setOpen(false)}
+                >
+                  <Text style={[ldStyles.doneText, { color: RETRO.white }]}>
+                    Fertig{selected.size > 0 ? ` (${selected.size})` : ''}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </TouchableWithoutFeedback>
+          </View>
+        </TouchableWithoutFeedback>
+      </Modal>
+    </View>
+  );
+}
+
+// Marktwert-Feld (von/bis): Zahl frei eintippen (Komma oder Punkt egal),
+// dahinter ein kleines Einheiten-Dropdown "Tsd. €" / "Mio. €"
+const MV_UNITS: { factor: number; label: string }[] = [
+  { factor: 1_000, label: 'Tsd. €' },
+  { factor: 1_000_000, label: 'Mio. €' },
+];
+
+function MvField({
+  value,
+  onChange,
+}: {
+  value: number | null;
+  onChange: (next: number | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const [text, setText] = useState('');
+  const [factor, setFactor] = useState(1_000_000);
+  const btnRef = useRef<View>(null);
+  // zuletzt selbst gemeldeter Wert, damit der Sync von außen das Tippen nicht
+  // überschreibt; undefined = noch nie synchronisiert (beim Mount befüllen)
+  const emitted = useRef<number | null | undefined>(undefined);
+
+  // Wert von außen (Zurücksetzen) ins Feld spiegeln
+  useEffect(() => {
+    if (value === emitted.current) return;
+    emitted.current = value;
+    if (value == null) {
+      setText('');
+      return;
+    }
+    const f = value >= 1_000_000 ? 1_000_000 : 1_000;
+    setFactor(f);
+    setText(String(value / f).replace('.', ','));
+  }, [value]);
+
+  const emit = (t: string, f: number) => {
+    const num = parseFloat(t.replace(',', '.'));
+    const next = t.trim() === '' || isNaN(num) || num < 0 ? null : num * f;
+    emitted.current = next;
+    onChange(next);
+  };
+
+  const openModal = () => {
+    btnRef.current?.measureInWindow((x, y, w, h) => {
+      setPos({ top: y + h + 4, left: x, width: w });
+      setOpen(true);
+    });
+  };
+
+  const unitLabel = MV_UNITS.find((u) => u.factor === factor)?.label || 'Mio. €';
+
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+      <TextInput
+        value={text}
+        onChangeText={(t) => {
+          setText(t);
+          emit(t, factor);
+        }}
+        placeholder="Egal"
+        placeholderTextColor={RETRO.textMuted}
+        keyboardType="decimal-pad"
+        style={[
+          ldStyles.button,
+          { backgroundColor: RETRO.inputBg, flex: 1, minWidth: 0, fontSize: 14, color: RETRO.text },
+          HARD_SHADOW,
+          Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : null,
+        ]}
+      />
+      <TouchableOpacity
+        ref={btnRef as any}
+        style={[ldStyles.button, { backgroundColor: RETRO.inputBg, flexShrink: 0, width: 92 }, HARD_SHADOW]}
+        onPress={openModal}
+      >
+        <Text style={{ fontSize: 14, color: RETRO.text }} numberOfLines={1}>
+          {unitLabel}
+        </Text>
+        <Text style={[ldStyles.buttonChevron, { color: RETRO.textMuted, marginLeft: 5 }]}>▼</Text>
+      </TouchableOpacity>
+
+      <Modal visible={open} transparent animationType="none" onRequestClose={() => setOpen(false)}>
+        <TouchableWithoutFeedback onPress={() => setOpen(false)}>
+          <View style={ldStyles.overlay}>
+            <TouchableWithoutFeedback>
+              <View
+                style={[
+                  ldStyles.dropdown,
+                  {
+                    backgroundColor: RETRO.white,
+                    borderColor: RETRO.shadowDark,
+                    top: pos.top,
+                    left: pos.left,
+                    minWidth: Math.max(pos.width, 90),
+                  },
+                ]}
+              >
+                {MV_UNITS.map((u) => (
                   <TouchableOpacity
-                    key={code ?? 'egal'}
+                    key={u.factor}
                     style={[ldStyles.rowMain, { paddingHorizontal: 12 }]}
-                    onPress={() => pick(code)}
+                    onPress={() => {
+                      setFactor(u.factor);
+                      setOpen(false);
+                      emit(text, u.factor);
+                    }}
                   >
                     <Text
                       style={[
                         ldStyles.rowLabel,
                         { color: RETRO.text },
-                        (selected ?? null) === code && { fontWeight: '700' },
+                        u.factor === factor && { fontWeight: '700', color: RETRO.headerBg },
                       ]}
                     >
-                      {code ? label(code) : 'Egal'}
+                      {u.label}
                     </Text>
                   </TouchableOpacity>
                 ))}
@@ -587,7 +1000,7 @@ export function SuchmaschineScreen() {
   const [resultsWechsel, setResultsWechsel] = useState(false);
   const activeColumns = resultsWechsel ? WECHSEL_COLUMNS : RESULT_COLUMNS;
   const tableStandard = useTableColumns(RESULT_COLUMNS, tableWidth, 'suchmaschine_results_v6');
-  const tableWechsel = useTableColumns(WECHSEL_COLUMNS, tableWidth, 'suchmaschine_results_wechsel');
+  const tableWechsel = useTableColumns(WECHSEL_COLUMNS, tableWidth, 'suchmaschine_results_wechsel_v3');
   const table = resultsWechsel ? tableWechsel : tableStandard;
   const [sortKey, setSortKey] = useState<ResultSortKey>('name');
   const [sortAsc, setSortAsc] = useState(true);
@@ -602,17 +1015,29 @@ export function SuchmaschineScreen() {
   const [selectedPositions, setSelectedPositions] = useState<Set<string>>(new Set());
   const [selectedPotentials, setSelectedPotentials] = useState<Set<number>>(new Set());
   const [selectedLeagueIds, setSelectedLeagueIds] = useState<Set<string>>(new Set());
-  const [nation, setNation] = useState<string | null>(null);
+  const [nations, setNations] = useState<Set<string>>(new Set());
+  // Vereins-Filter: konkrete Mannschaften (berater_clubs.id)
+  const [selectedClubIds, setSelectedClubIds] = useState<Set<string>>(new Set());
+  const [clubOptions, setClubOptions] = useState<ClubOption[]>([]);
+  // Kaskade: Land-/Liga-Auswahl schränkt die Vereinsliste im Dropdown ein
+  const clubsForDropdown = useMemo(() => {
+    let list = clubOptions;
+    if (nations.size > 0) list = list.filter((c) => c.country && nations.has(c.country));
+    if (selectedLeagueIds.size > 0) list = list.filter((c) => c.league_id && selectedLeagueIds.has(c.league_id));
+    return list;
+  }, [clubOptions, nations, selectedLeagueIds]);
   const [vereinslos, setVereinslos] = useState(false);
   const [contractExpiring, setContractExpiring] = useState(false);
+  // Marktwert-Korridor (null = offen)
+  const [mvMin, setMvMin] = useState<number | null>(null);
+  const [mvMax, setMvMax] = useState<number | null>(null);
   const [ohneBerater, setOhneBerater] = useState(false);
   const [aufWatchlist, setAufWatchlist] = useState(false);
 
   // Scouting-Ratings (für den Potential-Filter): Bewertung vor Watchlist-Rating
   const [ratingsMap, setRatingsMap] = useState<Map<string, number>>(new Map());
-  // Bewertungsstatus je Spieler (nicht_interessant/top_ziel) fürs Ausgrauen/Filtern
+  // Bewertungsstatus je Spieler (nicht_interessant/top_ziel) fürs Ausgrauen
   const [statusMap, setStatusMap] = useState<Map<string, string>>(new Map());
-  const [hideUninteresting, setHideUninteresting] = useState(false);
   // Beraterwechsel-Filter (Tracker-Integration): letzte N Tage, 0 = aus
   const [wechselTage, setWechselTage] = useState(0);
   // Glocken-Filter: nur Spieler mit aktivem Benachrichtigungs-Abo
@@ -651,6 +1076,7 @@ export function SuchmaschineScreen() {
   useEffect(() => {
     loadData();
     loadLeagueOptions();
+    loadAllClubs().then(setClubOptions).catch(() => {});
     loadAlertSubscriptionIds().then(setAlertIds).catch(() => {});
     Promise.all([loadWatchlist(), loadAllEvaluations()]).then(([wl, evals]) => {
       setWatchlistIds(new Set(wl.map((w) => w.player_id).filter(Boolean) as string[]));
@@ -767,7 +1193,17 @@ export function SuchmaschineScreen() {
       agePlus,
       positions: Array.from(selectedPositions),
       leagueIds,
-      nation: nation || undefined,
+      nations: nations.size > 0 ? Array.from(nations) : undefined,
+      clubIds: selectedClubIds.size > 0 ? Array.from(selectedClubIds) : undefined,
+      // Basisnamen der gewählten Vereine: findet auch Bericht-Spieler (U15/U16)
+      clubBaseNames:
+        selectedClubIds.size > 0
+          ? Array.from(
+              new Set(
+                clubOptions.filter((c) => selectedClubIds.has(c.id)).map((c) => baseClubName(c.name))
+              )
+            )
+          : undefined,
       vereinslos,
       contractExpiring,
       wechselTage: wechselTage || undefined,
@@ -780,6 +1216,17 @@ export function SuchmaschineScreen() {
         return r != null && selectedPotentials.has(r);
       });
     }
+    if (mvMin != null || mvMax != null) {
+      // Bei vertauschten Grenzen (von > bis) einfach beide Richtungen zulassen
+      const lo = mvMin != null && mvMax != null ? Math.min(mvMin, mvMax) : mvMin;
+      const hi = mvMin != null && mvMax != null ? Math.max(mvMin, mvMax) : mvMax;
+      players = players.filter((p) => {
+        const mv = parseMvNumber(p.market_value);
+        if (lo != null && mv < lo) return false;
+        if (hi != null && mv > hi) return false;
+        return true;
+      });
+    }
     if (ohneBerater) {
       players = players.filter(
         (p) => countsAsNoAgent(p.current_agent_name) && countsAsNoAgent(p.current_agent_company)
@@ -787,9 +1234,6 @@ export function SuchmaschineScreen() {
     }
     if (aufWatchlist) {
       players = players.filter((p) => watchlistIds.has(p.id));
-    }
-    if (hideUninteresting) {
-      players = players.filter((p) => statusMap.get(p.id) !== 'nicht_interessant');
     }
     if (nurGlocke) {
       players = players.filter((p) => alertIds.has(p.id));
@@ -811,12 +1255,14 @@ export function SuchmaschineScreen() {
     setSelectedPositions(new Set());
     setSelectedPotentials(new Set());
     setSelectedLeagueIds(new Set());
-    setNation(null);
+    setNations(new Set());
+    setSelectedClubIds(new Set());
     setVereinslos(false);
     setContractExpiring(false);
+    setMvMin(null);
+    setMvMax(null);
     setOhneBerater(false);
     setAufWatchlist(false);
-    setHideUninteresting(false);
     setNurGlocke(false);
     setWechselTage(0);
     setSearchResults(null);
@@ -836,16 +1282,24 @@ export function SuchmaschineScreen() {
       parts.push(`Potential: ${Array.from(selectedPotentials).sort((a, b) => a - b).join(', ')}`);
     }
     if (selectedLeagueIds.size > 0) parts.push(`${selectedLeagueIds.size} Ligen`);
-    if (nation) parts.push(COUNTRY_NAMES[nation] || nation);
+    if (nations.size > 0) parts.push([...nations].map((n) => COUNTRY_NAMES[n] || n).join(', '));
+    if (selectedClubIds.size > 0) {
+      const names = clubOptions.filter((c) => selectedClubIds.has(c.id)).map((c) => c.name);
+      parts.push(names.length <= 2 ? names.join(', ') : `${names.length} Mannschaften`);
+    }
     if (vereinslos) parts.push('vereinslos');
     if (contractExpiring) parts.push('Vertrag läuft aus');
+    if (mvMin != null || mvMax != null) {
+      if (mvMin != null && mvMax != null) parts.push(`Marktwert ${formatMvStep(mvMin)} - ${formatMvStep(mvMax)}`);
+      else if (mvMin != null) parts.push(`Marktwert ab ${formatMvStep(mvMin)}`);
+      else parts.push(`Marktwert bis ${formatMvStep(mvMax!)}`);
+    }
     if (ohneBerater) parts.push('ohne Berater');
     if (aufWatchlist) parts.push('auf der Watchlist');
-    if (hideUninteresting) parts.push('ohne Uninteressante');
     if (nurGlocke) parts.push('Glocke aktiv');
-    if (wechselTage > 0) parts.push(`Beraterwechsel ${wechselTage} Tage`);
+    if (wechselTage > 0) parts.push(`Neuer Berater seit ${wechselTage} ${wechselTage === 1 ? 'Tag' : 'Tagen'}`);
     return parts.length > 0 ? parts.join(' · ') : 'Keine Filter gesetzt';
-  }, [searchName, selectedAges, agePlus, selectedPositions, selectedPotentials, selectedLeagueIds, nation, vereinslos, contractExpiring, ohneBerater, aufWatchlist, hideUninteresting, nurGlocke, wechselTage]);
+  }, [searchName, selectedAges, agePlus, selectedPositions, selectedPotentials, selectedLeagueIds, nations, selectedClubIds, clubOptions, vereinslos, contractExpiring, mvMin, mvMax, ohneBerater, aufWatchlist, nurGlocke, wechselTage]);
 
   const togglePotential = (val: number) => {
     setSelectedPotentials((prev) => {
@@ -869,13 +1323,20 @@ export function SuchmaschineScreen() {
     const n = (name || '').trim().toLowerCase();
     return n === '' || n === 'kein beratereintrag' || n === 'kein eintrag' || n === '-' || n === '—';
   };
-  // "ohne Berater"-Filter: kein Eintrag, explizit "ohne Berater" oder Familienangehörige
+  // "ohne Berater"-Filter: kein Eintrag, "ohne Berater", Familienangehörige, k.A.
   const countsAsNoAgent = (val: string | null) => {
     const n = (val || '').trim().toLowerCase();
-    return isNoAgentValue(val) || n === 'ohne berater' || n.includes('familienangehörige');
+    return (
+      isNoAgentValue(val) ||
+      n === 'ohne berater' ||
+      n.replace(/\s/g, '') === 'k.a.' ||
+      n.includes('familienangehörige')
+    );
   };
+  // Zentrale Berater-Anzeige-Regel: Agentur vor Person, Platzhalter
+  // (Familienangehörige, k.A., ohne Berater ...) zählen als kein Eintrag
   const agentDisplay = (p: StipendiumSearchPlayer) =>
-    p.current_agent_company || (!isNoAgentValue(p.current_agent_name) ? p.current_agent_name! : '');
+    agentDisplayName(p.current_agent_name, p.current_agent_company) || '';
 
   const handleSort = (key: string) => {
     if (sortKey === key) {
@@ -907,6 +1368,10 @@ export function SuchmaschineScreen() {
           return dir * ((ratingsMap.get(a.id) ?? -1) - (ratingsMap.get(b.id) ?? -1));
         case 'wdatum':
           return dir * (a.last_change?.date || '').localeCompare(b.last_change?.date || '');
+        case 'wvorher':
+          return dir * (a.last_change?.from || 'zzz').localeCompare(b.last_change?.from || 'zzz', 'de');
+        case 'wneu':
+          return dir * (a.last_change?.to || 'zzz').localeCompare(b.last_change?.to || 'zzz', 'de');
         default:
           return 0;
       }
@@ -1065,7 +1530,7 @@ export function SuchmaschineScreen() {
                 );
               case 'mv':
                 return (
-                  <Text style={[styles.tableCellMono, { color: RETRO.text }]} numberOfLines={1}>
+                  <Text style={[styles.tableCell, { color: RETRO.text }]} numberOfLines={1}>
                     {item.market_value || '–'}
                   </Text>
                 );
@@ -1075,18 +1540,29 @@ export function SuchmaschineScreen() {
                     {agentDisplay(item) || 'kein Eintrag'}
                   </Text>
                 );
-              case 'wechsel': {
-                const lc = item.last_change;
-                if (!lc) return null;
-                return (
-                  <Text style={[styles.tableCell, { color: RETRO.text }]} numberOfLines={1}>
-                    {`${lc.from || 'kein Berater'} → ${lc.to || 'kein Berater'}`}
+              case 'wvorher':
+                // alter Zustand ausgegraut — der Blick fällt auf "Berater neu"
+                return item.last_change ? (
+                  <Text style={[styles.tableCell, { color: RETRO.textMuted }]} numberOfLines={1}>
+                    {item.last_change.from || 'kein Berater'}
                   </Text>
-                );
-              }
+                ) : null;
+              case 'wneu':
+                // neuer Zustand fett; "kein Berater" grün = freier Spieler (Chance)
+                return item.last_change ? (
+                  <Text
+                    style={[
+                      styles.tableCellBold,
+                      { color: item.last_change.to ? RETRO.text : '#15803d' },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {item.last_change.to || 'kein Berater'}
+                  </Text>
+                ) : null;
               case 'wdatum':
                 return (
-                  <Text style={[styles.tableCellMono, { color: RETRO.text }]} numberOfLines={1}>
+                  <Text style={[styles.tableCell, { color: RETRO.text }]} numberOfLines={1}>
                     {item.last_change ? item.last_change.date.slice(0, 10).split('-').reverse().join('.') : ''}
                   </Text>
                 );
@@ -1194,11 +1670,11 @@ export function SuchmaschineScreen() {
           <View style={nc.row}>
             <Text style={nc.rowLabel}>LAND</Text>
             <View style={nc.dropdownWrap}>
-              <NationDropdown countries={nationOptions} selected={nation} onChange={setNation} />
+              <NationDropdown countries={nationOptions} selected={nations} onChange={setNations} />
             </View>
           </View>
           <View style={nc.row}>
-            <Text style={nc.rowLabel}>{vereinslos ? 'LETZTE LIGA' : 'LIGEN'}</Text>
+            <Text style={nc.rowLabel}>{vereinslos ? 'LETZTE LIGA' : 'LIGA'}</Text>
             <View style={nc.dropdownWrap}>
               <LeagueDropdown
                 options={leagueOptions}
@@ -1207,25 +1683,66 @@ export function SuchmaschineScreen() {
               />
             </View>
           </View>
+          {/* Vereins-Filter: alle Vereine mit ihren Mannschaften, suchbar, Mehrfachauswahl */}
           <View style={nc.row}>
-            <Text style={nc.rowLabel}>WECHSEL</Text>
-            <View style={nc.btnWrap}>
-              {[7, 14, 30].map((d) =>
-                filterBtn(`${d} Tage`, wechselTage === d, () => setWechselTage((v) => (v === d ? 0 : d)), 52)
-              )}
+            <Text style={nc.rowLabel}>VEREIN</Text>
+            <View style={nc.dropdownWrap}>
+              <ClubDropdown clubs={clubsForDropdown} selected={selectedClubIds} onChange={setSelectedClubIds} />
+            </View>
+          </View>
+          {/* Marktwert-Korridor: von/bis mit festen Stufen (25 Tsd. bis 200 Mio.) */}
+          <View style={nc.row}>
+            <Text style={nc.rowLabel}>MARKTWERT</Text>
+            <View style={[nc.dropdownWrap, nc.mvRange]}>
+              <MvField value={mvMin} onChange={setMvMin} />
+              <Text style={nc.mvRangeDash}>-</Text>
+              <MvField value={mvMax} onChange={setMvMax} />
             </View>
           </View>
           <View style={nc.checkGroupCols}>
             <View style={nc.checkCol}>
               {checkbox('vereinslos', vereinslos, () => setVereinslos((v) => !v))}
               {checkbox('Vertrag läuft aus', contractExpiring, () => setContractExpiring((v) => !v))}
-              {checkbox('ohne Berater', ohneBerater, () => setOhneBerater((v) => !v))}
             </View>
             <View style={nc.checkCol}>
               {checkbox('auf der Watchlist', aufWatchlist, () => setAufWatchlist((v) => !v))}
-              {checkbox('Uninteressante ausblenden', hideUninteresting, () => setHideUninteresting((v) => !v))}
-              {checkbox('Glocke aktiv', nurGlocke, () => setNurGlocke((v) => !v))}
             </View>
+          </View>
+        </View>
+
+        {/* Karte BERATER: alle beraterbezogenen Filter; bei aktivem Wechsel-Filter
+            zeigt die Ergebnistabelle "wer -> wohin" + Datum */}
+        <View style={[nc.card, nc.cardBerater, HARD_SHADOW]}>
+          <View style={nc.chip}><Text style={RETRO_CHIP_TEXT as any}>BERATER</Text></View>
+          {/* Zeitraum-Regler wie beim Potential: −/+ Kästchen + schmale Linie, 0 (aus) bis 30 Tage */}
+          <View style={nc.row}>
+            <Text style={[nc.rowLabel, nc.wechselLabel]}>NEUER BERATER SEIT</Text>
+            <View style={nc.wechselSliderRow}>
+              <TouchableOpacity
+                style={[nc.stepBtn, HARD_SHADOW]}
+                onPress={() => setWechselTage((v) => Math.max(0, v - 1))}
+                activeOpacity={0.7}
+                hitSlop={4}
+              >
+                <Text style={nc.stepBtnText}>−</Text>
+              </TouchableOpacity>
+              <View style={{ flex: 1 }}>
+                <RatingBar value={wechselTage} onChange={setWechselTage} bare noThumb max={30} />
+              </View>
+              <TouchableOpacity
+                style={[nc.stepBtn, HARD_SHADOW]}
+                onPress={() => setWechselTage((v) => Math.min(30, v + 1))}
+                activeOpacity={0.7}
+                hitSlop={4}
+              >
+                <Text style={nc.stepBtnText}>+</Text>
+              </TouchableOpacity>
+              <Text style={nc.wechselValue}>{wechselTage > 0 ? `${wechselTage} ${wechselTage === 1 ? 'Tag' : 'Tagen'}` : 'aus'}</Text>
+            </View>
+          </View>
+          <View style={nc.checkGroup}>
+            {checkbox('ohne Berater', ohneBerater, () => setOhneBerater((v) => !v))}
+            {checkbox('Glocke aktiv (Beraterstatus-Alarm)', nurGlocke, () => setNurGlocke((v) => !v))}
           </View>
         </View>
       </View>
@@ -1635,7 +2152,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   entryName: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '600',
     flexShrink: 1,
   },
@@ -1655,7 +2172,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   moveButtonText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
   removeButton: {
@@ -1685,7 +2202,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   addedBadgeText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
   addedBadgeIcon: {
@@ -1707,7 +2224,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   tableCellMono: {
-    fontSize: 12,
+    fontSize: 13,
     fontFamily: MONO,
   },
   tableActionCell: {
@@ -1722,7 +2239,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   tableAddButtonText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '600',
   },
   tableAddedBadge: {
@@ -1762,7 +2279,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   detailName: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
     color: RETRO.text,
     flex: 1,
@@ -1894,17 +2411,24 @@ const nc = StyleSheet.create({
     paddingTop: 16,
     paddingBottom: 10,
   },
+  // Spieler-Karte schmaler (Alter bricht früher um), dafür Karte 2+3 breiter
   cardSpieler: {
-    flexGrow: 2,
+    flexGrow: 1.2,
     flexShrink: 1,
-    flexBasis: 420,
+    flexBasis: 400,
     minWidth: 320,
   },
   cardVerein: {
     flexGrow: 1,
     flexShrink: 1,
-    flexBasis: 240,
-    minWidth: 240,
+    flexBasis: 300,
+    minWidth: 260,
+  },
+  cardBerater: {
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 300,
+    minWidth: 260,
   },
   chip: {
     ...RETRO_CHIP,
@@ -1969,10 +2493,51 @@ const nc = StyleSheet.create({
     flex: 1,
     maxWidth: 320,
   },
+  mvRange: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  mvRangeDash: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: RETRO.textMuted,
+  },
   checkGroup: {
     marginTop: 6,
     marginBottom: 2,
     gap: 8,
+  },
+  wechselSliderRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  wechselLabel: {
+    width: 148,
+  },
+  wechselValue: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: RETRO.text,
+    minWidth: 62,
+    textAlign: 'right',
+  },
+  // −/+ Kästchen wie beim Potential-Regler (grau, randlos, harter Schatten)
+  stepBtn: {
+    width: 22,
+    height: 22,
+    borderRadius: 0,
+    backgroundColor: '#e6e2da',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stepBtnText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#14141e',
+    lineHeight: 16,
   },
   // Checkboxen zweispaltig (3 + 3), spart Höhe
   checkGroupCols: {
