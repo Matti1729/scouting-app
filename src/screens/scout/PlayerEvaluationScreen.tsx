@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
   Text,
@@ -25,7 +25,7 @@ import {
   BodyStructureData,
   SpeedAthleticismData,
 } from '../../types';
-import { agentDisplayName } from '../../services/stipendiumService';
+import { agentDisplayName, fetchPlayerTmDetails, extractTmPlayerId, PlayerTmDetails } from '../../services/stipendiumService';
 import { createEmptyBodyStructureData } from '../../utils/bodyStructureCalculation';
 import { createEmptySpeedAthleticismData } from '../../components/SpeedAthleticismSelector';
 import { EvalHeader } from '../../components/evaluation/EvalHeader';
@@ -43,6 +43,8 @@ import {
   isPlaceholderName,
   normalizePlayerName,
   namesCompatible,
+  loadMatchEvaluationsForPlayer,
+  MatchEvaluation,
 } from '../../services/beraterService';
 
 // Deutsches Datum mit Wochentag, z.B. "Mi, 26.08.26" (aus ISO oder DD.MM.YYYY)
@@ -89,9 +91,9 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
   const [matchDate] = useState(params.matchDate || '');
   const [ageGroup] = useState<AgeGroup>((params.mannschaft as AgeGroup) || 'U15');
 
-  // Spielerdaten
-  const [lastName] = useState(parsedName.lastName);
-  const [firstName] = useState(parsedName.firstName);
+  // Spielerdaten (Name editierbar für k.A.-Spieler ohne fussball.de-/TM-Eintrag)
+  const [lastName, setLastName] = useState(parsedName.lastName);
+  const [firstName, setFirstName] = useState(parsedName.firstName);
   const [jerseyNumber] = useState(params.playerNumber?.toString() || '');
   const [currentClub] = useState(params.playerClub || '');
   const [positions, setPositions] = useState<Position[]>(
@@ -215,6 +217,46 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       });
     return () => { cancelled = true; };
   }, [beraterPlayerId]);
+  // TM-Details (Einsätze + Nationalmannschaft) für die Kopfkarten
+  const [tmDetails, setTmDetails] = useState<PlayerTmDetails | null>(null);
+  const [tmLoading, setTmLoading] = useState(false);
+  useEffect(() => {
+    const tmId = extractTmPlayerId(transfermarktUrl);
+    if (!tmId) return;
+    let cancelled = false;
+    setTmLoading(true);
+    fetchPlayerTmDetails(tmId)
+      .then((d) => {
+        if (!cancelled) setTmDetails(d);
+      })
+      .finally(() => {
+        if (!cancelled) setTmLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [transfermarktUrl]);
+
+  // Alle Berichte zum Spieler (BERICHTE-Karte im Kopf)
+  const [playerReports, setPlayerReports] = useState<MatchEvaluation[]>([]);
+  // Der gerade geöffnete Bericht: über die Bewertungs-ID, sonst über Spiel+Datum
+  const currentReportId = useMemo(() => {
+    if (existingId) return existingId;
+    const found = playerReports.find(
+      (ev) =>
+        (!!ev.match_id && !!params.matchId && ev.match_id === params.matchId) ||
+        (!!matchName && ev.match_name === matchName && ev.match_date === matchDate)
+    );
+    return found?.id ?? null;
+  }, [existingId, playerReports, params.matchId, matchName, matchDate]);
+  useEffect(() => {
+    const name = [firstName, lastName].filter(Boolean).join(' ');
+    if (!name && !transfermarktUrl && !beraterPlayerId) return;
+    let cancelled = false;
+    loadMatchEvaluationsForPlayer(name, transfermarktUrl || null, beraterPlayerId || null).then((evs) => {
+      if (!cancelled) setPlayerReports(evs);
+    });
+    return () => { cancelled = true; };
+  }, [beraterPlayerId, transfermarktUrl, firstName, lastName]);
+
   const [beraterEvalStatus, setBeraterEvalStatus] = useState<'interessant' | 'nicht_interessant' | 'top_ziel' | null>(null);
   const [onWatchlist, setOnWatchlist] = useState(false);
   // Nach dem Speichern: Vorschlag, den Spieler hochzustufen (7/8 -> Watchlist, 9/10 -> Top-Ziel)
@@ -390,7 +432,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
     // Platzhalter-Name ("k.A.") ohne TM-Profil: keine belastbare Identität —
     // NICHT anlegen/matchen, sonst teilen sich alle unbekannten Spieler
     // denselben Datensatz (Berichte, Notizen, Status).
-    if (isPlaceholderName(lastName) && !transfermarktUrl) return null;
+    if ((isPlaceholderName(lastName) || !lastName.trim()) && !transfermarktUrl) return null;
 
     // 2. Per Name suchen — nie mit Platzhalter-Namen. Akzent-unabhängig über
     //    normalized_name, damit "Ouedraogo" den TM-Spieler "Ouédraogo" findet.
@@ -494,9 +536,56 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
     }
   };
 
+  // Hat der Bericht echten Bewertungsinhalt? (rekursiv: Objekte/Arrays mit Werten)
+  const hasAnyValue = (v: any): boolean => {
+    if (v === null || v === undefined || v === '') return false;
+    if (Array.isArray(v)) return v.some(hasAnyValue);
+    if (typeof v === 'object') return Object.values(v).some(hasAnyValue);
+    return true;
+  };
+
   const handleSave = async () => {
-    if (!lastName.trim()) {
+    // Nur der Vorname bekannt (beim Spiel gehört)? Dann bleibt der Nachname "k.A."
+    const effectiveLastName = lastName.trim() || (firstName.trim() ? 'k.A.' : '');
+    if (!effectiveLastName) {
       Alert.alert('Fehler', 'Nachname ist erforderlich.');
+      return;
+    }
+    // Ein Bericht wird erst ANGELEGT, wenn es echten Bewertungsinhalt gibt
+    // (Körper, Athletik, Scouting Report, Potential oder eine Einordnung) —
+    // nur Name/Position eingetragen reicht nicht.
+    const hasSubstance =
+      hasAnyValue(bodyStructure) ||
+      hasAnyValue(speedAthleticism) ||
+      !!notes.trim() ||
+      overallRating > 0 ||
+      beraterEvalStatus !== null;
+    if (!existingId && !hasSubstance) {
+      Alert.alert(
+        'Kein Bericht angelegt',
+        'Ein Bericht wird erst gespeichert, wenn etwas bewertet wurde (Körper, Athletik, Scouting Report, Potential oder Einordnung). Name und Position allein reichen nicht.'
+      );
+      return;
+    }
+    // Bestehender Bericht, aber alle Bewertungen wieder entfernt? Dann wird der
+    // Bericht beim Speichern GELÖSCHT (kein leerer Bericht in "Alle Berichte").
+    if (existingId && !hasSubstance) {
+      setSaving(true);
+      try {
+        const { error } = await supabase.from('player_evaluations').delete().eq('id', existingId);
+        if (error) {
+          Alert.alert('Fehler', error.message);
+        } else {
+          setExistingId(null);
+          hasChangesRef.current = false;
+          setHasChanges(false);
+          navigation.goBack();
+        }
+      } catch (err: any) {
+        Alert.alert('Fehler', err.message || 'Löschen fehlgeschlagen');
+      } finally {
+        setSaving(false);
+      }
       return;
     }
     setSaving(true);
@@ -511,7 +600,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         match_date: matchDate || null,
         age_group: ageGroup || null,
         first_name: firstName || null,
-        last_name: lastName,
+        last_name: effectiveLastName,
         jersey_number: jerseyNumber ? parseInt(jerseyNumber) : null,
         current_club: currentClub || null,
         positions: positions.join(', ') || null,
@@ -646,6 +735,33 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
               marketValue={beraterInfo?.market_value}
               agentName={beraterInfo?.agent_name || agentName}
               agentUrl={beraterInfo?.agent_url}
+              nationalTeam={tmDetails?.nationalTeam ?? null}
+              beraterPlayerId={beraterPlayerId || null}
+              nameEditable={isPlaceholderName(parsedName.lastName)}
+              onNameChange={(last, first) => {
+                setLastName(last);
+                setFirstName(first);
+              }}
+              tmDetails={tmDetails}
+              tmLoading={tmLoading}
+              reports={playerReports}
+              currentReportId={currentReportId}
+              onOpenReport={(ev) => {
+                // Anderen Bericht desselben Spielers öffnen (gleicher Screen, neue Params)
+                (navigation as any).push('PlayerEvaluation', {
+                  matchId: ev.match_id,
+                  matchName: ev.match_name,
+                  matchDate: ev.match_date,
+                  mannschaft: ev.age_group,
+                  playerName: `${ev.last_name || ''}, ${ev.first_name || ''}`,
+                  playerNumber: ev.jersey_number,
+                  playerPosition: ev.positions?.split(', ')[0] || null,
+                  playerBirthDate: ev.birth_date,
+                  agentName: ev.agent_name,
+                  transfermarktUrl: ev.transfermarkt_url,
+                  beraterPlayerId: beraterPlayerId || undefined,
+                });
+              }}
             />
 
             {/* Körper + Athletik + rechte Spalte (Report/Einordnung) */}

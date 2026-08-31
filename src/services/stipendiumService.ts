@@ -150,9 +150,69 @@ export interface PlayerTmDetails {
   nationalTeam: PlayerNationalTeam | null;
 }
 
-/** TM-Länderflagge (kleines PNG) zur TM-Land-ID */
+/** TM-Länderflagge (kleines PNG) zur TM-Land-ID — Fallback, wenn kein Emoji bekannt */
 export function tmFlagUrl(countryId: number): string {
   return `https://tmssl.akamaized.net/images/flagge/head/${countryId}.png`;
+}
+
+// Deutscher Ländername -> ISO-Code für die Emoji-Flagge (gleicher Flaggentyp
+// wie im Land-Dropdown; Emoji-Flaggen gibt es für alle Länder, England/
+// Schottland/Wales haben eigene Sonder-Flaggen)
+const COUNTRY_NAME_TO_ISO: Record<string, string> = {
+  'deutschland': 'DE', 'österreich': 'AT', 'schweiz': 'CH', 'niederlande': 'NL',
+  'england': 'gb-eng', 'schottland': 'gb-sct', 'wales': 'gb-wls', 'nordirland': 'GB',
+  'frankreich': 'FR', 'italien': 'IT', 'spanien': 'ES', 'portugal': 'PT',
+  'belgien': 'BE', 'dänemark': 'DK', 'schweden': 'SE', 'norwegen': 'NO',
+  'finnland': 'FI', 'island': 'IS', 'irland': 'IE', 'polen': 'PL',
+  'tschechien': 'CZ', 'slowakei': 'SK', 'ungarn': 'HU', 'kroatien': 'HR',
+  'serbien': 'RS', 'bosnien-herzegowina': 'BA', 'slowenien': 'SI',
+  'nordmazedonien': 'MK', 'albanien': 'AL', 'kosovo': 'XK', 'montenegro': 'ME',
+  'griechenland': 'GR', 'türkei': 'TR', 'russland': 'RU', 'ukraine': 'UA',
+  'belarus': 'BY', 'weißrussland': 'BY', 'rumänien': 'RO', 'bulgarien': 'BG',
+  'luxemburg': 'LU', 'liechtenstein': 'LI', 'malta': 'MT', 'zypern': 'CY',
+  'estland': 'EE', 'lettland': 'LV', 'litauen': 'LT', 'moldau': 'MD',
+  'färöer': 'FO', 'gibraltar': 'GI', 'andorra': 'AD', 'san marino': 'SM',
+  'georgien': 'GE', 'armenien': 'AM', 'aserbaidschan': 'AZ', 'kasachstan': 'KZ',
+  'usbekistan': 'UZ', 'israel': 'IL', 'saudi-arabien': 'SA', 'katar': 'QA',
+  'vereinigte arabische emirate': 'AE', 'iran': 'IR', 'irak': 'IQ',
+  'japan': 'JP', 'südkorea': 'KR', 'china': 'CN', 'indien': 'IN',
+  'indonesien': 'ID', 'thailand': 'TH', 'vietnam': 'VN', 'australien': 'AU',
+  'neuseeland': 'NZ', 'usa': 'US', 'vereinigte staaten': 'US', 'kanada': 'CA',
+  'mexiko': 'MX', 'jamaika': 'JM', 'costa rica': 'CR', 'honduras': 'HN',
+  'panama': 'PA', 'trinidad und tobago': 'TT', 'haiti': 'HT',
+  'dominikanische republik': 'DO', 'brasilien': 'BR', 'argentinien': 'AR',
+  'uruguay': 'UY', 'chile': 'CL', 'kolumbien': 'CO', 'peru': 'PE',
+  'ecuador': 'EC', 'paraguay': 'PY', 'venezuela': 'VE', 'bolivien': 'BO',
+  'marokko': 'MA', 'algerien': 'DZ', 'tunesien': 'TN', 'ägypten': 'EG',
+  'libyen': 'LY', 'senegal': 'SN', 'ghana': 'GH', 'nigeria': 'NG',
+  'kamerun': 'CM', 'elfenbeinküste': 'CI', 'mali': 'ML', 'burkina faso': 'BF',
+  'guinea': 'GN', 'guinea-bissau': 'GW', 'gambia': 'GM', 'kap verde': 'CV',
+  'dr kongo': 'CD', 'demokratische republik kongo': 'CD', 'kongo': 'CG',
+  'angola': 'AO', 'mosambik': 'MZ', 'sambia': 'ZM', 'simbabwe': 'ZW',
+  'südafrika': 'ZA', 'kenia': 'KE', 'tansania': 'TZ', 'uganda': 'UG',
+  'äthiopien': 'ET', 'sudan': 'SD', 'togo': 'TG', 'benin': 'BJ',
+  'niger': 'NE', 'tschad': 'TD', 'gabun': 'GA', 'mauretanien': 'MR',
+  'madagaskar': 'MG', 'sierra leone': 'SL', 'liberia': 'LR', 'ruanda': 'RW',
+  'burundi': 'BI', 'äquatorialguinea': 'GQ', 'komoren': 'KM',
+};
+
+function flagEmojiFromIso(iso: string): string {
+  if (iso.startsWith('gb-')) {
+    // Sub-Flaggen (England/Schottland/Wales) als Tag-Sequenz
+    const tags = [...`gb${iso.slice(3)}`].map((c) => String.fromCodePoint(0xe0000 + c.charCodeAt(0)));
+    return `\u{1F3F4}${tags.join('')}\u{E007F}`;
+  }
+  return [...iso.toUpperCase()]
+    .map((c) => String.fromCodePoint(0x1f1e6 + c.charCodeAt(0) - 65))
+    .join('');
+}
+
+/** Emoji-Flagge zum Nationalteam-Namen ("Deutschland U19" -> 🇩🇪); null wenn unbekannt */
+export function flagForNationalTeam(teamName: string | null): string | null {
+  if (!teamName) return null;
+  const country = teamName.replace(/\s+U-?\d{1,2}$/i, '').trim().toLowerCase();
+  const iso = COUNTRY_NAME_TO_ISO[country];
+  return iso ? flagEmojiFromIso(iso) : null;
 }
 
 export async function fetchPlayerTmDetails(tmPlayerId: string): Promise<PlayerTmDetails | null> {
@@ -191,6 +251,9 @@ export interface StipendiumSearchFilters {
    *  per Bericht angelegte Spieler (U15/U16 ohne TM-Mannschaft) über den
    *  Vereinsnamen im Scouting-Bericht */
   clubBaseNames?: string[];
+  /** Explizit ausgewählte Berichts-Mannschaften (z.B. "Borussia Dortmund U15")
+   *  — synthetische Dropdown-Einträge ohne berater_clubs-Zeile */
+  reportTeams?: string[];
   vereinslos?: boolean;
   contractExpiring?: boolean; // Vertrag endet spätestens zum nächsten 30.06.
   wechselTage?: number;     // nur Spieler mit Beraterwechsel in den letzten N Tagen
@@ -525,6 +588,94 @@ export interface ClubOption {
   name: string;
   league_id: string | null;
   country: string | null; // Land der Liga — fürs Kaskadieren mit dem Land-Filter
+  tm_club_id: string | null; // fürs Vereinswappen im Dropdown
+}
+
+/** "Borussia Dortmund U19" -> "Borussia Dortmund" (Mannschafts-Suffix abtrennen) */
+export function baseClubName(name: string): string {
+  return name.replace(/\s+(U-?\d{1,2}|II|III|IV|B|2|Amateure|Jugend)$/i, '').trim() || name;
+}
+
+// ---- Berichts-Mannschaften: Spieler ohne TM-Verein hängen an der Mannschaft
+// ihres Scouting-Berichts (Verein + Altersklasse) ----
+
+/** Rang einer Altersklasse: U-Zahl, Herren = 99 */
+export function agRank(ag: string | null): number {
+  if (!ag) return -1;
+  const m = ag.match(/u[-\s]?(\d{1,2})/i);
+  if (m) return parseInt(m[1], 10);
+  if (/herren|senior/i.test(ag)) return 99;
+  return -1;
+}
+
+/** "Borussia Dortmund" + "U16" -> "Borussia Dortmund U16" */
+export function teamLabel(club: string, ag: string | null): string {
+  // Mannschafts-Suffix steht schon im Vereinsnamen? Dann nichts anhängen.
+  if (/\bu[-\s]?\d{1,2}\b|\bII\b|\bIII\b/i.test(club)) return club;
+  const m = (ag || '').match(/u[-\s]?(\d{1,2})/i);
+  return m ? `${club} U${m[1]}` : club;
+}
+
+/** match_date liegt gemischt vor ("11.04.2026" und "2026-08-28") -> ISO */
+function evalIsoDate(d: string): string {
+  const m = d.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+  return m ? `${m[3]}-${m[2]}-${m[1]}` : d;
+}
+
+/** Bedeutsame Namens-Tokens für den Vereins-Vergleich ("TSG 1899 Hoffenheim"
+ *  matcht "TSG Hoffenheim U15": Jahreszahlen zählen nicht) */
+function clubNameTokens(name: string): string[] {
+  return normalizeSearch(name)
+    .split(/\s+/)
+    .filter((t) => t.length >= 3 && !/^\d+$/.test(t));
+}
+
+type BestEval = { club: string; ag: string | null; date: string };
+
+/** Je Bericht-Spieler die maßgebliche Mannschaft: höchste Altersklasse gewinnt,
+ *  bei Gleichstand der neueste Bericht (U15, drei Wochen später U16 => U16). */
+async function loadBestEvalTeams(): Promise<Map<string, BestEval>> {
+  const { data: allEvals } = await supabase
+    .from('player_evaluations')
+    .select('berater_player_id, current_club, age_group, match_date')
+    .not('berater_player_id', 'is', null)
+    .not('current_club', 'is', null);
+  const bestEval = new Map<string, BestEval>();
+  for (const ev of (allEvals || []) as any[]) {
+    if (!ev.berater_player_id || !ev.current_club) continue;
+    const cand = { club: ev.current_club, ag: ev.age_group || null, date: evalIsoDate(ev.match_date || '') };
+    const prev = bestEval.get(ev.berater_player_id);
+    if (
+      !prev ||
+      agRank(cand.ag) > agRank(prev.ag) ||
+      (agRank(cand.ag) === agRank(prev.ag) && cand.date > prev.date)
+    ) {
+      bestEval.set(ev.berater_player_id, cand);
+    }
+  }
+  return bestEval;
+}
+
+/** Mannschafts-Labels aus Berichten (z.B. "Borussia Dortmund U15") von Spielern
+ *  OHNE TM-Verein — fürs Vereins-Dropdown der Suchmaschine. */
+export async function loadReportTeams(): Promise<string[]> {
+  const bestEval = await loadBestEvalTeams();
+  if (bestEval.size === 0) return [];
+  const ids = [...bestEval.keys()];
+  const labels = new Set<string>();
+  for (let i = 0; i < ids.length; i += 100) {
+    const { data } = await supabase
+      .from('berater_players')
+      .select('id, club_id, is_vereinslos')
+      .eq('is_active', true)
+      .in('id', ids.slice(i, i + 100));
+    for (const row of (data || []) as any[]) {
+      if (row.club_id || row.is_vereinslos) continue;
+      const be = bestEval.get(row.id);
+      if (be) labels.add(teamLabel(be.club, be.ag));
+    }
+  }
+  return [...labels].sort((a, b) => a.localeCompare(b, 'de'));
 }
 
 /** Alle Mannschaften (berater_clubs) fürs Vereins-Dropdown der Suchmaschine.
@@ -535,7 +686,7 @@ export async function loadAllClubs(): Promise<ClubOption[]> {
   for (let page = 0; ; page++) {
     const { data, error } = await supabase
       .from('berater_clubs')
-      .select('id, club_name, league_id, berater_leagues (country)')
+      .select('id, club_name, tm_club_id, league_id, berater_leagues (country)')
       .order('club_name', { ascending: true })
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
     if (error) {
@@ -549,6 +700,7 @@ export async function loadAllClubs(): Promise<ClubOption[]> {
           name: row.club_name,
           league_id: row.league_id || null,
           country: row.berater_leagues?.country || null,
+          tm_club_id: row.tm_club_id || null,
         });
       }
     }
@@ -634,46 +786,8 @@ export async function searchStipendiumPlayers(
   // Mannschaft aus Scouting-Berichten: per Bericht angelegte Spieler (kein
   // TM-Verein) werden der Mannschaft zugeordnet, bei der der Bericht
   // aufgenommen wurde ("Borussia Dortmund" + Altersklasse U16 des Spiels =
-  // "Borussia Dortmund U16"). Ein TM-Verein hat immer Vorrang. Bei mehreren
-  // Berichten zählt die höchste Altersklasse, bei Gleichstand der neueste
-  // Bericht (U15, drei Wochen später U16 => U16).
-  const agRank = (ag: string | null): number => {
-    if (!ag) return -1;
-    const m = ag.match(/u[-\s]?(\d{1,2})/i);
-    if (m) return parseInt(m[1], 10);
-    if (/herren|senior/i.test(ag)) return 99;
-    return -1;
-  };
-  const teamLabel = (club: string, ag: string | null): string => {
-    // Mannschafts-Suffix steht schon im Vereinsnamen? Dann nichts anhängen.
-    if (/\bu[-\s]?\d{1,2}\b|\bII\b|\bIII\b/i.test(club)) return club;
-    const m = (ag || '').match(/u[-\s]?(\d{1,2})/i);
-    return m ? `${club} U${m[1]}` : club;
-  };
-  // match_date liegt gemischt vor ("11.04.2026" und "2026-08-28") -> für den
-  // Vergleich auf ISO bringen
-  const isoDate = (d: string): string => {
-    const m = d.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
-    return m ? `${m[3]}-${m[2]}-${m[1]}` : d;
-  };
-  const { data: allEvals } = await supabase
-    .from('player_evaluations')
-    .select('berater_player_id, current_club, age_group, match_date')
-    .not('berater_player_id', 'is', null)
-    .not('current_club', 'is', null);
-  const bestEval = new Map<string, { club: string; ag: string | null; date: string }>();
-  for (const ev of (allEvals || []) as any[]) {
-    if (!ev.berater_player_id || !ev.current_club) continue;
-    const cand = { club: ev.current_club, ag: ev.age_group || null, date: isoDate(ev.match_date || '') };
-    const prev = bestEval.get(ev.berater_player_id);
-    if (
-      !prev ||
-      agRank(cand.ag) > agRank(prev.ag) ||
-      (agRank(cand.ag) === agRank(prev.ag) && cand.date > prev.date)
-    ) {
-      bestEval.set(ev.berater_player_id, cand);
-    }
-  }
+  // "Borussia Dortmund U16"). Ein TM-Verein hat immer Vorrang.
+  const bestEval = await loadBestEvalTeams();
   for (const p of players) {
     if (!p.club_name && !p.is_vereinslos) {
       const be = bestEval.get(p.id);
@@ -681,46 +795,88 @@ export async function searchStipendiumPlayers(
     }
   }
 
-  // Vereinsfilter-Ergänzung: Bericht-Spieler ohne TM-Mannschaft über den
-  // Basisnamen des ausgewählten Vereins mitnehmen
-  if (filters.clubIds && filters.clubIds.length > 0 && filters.clubBaseNames && filters.clubBaseNames.length > 0) {
-    // Token-Vergleich statt Präfix: "TSG 1899 Hoffenheim" matcht auch
-    // "TSG Hoffenheim U15" (Jahreszahlen zählen nicht, alle übrigen
-    // Namensbestandteile müssen im Berichts-Verein vorkommen)
-    const baseTokens = (name: string) =>
-      normalizeSearch(name)
-        .split(/\s+/)
-        .filter((t) => t.length >= 3 && !/^\d+$/.test(t));
-    const bases = filters.clubBaseNames
-      .map((b) => ({ norm: normalizeSearch(b), tokens: baseTokens(b) }))
+  // Bericht-Spieler ohne TM-Mannschaft nachladen und anhängen
+  const addEvalPlayers = async (ids: string[]) => {
+    if (ids.length === 0) return;
+    const { data: extra } = await supabase
+      .from('berater_players')
+      .select(SEARCH_PLAYER_SELECT)
+      .eq('is_active', true)
+      .in('id', ids);
+    for (const row of (extra || []) as any[]) {
+      const p = mapRowToSearchPlayer(row);
+      if (p.is_vereinslos) continue;
+      if (!p.club_name) {
+        const be = bestEval.get(p.id);
+        p.club_name = be ? teamLabel(be.club, be.ag) : null;
+      }
+      players.push(p);
+    }
+    players.sort((a, b) => a.player_name.localeCompare(b.player_name, 'de'));
+  };
+
+  const hasClubIds = !!(filters.clubIds && filters.clubIds.length > 0);
+  const hasReportTeams = !!(filters.reportTeams && filters.reportTeams.length > 0);
+
+  // Vereinsfilter-Ergänzung: Bericht-Spieler über den Basisnamen des
+  // ausgewählten Vereins ODER die explizit gewählte Berichts-Mannschaft
+  if (hasClubIds || hasReportTeams) {
+    const bases = (filters.clubBaseNames || [])
+      .map((b) => ({ norm: normalizeSearch(b), tokens: clubNameTokens(b) }))
       .filter((b) => b.norm.length > 0);
     const matchesBase = (club: string) =>
       bases.some((b) =>
         b.tokens.length > 0 ? b.tokens.every((t) => club.includes(t)) : club.startsWith(b.norm)
       );
+    const teamSet = new Set((filters.reportTeams || []).map(normalizeSearch));
     const have = new Set(players.map((p) => p.id));
     const extraIds: string[] = [];
     for (const [pid, be] of bestEval) {
       if (have.has(pid)) continue;
-      if (matchesBase(normalizeSearch(be.club))) extraIds.push(pid);
+      const label = normalizeSearch(teamLabel(be.club, be.ag));
+      const byBase = hasClubIds && matchesBase(normalizeSearch(be.club));
+      const byTeam = hasReportTeams && teamSet.has(label);
+      if (byBase || byTeam) extraIds.push(pid);
     }
-    if (extraIds.length > 0) {
-      const { data: extra } = await supabase
-        .from('berater_players')
-        .select(SEARCH_PLAYER_SELECT)
-        .eq('is_active', true)
-        .in('id', extraIds);
-      for (const row of (extra || []) as any[]) {
-        const p = mapRowToSearchPlayer(row);
-        if (p.is_vereinslos) continue;
-        if (!p.club_name) {
-          const be = bestEval.get(p.id);
-          p.club_name = be ? teamLabel(be.club, be.ag) : null;
-        }
-        players.push(p);
+    await addEvalPlayers(extraIds);
+    // Nur Berichts-Mannschaften gewählt (keine TM-Mannschaft): die Hauptabfrage
+    // war dann club-seitig ungefiltert -> auf die passenden Spieler einschränken
+    if (!hasClubIds && hasReportTeams) {
+      players = players.filter((p) => {
+        const be = bestEval.get(p.id);
+        return !!be && !p.is_vereinslos && teamSet.has(normalizeSearch(teamLabel(be.club, be.ag)));
+      });
+    }
+  } else if (filters.nations && filters.nations.length > 0) {
+    // Land-Filter: der Inner-Join wirft Bericht-Spieler ohne TM-Verein raus.
+    // Über das Land ihres Berichts-Vereins wieder mitnehmen (Aburime spielt
+    // bei "Borussia Dortmund" -> Deutschland).
+    const clubNames: string[] = [];
+    for (let page = 0; ; page++) {
+      const { data } = await supabase
+        .from('berater_clubs')
+        .select('club_name, berater_leagues!inner (country)')
+        .in('berater_leagues.country', filters.nations)
+        .range(page * 1000, (page + 1) * 1000 - 1);
+      for (const r of (data || []) as any[]) {
+        if (r.club_name) clubNames.push(r.club_name);
       }
-      players.sort((a, b) => a.player_name.localeCompare(b.player_name, 'de'));
+      if (!data || data.length < 1000) break;
     }
+    const baseSets = new Map<string, string[]>();
+    for (const n of clubNames) {
+      const base = baseClubName(n);
+      if (!baseSets.has(base)) baseSets.set(base, clubNameTokens(base));
+    }
+    const tokenSets = [...baseSets.values()].filter((t) => t.length > 0);
+    const have = new Set(players.map((p) => p.id));
+    const extraIds: string[] = [];
+    for (const [pid, be] of bestEval) {
+      if (have.has(pid)) continue;
+      const clubNorm = normalizeSearch(be.club);
+      if (tokenSets.some((ts) => ts.every((t) => clubNorm.includes(t)))) extraIds.push(pid);
+    }
+    await addEvalPlayers(extraIds);
   }
 
   // Namens-/Vereinsfilter client-seitig und akzent-unabhängig ("uriel" findet "Uriël")

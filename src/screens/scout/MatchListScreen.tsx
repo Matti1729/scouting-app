@@ -64,6 +64,7 @@ import {
   getTransfermarktSearchUrl,
   TransfermarktAgentInfo,
   enrichFromBeraterDB,
+  birthDatePlausibleForAgeGroup,
 } from '../../services/transfermarktService';
 import { supabase } from '../../config/supabase';
 import { Dropdown } from '../../components/Dropdown';
@@ -714,6 +715,14 @@ export function MatchListScreen({ navigation, route }: any) {
     const result = await loadLineups(matchId);
     if (!result.success || !result.data) return;
 
+    // Altersklasse des Spiels für die Plausibilitätsprüfung (U15-Spiel -> kein Jahrgang 1994)
+    const { data: matchRow } = await supabase
+      .from('scouting_matches')
+      .select('age_group')
+      .eq('id', matchId)
+      .maybeSingle();
+    const matchAgeGroup: string | null = (matchRow as any)?.age_group || null;
+
     const allPlayers = result.data;
 
     // Spieler ohne TM-URL oder ohne vollständige Profildaten suchen.
@@ -749,6 +758,11 @@ export function MatchListScreen({ navigation, route }: any) {
       // DB-Treffer sofort speichern + DB-Namen in Aufstellung übernehmen
       const dbMatched = dbResults.filter(r => r.matched);
       for (const dbResult of dbMatched) {
+        // Falscher Namensvetter? Geburtsjahr muss zur Altersklasse passen
+        if (!birthDatePlausibleForAgeGroup(dbResult.birth_date, matchAgeGroup)) {
+          console.log(`[BeraterDB] SKIP (Alter passt nicht zu ${matchAgeGroup}): ${dbResult.db_player_name} (${dbResult.birth_date})`);
+          continue;
+        }
         const updates: Record<string, any> = {};
         if (dbResult.transfermarkt_url) updates.transfermarkt_url = dbResult.transfermarkt_url;
         if (dbResult.agent_name) updates.agent_name = dbResult.agent_name;
@@ -806,6 +820,11 @@ export function MatchListScreen({ navigation, route }: any) {
 
         // TM-Treffer speichern
         for (const tmResult of tmResults) {
+          // Falscher Namensvetter? Geburtsjahr muss zur Altersklasse passen
+          if (!birthDatePlausibleForAgeGroup(tmResult.birth_date, matchAgeGroup)) {
+            console.log(`[TM] SKIP (Alter passt nicht zu ${matchAgeGroup}): ${tmResult.birth_date}`);
+            continue;
+          }
           if (tmResult.transfermarkt_url || tmResult.agent_name || tmResult.birth_date) {
             await updatePlayer(tmResult.id, {
               transfermarkt_url: tmResult.transfermarkt_url ?? undefined,
@@ -1285,7 +1304,11 @@ export function MatchListScreen({ navigation, route }: any) {
     await fetchLineupForMatch(match.id);
     // Noch keine Aufstellung? Im Hintergrund automatisch von fussball.de holen
     // (vor Ort: Spiel öffnen genügt, die Aufstellungen erscheinen von selbst).
-    void autoScrapeLineupIfEmpty(match.id, match.fussballDeUrl, match.spiel);
+    // Im Archiv NICHT nachladen: die gespeicherte Aufstellung bleibt maßgeblich,
+    // auch wenn fussball.de das Spiel längst gelöscht hat.
+    if (viewTab !== 'archiv') {
+      void autoScrapeLineupIfEmpty(match.id, match.fussballDeUrl, match.spiel);
+    }
   };
 
   // Umgebungs-Spiel als eigenes Event übernehmen (bekommt damit Aufstellung/Scouting)
@@ -1293,6 +1316,19 @@ export function MatchListScreen({ navigation, route }: any) {
     if (!areaDetail || addingAreaGame) return;
     setAddingAreaGame(true);
     const [home, ...rest] = areaDetail.spiel.split(' - ');
+    // Duplikat-Schutz: gleiches Spiel (Teams + Datum) existiert schon als eigenes?
+    const { data: dupe } = await supabase
+      .from('scouting_matches')
+      .select('id')
+      .eq('home_team', home?.trim() || areaDetail.spiel)
+      .eq('away_team', rest.join(' - ').trim())
+      .eq('match_date', areaDetail.datum)
+      .limit(1);
+    if (dupe && dupe.length > 0) {
+      await fetchMatches();
+      setAddingAreaGame(false);
+      return;
+    }
     const result = await createMatch({
       home_team: home?.trim() || areaDetail.spiel,
       away_team: rest.join(' - ').trim(),
@@ -1311,6 +1347,18 @@ export function MatchListScreen({ navigation, route }: any) {
       }
     }
     setAddingAreaGame(false);
+  };
+
+  // Nachfrage vor dem Entfernen aus "Meine Spiele" (Umgebungs-Detail)
+  const [confirmRemoveArea, setConfirmRemoveArea] = useState(false);
+  const [removingArea, setRemovingArea] = useState(false);
+  const handleRemoveAreaFromMyGames = async (ownId: string) => {
+    if (removingArea) return;
+    setRemovingArea(true);
+    await deleteMatch(ownId);
+    await fetchMatches();
+    setRemovingArea(false);
+    setConfirmRemoveArea(false);
   };
 
   // Ist das Umgebungs-Spiel schon als eigenes Event übernommen?
@@ -2627,6 +2675,8 @@ export function MatchListScreen({ navigation, route }: any) {
       {areaDetail && (() => {
         const isOwn = !areaDetail.isAreaGame;
         const added = isOwn || isAreaGameAdded(areaDetail);
+        // Vergangene Spiele: "Ich bin beim Spiel" ergibt keinen Sinn mehr
+        const isPastGame = !!areaDetail.datum && String(areaDetail.datum).slice(0, 10) < new Date().toISOString().slice(0, 10);
         // Zugehöriges eigenes Event (für "Aufstellung & Scouting öffnen")
         const ownMatch = isOwn
           ? areaDetail
@@ -2708,16 +2758,57 @@ export function MatchListScreen({ navigation, route }: any) {
                 {/* Zu Meine Spiele hinzufügen */}
                 <View style={{ borderTopWidth: 1, borderTopColor: RETRO.rowBorder, marginTop: 14, paddingTop: 12 }}>
                   {added ? (
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                      <View style={[HARD_SHADOW, {
-                        backgroundColor: RETRO.yellow, paddingVertical: 9, paddingHorizontal: 14,
-                      }]}>
-                        <Text style={{ fontSize: 13, fontWeight: '700', color: RETRO.text }}>✓ In „Meine Spiele" übernommen</Text>
-                      </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      {!isPastGame && (
+                      <TouchableOpacity
+                        style={[HARD_SHADOW, {
+                          backgroundColor: '#e8930c', paddingVertical: 5, paddingHorizontal: 10,
+                          minHeight: 24, alignItems: 'center', justifyContent: 'center',
+                        }]}
+                        onPress={() => setConfirmRemoveArea(true)}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: '#ffffff' }}>✓ Ich bin beim Spiel</Text>
+                      </TouchableOpacity>
+                      )}
+                      {confirmRemoveArea && (
+                        <Modal visible transparent animationType="fade" onRequestClose={() => setConfirmRemoveArea(false)}>
+                          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+                            <View style={[HARD_SHADOW_LG, { backgroundColor: RETRO.page, borderRadius: 2, width: 420, maxWidth: '92%', paddingBottom: 14 }]}>
+                              <View style={[HARD_SHADOW, { flexDirection: 'row', alignItems: 'center', backgroundColor: RETRO.yellow, paddingVertical: 9, paddingHorizontal: 14, margin: 10, marginBottom: 4 }]}>
+                                <Text style={{ flex: 1, fontSize: 16, fontWeight: '700', color: RETRO.text }}>Spiel entfernen</Text>
+                                <TouchableOpacity onPress={() => setConfirmRemoveArea(false)} hitSlop={8}>
+                                  <Ionicons name="close" size={18} color={RETRO.text} />
+                                </TouchableOpacity>
+                              </View>
+                              <Text style={{ fontSize: 14, color: RETRO.text, paddingHorizontal: 14, paddingVertical: 14 }}>
+                                Soll das Spiel wirklich aus „Meine Spiele" entfernt werden?
+                              </Text>
+                              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, paddingHorizontal: 14 }}>
+                                <TouchableOpacity
+                                  style={[HARD_SHADOW, { backgroundColor: '#ffffff', paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                                  onPress={() => setConfirmRemoveArea(false)}
+                                  activeOpacity={0.7}
+                                >
+                                  <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Abbrechen</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  style={[HARD_SHADOW, { backgroundColor: '#dc2626', paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }, removingArea && { opacity: 0.5 }]}
+                                  onPress={() => ownMatch && handleRemoveAreaFromMyGames(ownMatch.id)}
+                                  disabled={removingArea || !ownMatch}
+                                  activeOpacity={0.7}
+                                >
+                                  <Text style={{ fontSize: 11, fontWeight: '600', color: '#ffffff' }}>Entfernen</Text>
+                                </TouchableOpacity>
+                              </View>
+                            </View>
+                          </View>
+                        </Modal>
+                      )}
                       {/* Aufstellung nur im "Meine Spiele"-Tab anbieten */}
                       {ownMatch && showArchive && (
                         <TouchableOpacity
-                          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 9, paddingHorizontal: 14 }]}
+                          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
                           onPress={() => {
                             const m = ownMatch;
                             setAreaDetail(null);
@@ -2729,30 +2820,26 @@ export function MatchListScreen({ navigation, route }: any) {
                             });
                           }}
                         >
-                          <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }}>Aufstellung & Scouting</Text>
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Aufstellung & Scouting</Text>
                         </TouchableOpacity>
                       )}
                     </View>
                   ) : (
-                    <>
-                      <Text style={{ fontSize: 13, color: RETRO.textMuted, marginBottom: 8 }}>
-                        Dieses Spiel beobachten? Es wird als eigenes Spiel übernommen (mit Aufstellung & Scouting).
-                      </Text>
-                      <TouchableOpacity
-                        style={[HARD_SHADOW, {
-                          backgroundColor: RETRO.headerBg, paddingVertical: 9, paddingHorizontal: 14,
-                          alignSelf: 'flex-end', borderWidth: 1, borderColor: '#223077',
-                        }, BLUE_GRADIENT]}
-                        onPress={handleAddAreaGameToMyGames}
-                        disabled={addingAreaGame}
-                      >
-                        {addingAreaGame ? (
-                          <ActivityIndicator size="small" color="#fff" />
-                        ) : (
-                          <Text style={{ fontSize: 13, fontWeight: '700', color: '#fff' }}>+ Zu „Meine Spiele" hinzufügen</Text>
-                        )}
-                      </TouchableOpacity>
-                    </>
+                    <TouchableOpacity
+                      style={[HARD_SHADOW, {
+                        backgroundColor: RETRO.headerBg, paddingVertical: 5, paddingHorizontal: 10,
+                        minHeight: 24, alignItems: 'center', justifyContent: 'center',
+                        alignSelf: 'flex-end',
+                      }, BLUE_GRADIENT]}
+                      onPress={handleAddAreaGameToMyGames}
+                      disabled={addingAreaGame}
+                    >
+                      {addingAreaGame ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: '#fff' }}>Zu „Meine Spiele" hinzufügen</Text>
+                      )}
+                    </TouchableOpacity>
                   )}
                 </View>
               </Pressable>
@@ -2785,7 +2872,7 @@ export function MatchListScreen({ navigation, route }: any) {
                   const badge = getMatchTypeBadgeStyle(item.art);
                   return (
                     <TouchableOpacity
-                      onPress={() => setAreaDetail(item)}
+                      onPress={() => (viewTab === 'archiv' && !item.isAreaGame ? handleMatchPress(item) : setAreaDetail(item))}
                       {...(Platform.OS === 'web'
                         ? ({ onMouseEnter: () => setHoveredMapKey(item.id), onMouseLeave: () => setHoveredMapKey(null) } as any)
                         : {})}
@@ -2806,9 +2893,14 @@ export function MatchListScreen({ navigation, route }: any) {
                           <Text style={{ color: badge.color, fontSize: 10, fontWeight: '700' }}>{item.art}</Text>
                         </View>
                       </View>
-                      <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '600', marginTop: 2 }} numberOfLines={1}>
-                        {item.spiel}
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                        {(!item.isAreaGame || isAreaGameAdded(item)) && (
+                          <View style={{ width: 8, height: 8, borderRadius: 1, backgroundColor: '#e8930c' }} />
+                        )}
+                        <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
+                          {item.spiel}
+                        </Text>
+                      </View>
                       {item.ort ? (
                         <Text style={{ color: RETRO.textMuted, fontSize: 11, marginTop: 1, fontStyle: 'italic' }} numberOfLines={1}>
                           📍 {item.ort}

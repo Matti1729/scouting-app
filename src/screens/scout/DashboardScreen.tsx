@@ -22,11 +22,11 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { RootStackParamList } from '../../navigation/types';
 import { RETRO, HARD_SHADOW, HARD_SHADOW_LG, MONO } from '../../theme/retro';
-import { loadScanStatus, BeraterStats, loadWatchlist, WatchlistEntry, loadAllEvaluations, PlayerEvaluation, loadUnseenAlerts, markAlertSeen, AgentAlertNotification } from '../../services/beraterService';
+import { loadScanStatus, BeraterStats, loadWatchlist, WatchlistEntry, loadAllEvaluations, PlayerEvaluation, loadUnseenAlerts, markAlertSeen, AgentAlertNotification, findAmbiguousMergeCandidates, AmbiguousMerge, mergeScoutedInto } from '../../services/beraterService';
 import { areaAge, areaArt, shortVenueName } from '../../services/areaGamesService';
-import { createMatch } from '../../services/matchService';
+import { createMatch, deleteMatch } from '../../services/matchService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
-import { fetchSearchPlayer, StipendiumSearchPlayer, positionCode, ageFromBirthDate } from '../../services/stipendiumService';
+import { fetchSearchPlayer, StipendiumSearchPlayer, positionCode, ageFromBirthDate, agentDisplayName } from '../../services/stipendiumService';
 import { BLUE_GRADIENT } from '../../theme/retro';
 import { supabase } from '../../config/supabase';
 
@@ -72,6 +72,62 @@ export function DashboardScreen() {
   const [gameDetail, setGameDetail] = useState<TodayGame | null>(null);
   // Glocken-Benachrichtigungen (Beraterstatus-Änderungen abonnierter Spieler)
   const [alerts, setAlerts] = useState<AgentAlertNotification[]>([]);
+  // Unklare TM-Zuordnungen (mehrere Kandidaten) — Zuordnung von Hand
+  const [ambiguous, setAmbiguous] = useState<AmbiguousMerge[]>([]);
+  const [mergeHidden, setMergeHidden] = useState<Set<string>>(new Set());
+  const [assigning, setAssigning] = useState(false);
+  // Benachrichtigungs-Glocke im Titelbalken: Liste klappt unter der Glocke auf
+  const [bellOpen, setBellOpen] = useState(false);
+  const bellRef = useRef<View>(null);
+  const [bellPos, setBellPos] = useState({ top: 0, right: 0 });
+  const openBell = () => {
+    (bellRef.current as any)?.measureInWindow((x: number, y: number, w: number, h: number) => {
+      setBellPos({ top: y + h + 6, right: Math.max(10, (typeof window !== 'undefined' ? window.innerWidth : 1400) - (x + w)) });
+      setBellDetail(null);
+      setBellOpen(true);
+    });
+  };
+  const [bellDetail, setBellDetail] = useState<
+    | { type: 'alert'; alert: AgentAlertNotification }
+    | { type: 'merge'; item: AmbiguousMerge }
+    | null
+  >(null);
+  // Im Merge-Dialog angehaktes TM-Profil
+  const [mergeChoice, setMergeChoice] = useState<string | null>(null);
+  // Alter/neuer Berater zum geöffneten Beraterstatus-Alarm (aus berater_changes)
+  const [alertChange, setAlertChange] = useState<{ from: string | null; fromKnown: boolean; to: string | null } | null>(null);
+  const openAlertDetail = async (a: AgentAlertNotification) => {
+    setAlertChange(null);
+    setBellDetail({ type: 'alert', alert: a });
+    if (!a.player_id) return;
+    const { data } = await supabase
+      .from('berater_changes')
+      .select('previous_agent_name, previous_agent_company, new_agent_name, new_agent_company')
+      .eq('player_id', a.player_id)
+      .order('detected_at', { ascending: false })
+      .limit(1);
+    const c = (data || [])[0] as any;
+    if (c) {
+      setAlertChange({
+        from: agentDisplayName(c.previous_agent_name, c.previous_agent_company),
+        fromKnown: true,
+        to: agentDisplayName(c.new_agent_name, c.new_agent_company),
+      });
+      return;
+    }
+    // Kein Wechsel-Datensatz (sollte bei echten Alarmen nicht vorkommen):
+    // wenigstens den aktuellen Berater zeigen
+    const { data: pl } = await supabase
+      .from('berater_players')
+      .select('current_agent_name, current_agent_company')
+      .eq('id', a.player_id)
+      .maybeSingle();
+    setAlertChange({
+      from: null,
+      fromKnown: false,
+      to: agentDisplayName((pl as any)?.current_agent_name, (pl as any)?.current_agent_company),
+    });
+  };
 
   const dismissAlert = (a: AgentAlertNotification) => {
     markAlertSeen(a.id);
@@ -89,6 +145,22 @@ export function DashboardScreen() {
     const sp = await fetchSearchPlayer(data?.tm_player_id || null, data?.player_name || a.player_name);
     if (sp) setDetailPlayer(sp);
   };
+  // Offene Benachrichtigungen: Beraterstatus-Alarme + unklare Zuordnungen
+  const openMerges = ambiguous.filter((a) => !mergeHidden.has(a.scouted.id));
+  const bellCount = alerts.length + openMerges.length;
+
+  // Manuelle Zuordnung aus dem Benachrichtigungs-Detail
+  const handleAssign = async (scoutedId: string, keeperId: string) => {
+    if (assigning) return;
+    setAssigning(true);
+    const ok = await mergeScoutedInto(scoutedId, keeperId);
+    setAssigning(false);
+    if (ok) {
+      setBellDetail(null);
+      findAmbiguousMergeCandidates().then(setAmbiguous).catch(() => {});
+    }
+  };
+
   const [addingGame, setAddingGame] = useState(false);
   // Spielerprofil-Modal (identisch zur Suchmaschine)
   const [detailPlayer, setDetailPlayer] = useState<StipendiumSearchPlayer | null>(null);
@@ -120,6 +192,7 @@ export function DashboardScreen() {
     loadWatchlist().then(setWatchlist).catch(() => {});
     loadAllEvaluations().then(setEvaluations).catch(() => {});
     loadUnseenAlerts().then(setAlerts).catch(() => {});
+    findAmbiguousMergeCandidates().then(setAmbiguous).catch(() => {});
 
     supabase
       .from('stipendium_entries')
@@ -140,9 +213,9 @@ export function DashboardScreen() {
       const [ownRes, areaRes, leaguesRes] = await Promise.all([
         supabase
           .from('scouting_matches')
-          .select('id, spiel, zeit, mannschaft, art, location, fussball_de_url')
+          .select('id, home_team, away_team, match_time, age_group, match_type, location, fussball_de_url')
           .eq('is_archived', false)
-          .eq('datum', today)
+          .eq('match_date', today)
           .limit(30),
         supabase
           .from('area_games')
@@ -158,10 +231,10 @@ export function DashboardScreen() {
       const own: TodayGame[] = ((ownRes.data as any[]) || []).map((m) => ({
         key: `own-${m.id}`,
         matchId: String(m.id),
-        zeit: m.zeit || null,
-        begegnung: m.spiel,
-        liga: m.mannschaft || '—',
-        art: m.art || 'Punktspiel',
+        zeit: m.match_time ? String(m.match_time).slice(0, 5) : null,
+        begegnung: `${m.home_team} - ${m.away_team}`,
+        liga: m.age_group || '—',
+        art: m.match_type || 'Punktspiel',
         ort: m.location || null,
         fussballDeUrl: m.fussball_de_url || null,
         isOwn: true,
@@ -215,6 +288,20 @@ export function DashboardScreen() {
     setAddingGame(true);
     const today = new Date().toISOString().slice(0, 10);
     const [home, ...rest] = gameDetail.begegnung.split(' - ');
+    // Duplikat-Schutz: gleiches Spiel (Teams + Datum) existiert schon als eigenes?
+    const { data: dupe } = await supabase
+      .from('scouting_matches')
+      .select('id')
+      .eq('home_team', home?.trim() || gameDetail.begegnung)
+      .eq('away_team', rest.join(' - ').trim())
+      .eq('match_date', today)
+      .limit(1);
+    if (dupe && dupe.length > 0) {
+      setAddingGame(false);
+      setGameDetail({ ...gameDetail, isOwn: true });
+      loadData();
+      return;
+    }
     const result = await createMatch({
       home_team: home?.trim() || gameDetail.begegnung,
       away_team: rest.join(' - ').trim(),
@@ -230,6 +317,37 @@ export function DashboardScreen() {
       setGameDetail({ ...gameDetail, isOwn: true });
       loadData();
     }
+  };
+
+  // Nachfrage vor dem Entfernen aus "Meine Spiele"
+  const [confirmRemoveGame, setConfirmRemoveGame] = useState(false);
+  const [removingGame, setRemovingGame] = useState(false);
+  const handleRemoveFromMyGames = async () => {
+    if (!gameDetail || removingGame) return;
+    setRemovingGame(true);
+    let matchId: string | null = null;
+    if (gameDetail.key.startsWith('own-')) {
+      matchId = gameDetail.matchId;
+    } else {
+      // Über das Popup übernommen: eigenes Spiel über Teams + Datum finden
+      const today = new Date().toISOString().slice(0, 10);
+      const [home, ...rest] = gameDetail.begegnung.split(' - ');
+      const { data } = await supabase
+        .from('scouting_matches')
+        .select('id')
+        .eq('home_team', home?.trim() || gameDetail.begegnung)
+        .eq('away_team', rest.join(' - ').trim())
+        .eq('match_date', today)
+        .limit(1);
+      matchId = (data || [])[0]?.id || null;
+    }
+    if (matchId) {
+      await deleteMatch(matchId);
+      setGameDetail({ ...gameDetail, isOwn: false });
+      loadData();
+    }
+    setRemovingGame(false);
+    setConfirmRemoveGame(false);
   };
 
   const openPlayerProfile = async (w: WatchlistEntry) => {
@@ -302,6 +420,24 @@ export function DashboardScreen() {
           <Text style={styles.headerTitle}>Scouting Dashboard</Text>
           <Text style={styles.headerSubtitle}>Spieler & Spiele im Blick</Text>
         </View>
+        {/* Glocke wie im Spielerprofil: leer = keine Meldungen, rot = neue */}
+        <TouchableOpacity
+          ref={bellRef as any}
+          style={[styles.headerBox, HARD_SHADOW, { position: 'relative' }, bellCount > 0 && { backgroundColor: '#dc2626' }]}
+          onPress={openBell}
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name={bellCount > 0 ? 'notifications' : 'notifications-outline'}
+            size={14}
+            color={bellCount > 0 ? '#ffffff' : RETRO.text}
+          />
+          {bellCount > 0 && (
+            <View style={styles.bellBadge}>
+              <Text style={styles.bellBadgeText}>{bellCount}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
         <View style={[styles.headerBox, HARD_SHADOW]}>
           <Text style={styles.headerBoxText}>{todayHeader()}</Text>
         </View>
@@ -351,9 +487,12 @@ export function DashboardScreen() {
                   <Text style={[styles.tableCellMono, styles.colDatum]} numberOfLines={1}>
                     {g.zeit || '—'}
                   </Text>
-                  <Text style={[styles.tableCell, styles.colBegegnung]} numberOfLines={1}>
-                    {g.begegnung}
-                  </Text>
+                  <View style={[styles.colBegegnung, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
+                    {g.isOwn && <View style={styles.attendMarker} />}
+                    <Text style={[styles.tableCell, { flexShrink: 1 }]} numberOfLines={1}>
+                      {g.begegnung}
+                    </Text>
+                  </View>
                   <Text style={[styles.tableCellMono, styles.colLiga]} numberOfLines={1}>
                     {g.liga}
                   </Text>
@@ -407,9 +546,57 @@ export function DashboardScreen() {
         </View>
       </ScrollView>
 
-      {/* Glocken-Benachrichtigung (Beraterstatus-Änderung eines abonnierten Spielers) */}
-      {alerts.length > 0 && !detailPlayer && (
-        <Modal visible transparent animationType="fade" onRequestClose={() => dismissAlert(alerts[0])}>
+      {/* Benachrichtigungs-Glocke: Liste klappt direkt unter der Glocke auf */}
+      {bellOpen && !bellDetail && (
+        <Modal visible transparent animationType="none" onRequestClose={() => setBellOpen(false)}>
+          <TouchableOpacity style={{ flex: 1 }} activeOpacity={1} onPress={() => setBellOpen(false)}>
+            <View style={[styles.bellDropdown, HARD_SHADOW_LG, { top: bellPos.top, right: bellPos.right }]}>
+              <View style={[styles.alertBar, HARD_SHADOW, { margin: 0, marginBottom: 0 }]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.alertTitle}>Benachrichtigungen</Text>
+                </View>
+                <TouchableOpacity onPress={() => setBellOpen(false)} hitSlop={8}>
+                  <Ionicons name="close" size={18} color={RETRO.text} />
+                </TouchableOpacity>
+              </View>
+              {bellCount === 0 ? (
+                <Text style={styles.alertText}>Keine neuen Benachrichtigungen.</Text>
+              ) : (
+                <View style={{ paddingHorizontal: 14, paddingVertical: 6 }}>
+                  {alerts.map((a) => (
+                    <TouchableOpacity
+                      key={a.id}
+                      style={styles.bellRow}
+                      onPress={() => openAlertDetail(a)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.bellRowTag}>BERATERSTATUS</Text>
+                      <Text style={styles.bellRowText} numberOfLines={1}>{a.player_name}</Text>
+                      <Ionicons name="chevron-forward" size={13} color={RETRO.shadowDark} />
+                    </TouchableOpacity>
+                  ))}
+                  {openMerges.map((m) => (
+                    <TouchableOpacity
+                      key={m.scouted.id}
+                      style={styles.bellRow}
+                      onPress={() => { setMergeChoice(null); setBellDetail({ type: 'merge', item: m }); }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.bellRowTag}>ZUORDNUNG</Text>
+                      <Text style={styles.bellRowText} numberOfLines={1}>{m.scouted.player_name}</Text>
+                      <Ionicons name="chevron-forward" size={13} color={RETRO.shadowDark} />
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+          </TouchableOpacity>
+        </Modal>
+      )}
+
+      {/* Benachrichtigungs-Detail: Beraterstatus-Alarm */}
+      {bellOpen && bellDetail?.type === 'alert' && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setBellDetail(null)}>
           <View style={styles.alertOverlay}>
             <View style={[styles.alertBox, HARD_SHADOW_LG]}>
               <View style={[styles.alertBar, HARD_SHADOW]}>
@@ -417,18 +604,153 @@ export function DashboardScreen() {
                   <Text style={styles.alertTitle}>Benachrichtigung</Text>
                   <Text style={styles.alertTag}>BERATERSTATUS</Text>
                 </View>
-                <TouchableOpacity onPress={() => dismissAlert(alerts[0])} hitSlop={8}>
+                <TouchableOpacity onPress={() => { setBellDetail(null); setBellOpen(false); }} hitSlop={8}>
                   <Ionicons name="close" size={18} color={RETRO.text} />
                 </TouchableOpacity>
               </View>
-              <Text style={styles.alertText}>{alerts[0].message}</Text>
-              <View style={styles.alertActions}>
+              <Text style={styles.alertText}>{bellDetail.alert.message}</Text>
+              {alertChange && (
+                <View style={{ paddingHorizontal: 14, paddingBottom: 12, gap: 3 }}>
+                  <Text style={styles.alertAgentLine}>
+                    Alter Berater:{' '}
+                    <Text style={[styles.alertAgentValue, alertChange.fromKnown && !alertChange.from && { color: '#15803d' }]}>
+                      {alertChange.fromKnown ? (alertChange.from || 'kein Beratereintrag') : '—'}
+                    </Text>
+                  </Text>
+                  <Text style={styles.alertAgentLine}>
+                    Neuer Berater:{' '}
+                    <Text style={[styles.alertAgentValue, !alertChange.to && { color: '#15803d' }]}>
+                      {alertChange.to || 'kein Beratereintrag'}
+                    </Text>
+                  </Text>
+                </View>
+              )}
+              <View style={[styles.alertActions, { gap: 10 }]}>
                 <TouchableOpacity
                   style={[styles.alertBtn, HARD_SHADOW]}
-                  onPress={() => openAlertProfile(alerts[0])}
+                  onPress={() => { const a = bellDetail.alert; setBellDetail(null); setBellOpen(false); openAlertProfile(a); }}
                   activeOpacity={0.7}
                 >
                   <Text style={styles.alertBtnText}>Profil anzeigen</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.alertBtn, HARD_SHADOW]}
+                  onPress={() => { dismissAlert(bellDetail.alert); setBellDetail(null); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.alertBtnText}>Gelesen</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* Benachrichtigungs-Detail: unklare TM-Zuordnung */}
+      {bellOpen && bellDetail?.type === 'merge' && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setBellDetail(null)}>
+          <View style={styles.alertOverlay}>
+            <View style={[styles.alertBox, HARD_SHADOW_LG]}>
+              <View style={[styles.alertBar, HARD_SHADOW]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.alertTitle}>Merge</Text>
+                </View>
+                <TouchableOpacity onPress={() => { setBellDetail(null); setBellOpen(false); }} hitSlop={8}>
+                  <Ionicons name="close" size={18} color={RETRO.text} />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.alertText}>
+                {`Für ${[
+                  `${bellDetail.item.scouted.player_name}${(() => { const a = ageFromBirthDate(bellDetail.item.scouted.birth_date); return a !== null ? ` (${a} J.)` : ''; })()}`,
+                  bellDetail.item.scouted.team,
+                ].filter(Boolean).join(', ')} kommen mehrere TM-Profile in Frage:`}
+              </Text>
+              <View style={{ paddingHorizontal: 14, gap: 8 }}>
+                {bellDetail.item.candidates.map((c) => {
+                  const checked = mergeChoice === c.id;
+                  return (
+                    <View key={c.id} style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                      <TouchableOpacity
+                        style={[styles.alertBtn, HARD_SHADOW, { flexShrink: 1 }]}
+                        onPress={() => {
+                          if (c.tm_profile_url && Platform.OS === 'web') window.open(c.tm_profile_url, '_blank');
+                          else if (c.tm_profile_url) Linking.openURL(c.tm_profile_url);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={styles.alertBtnText} numberOfLines={1}>
+                          {[
+                            `${c.player_name}${(() => { const a = ageFromBirthDate(c.birth_date); return a !== null ? ` (${a} J.)` : ''; })()}`,
+                            c.is_vereinslos ? 'vereinslos' : c.club_name,
+                          ].filter(Boolean).join(' · ')}
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.mergeCheckbox, checked && { backgroundColor: RETRO.headerBg, borderColor: RETRO.headerBg }]}
+                        onPress={() => setMergeChoice(checked ? null : c.id)}
+                        hitSlop={6}
+                        activeOpacity={0.7}
+                      >
+                        {checked && <Text style={styles.mergeCheckmark}>✓</Text>}
+                      </TouchableOpacity>
+                    </View>
+                  );
+                })}
+              </View>
+              <View style={[styles.alertActions, { gap: 10, marginTop: 12 }]}>
+                <TouchableOpacity
+                  style={[styles.alertBtn, HARD_SHADOW]}
+                  onPress={() => {
+                    setMergeHidden((prev) => new Set(prev).add(bellDetail.item.scouted.id));
+                    setBellDetail(null);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.alertBtnText, { color: '#4a4a55' }]}>Keiner davon</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.alertBtn, HARD_SHADOW, { backgroundColor: '#1a5f2a' }, (!mergeChoice || assigning) && { opacity: 0.5 }]}
+                  disabled={!mergeChoice || assigning}
+                  onPress={() => mergeChoice && handleAssign(bellDetail.item.scouted.id, mergeChoice)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.alertBtnText, { color: '#ffffff' }]}>Zuordnen</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
+      {/* Nachfrage: Spiel aus "Meine Spiele" entfernen? */}
+      {confirmRemoveGame && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setConfirmRemoveGame(false)}>
+          <View style={styles.alertOverlay}>
+            <View style={[styles.alertBox, HARD_SHADOW_LG]}>
+              <View style={[styles.alertBar, HARD_SHADOW]}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.alertTitle}>Spiel entfernen</Text>
+                </View>
+                <TouchableOpacity onPress={() => setConfirmRemoveGame(false)} hitSlop={8}>
+                  <Ionicons name="close" size={18} color={RETRO.text} />
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.alertText}>Soll das Spiel wirklich aus „Meine Spiele" entfernt werden?</Text>
+              <View style={[styles.alertActions, { gap: 10 }]}>
+                <TouchableOpacity
+                  style={[styles.alertBtn, HARD_SHADOW]}
+                  onPress={() => setConfirmRemoveGame(false)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.alertBtnText}>Abbrechen</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.alertBtn, HARD_SHADOW, { backgroundColor: '#dc2626' }, removingGame && { opacity: 0.5 }]}
+                  onPress={handleRemoveFromMyGames}
+                  disabled={removingGame}
+                  activeOpacity={0.7}
+                >
+                  <Text style={[styles.alertBtnText, { color: '#ffffff' }]}>Entfernen</Text>
                 </TouchableOpacity>
               </View>
             </View>
@@ -513,26 +835,25 @@ export function DashboardScreen() {
               ) : null}
               <View style={styles.detailDivider} />
               {gameDetail.isOwn ? (
-                <View style={[styles.detailAddedBadge, HARD_SHADOW]}>
-                  <Text style={styles.detailAddedText}>✓ In „Meine Spiele" übernommen</Text>
-                </View>
+                <TouchableOpacity
+                  style={[styles.detailAddedBadge, HARD_SHADOW]}
+                  onPress={() => setConfirmRemoveGame(true)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.detailAddedText}>✓ Ich bin beim Spiel</Text>
+                </TouchableOpacity>
               ) : (
-                <>
-                  <Text style={styles.detailHint}>
-                    Dieses Spiel beobachten? Es wird als eigenes Spiel übernommen (mit Aufstellung & Scouting).
-                  </Text>
-                  <TouchableOpacity
-                    style={[styles.detailAddBtn, HARD_SHADOW, BLUE_GRADIENT]}
-                    onPress={handleAddToMyGames}
-                    disabled={addingGame}
-                  >
-                    {addingGame ? (
-                      <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                      <Text style={styles.detailAddBtnText}>+ Zu „Meine Spiele" hinzufügen</Text>
-                    )}
-                  </TouchableOpacity>
-                </>
+                <TouchableOpacity
+                  style={[styles.detailAddBtn, HARD_SHADOW, BLUE_GRADIENT]}
+                  onPress={handleAddToMyGames}
+                  disabled={addingGame}
+                >
+                  {addingGame ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.detailAddBtnText}>Zu „Meine Spiele" hinzufügen</Text>
+                  )}
+                </TouchableOpacity>
               )}
             </Pressable>
           </Pressable>
@@ -739,6 +1060,13 @@ const styles = StyleSheet.create({
   colDatum: {
     width: 70,
   },
+  // Oranger Marker: bei diesem Spiel bin ich (in "Meine Spiele" übernommen)
+  attendMarker: {
+    width: 8,
+    height: 8,
+    borderRadius: 1,
+    backgroundColor: '#e8930c',
+  },
   colBegegnung: {
     flex: 1,
     minWidth: 0,
@@ -759,6 +1087,79 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   // Glocken-Benachrichtigung (kleines Retro-Popup)
+  // Roter Zähler an der Glocke im Titelbalken
+  bellBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    backgroundColor: '#14141e',
+    borderRadius: 8,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bellBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#ffffff',
+  },
+  bellRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#d8d4cc',
+  },
+  bellRowTag: {
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 1,
+    fontFamily: MONO,
+    color: '#4a4a55',
+    minWidth: 110,
+  },
+  bellRowText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+    color: RETRO.text,
+  },
+  alertAgentLine: {
+    fontSize: 13,
+    color: '#4a4a55',
+  },
+  alertAgentValue: {
+    fontWeight: '700',
+    color: RETRO.text,
+  },
+  // Benachrichtigungs-Dropdown direkt unter der Glocke
+  bellDropdown: {
+    position: 'absolute',
+    width: 400,
+    maxWidth: '92%',
+    backgroundColor: '#e9e5dd',
+    borderRadius: 2,
+    paddingBottom: 6,
+  },
+  // Häkchen-Kasten im Merge-Dialog (wie die Dropdown-Checkboxen)
+  mergeCheckbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 0,
+    borderWidth: 1,
+    borderColor: RETRO.shadowDark,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  mergeCheckmark: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
   alertOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.35)',
@@ -924,27 +1325,35 @@ const styles = StyleSheet.create({
     color: RETRO.textMuted,
     marginBottom: 8,
   },
+  // Standard-Buttongröße (kompakt wie alle Buttons)
   detailAddBtn: {
     alignSelf: 'flex-end',
     backgroundColor: RETRO.headerBg,
-    paddingVertical: 9,
-    paddingHorizontal: 14,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    minHeight: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   detailAddBtnText: {
-    fontSize: 13,
-    fontWeight: '700',
+    fontSize: 11,
+    fontWeight: '600',
     color: '#ffffff',
   },
+  // Orange nach dem Übernehmen ("Ich bin beim Spiel"), Standard-Buttongröße
   detailAddedBadge: {
-    alignSelf: 'flex-start',
-    backgroundColor: RETRO.yellow,
-    paddingVertical: 8,
-    paddingHorizontal: 14,
+    alignSelf: 'flex-end',
+    backgroundColor: '#e8930c',
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    minHeight: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   detailAddedText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: RETRO.text,
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#ffffff',
   },
   emptyText: {
     fontSize: 13,

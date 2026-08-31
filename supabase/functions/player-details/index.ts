@@ -86,24 +86,48 @@ interface NationalTeamInfo {
 
 /** Aktuelle Nationalmannschaft (clubAssignment type=nationalTeam) inkl. Land */
 async function fetchNationalTeam(playerId: string): Promise<NationalTeamInfo | null> {
+  // 1) TM-API: clubAssignment type=nationalTeam — fehlt allerdings bei
+  //    manchen Jugendnationalspielern, dann greift der Seiten-Fallback
   try {
     const r = await fetch(`https://tmapi.transfermarkt.technology/player/${playerId}`, {
       headers: { ...FETCH_HEADERS, Accept: 'application/json' },
     })
-    if (!r.ok) return null
-    const j = await r.json()
-    const assignments: any[] = j?.data?.clubAssignments || []
-    const nat = assignments.filter((a) => a?.type === 'nationalTeam').pop()
-    if (!nat?.clubId) return null
-    // locale=de: deutsche Teamnamen ("Deutschland U16" statt "Germany U16")
-    const rc = await fetch(`https://tmapi.transfermarkt.technology/club/${nat.clubId}?locale=de`, {
-      headers: { ...FETCH_HEADERS, Accept: 'application/json' },
+    if (r.ok) {
+      const j = await r.json()
+      const assignments: any[] = j?.data?.clubAssignments || []
+      const nat = assignments.filter((a) => a?.type === 'nationalTeam').pop()
+      if (nat?.clubId) {
+        // locale=de: deutsche Teamnamen ("Deutschland U16" statt "Germany U16")
+        const rc = await fetch(`https://tmapi.transfermarkt.technology/club/${nat.clubId}?locale=de`, {
+          headers: { ...FETCH_HEADERS, Accept: 'application/json' },
+        })
+        if (rc.ok) {
+          const jc = await rc.json()
+          const name = jc?.data?.name
+          if (name) return { name, countryId: jc?.data?.baseDetails?.countryId ?? null }
+        }
+      }
+    }
+  } catch {
+    // weiter zum Seiten-Fallback
+  }
+
+  // 2) Fallback: Profilseite ("Nationalspieler:" im Kopfbereich)
+  try {
+    const r = await fetch(`https://www.transfermarkt.de/-/profil/spieler/${playerId}`, {
+      headers: FETCH_HEADERS,
     })
-    if (!rc.ok) return null
-    const jc = await rc.json()
-    const name = jc?.data?.name
-    if (!name) return null
-    return { name, countryId: jc?.data?.baseDetails?.countryId ?? null }
+    if (!r.ok) return null
+    const html = await r.text()
+    const idx = html.indexOf('Nationalspieler:')
+    if (idx < 0) return null
+    // "Ehem. Nationalspieler:" = kein AKTUELLER Nationalspieler
+    if (/Ehem\.\s*$/.test(html.slice(Math.max(0, idx - 20), idx))) return null
+    const seg = html.slice(idx, idx + 800)
+    const nameMatch = seg.match(/<a[^>]*href="[^"]*\/verein\/\d+"[^>]*>([^<]+)<\/a>/)
+    if (!nameMatch) return null
+    const flagMatch = seg.match(/\/flagge\/\w+\/(\d+)\.png/)
+    return { name: nameMatch[1].trim(), countryId: flagMatch ? parseInt(flagMatch[1], 10) : null }
   } catch {
     return null
   }

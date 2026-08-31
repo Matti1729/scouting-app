@@ -625,6 +625,23 @@ function findBestPlayerMatch(
     let score = 0;
     let hasClubMatch = false;
 
+    // Vorname muss halbwegs passen — sonst ist es ein Namensvetter (z.B.
+    // "Ben Weiser" U15 vs. Profi "Mitchell Weiser"), egal wie gut der Verein
+    // passt. Ausnahme: Künstlernamen mit nur einem Namensteil (Brasilianer).
+    const playerParts = normalizedPlayerName.split(' ').filter(p => p.length > 0);
+    if (nameParts.length >= 2 && playerParts.length >= 2) {
+      const searchFirst = nameParts[0];
+      const firstOk = playerParts.slice(0, -1).some(pf =>
+        pf === searchFirst ||
+        // Abgekürzte Vornamen ("M." -> "Mitchell"): Kurzform als Präfix zulassen
+        (searchFirst.length < 3 && pf.startsWith(searchFirst)) ||
+        (pf.length < 3 && searchFirst.startsWith(pf)) ||
+        (searchFirst.length >= 3 && pf.length >= 3 && (searchFirst.startsWith(pf) || pf.startsWith(searchFirst))) ||
+        (searchFirst.length >= 4 && pf.length >= 4 && levenshtein(searchFirst, pf) <= 1)
+      );
+      if (!firstOk) continue;
+    }
+
     // Exakter Name-Match
     if (normalizedPlayerName === normalizedSearchName) {
       score = 100;
@@ -728,6 +745,7 @@ function normalizeName(name: string): string {
     .replace(/þ/g, 'th')              // Isländisch
     .replace(/ł/g, 'l')               // Polnisch
     .replace(/đ/g, 'd')               // Kroatisch/Serbisch
+    .replace(/ı/g, 'i')               // Türkisch (Yıldız -> yildiz, sonst würde das ı gelöscht)
     .replace(/ß/g, 'ss')              // Deutsch
     .replace(/æ/g, 'ae')              // Dänisch/Norwegisch
     .replace(/oe/g, 'o')              // Digraphen (TM-URL-Slugs nutzen oe/ae/ue)
@@ -803,6 +821,25 @@ export interface BeraterDBResult {
  *
  * Flow: clubHint → berater_clubs matchen → berater_players laden → Name matchen
  */
+/** Passt das Geburtsjahr zur Altersklasse des Spiels? Ein U15-Spieler kann
+ *  nicht 1994 geboren sein — verhindert falsche Namensvetter-Zuordnungen.
+ *  1 Jahr Toleranz (ältere Jahrgänge mit Sondergenehmigung). */
+export function birthDatePlausibleForAgeGroup(
+  birthDate: string | null | undefined,
+  ageGroup?: string | null
+): boolean {
+  if (!birthDate || !ageGroup) return true;
+  const m = String(ageGroup).match(/^u[-\s]?(\d{1,2})$/i);
+  if (!m) return true; // Herren o.Ä. — keine Altersgrenze
+  const maxAge = parseInt(m[1], 10);
+  const yearMatch = birthDate.match(/(\d{4})/);
+  if (!yearMatch) return true;
+  const birthYear = parseInt(yearMatch[1], 10);
+  const now = new Date();
+  const seasonStart = now.getMonth() + 1 >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+  return birthYear >= seasonStart - maxAge - 1;
+}
+
 export async function enrichFromBeraterDB(
   players: Array<{
     id: string;

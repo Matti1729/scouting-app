@@ -24,6 +24,7 @@ import {
   PlayerTmSeasonStats,
   fetchPlayerTmDetails,
   tmFlagUrl,
+  flagForNationalTeam,
   loadPlayerNote,
   savePlayerNote,
   fetchEntryAddedBy,
@@ -560,7 +561,10 @@ export function PlayerDetailModal({
                     'Nationalspieler',
                     tmDetails?.nationalTeam ? (
                       <View style={styles.detailClubValue}>
-                        {tmDetails.nationalTeam.countryId ? (
+                        {/* Emoji-Flagge (gleicher Typ wie im Land-Dropdown), sonst TM-PNG */}
+                        {flagForNationalTeam(tmDetails.nationalTeam.name) ? (
+                          <Text style={styles.natFlagEmoji}>{flagForNationalTeam(tmDetails.nationalTeam.name)}</Text>
+                        ) : tmDetails.nationalTeam.countryId ? (
                           <Image
                             source={{ uri: tmFlagUrl(tmDetails.nationalTeam.countryId) }}
                             style={styles.natFlag}
@@ -722,7 +726,7 @@ export function PlayerDetailModal({
                       >
                         <Text style={styles.reportDate} numberOfLines={1}>{ev.match_date || '—'}</Text>
                         <Text style={styles.reportMatch} numberOfLines={1}>
-                          {[ev.age_group, ev.match_name].filter(Boolean).join(' · ') || 'Spiel unbekannt'}
+                          {[ev.match_name, ev.age_group, ev.match_type].filter(Boolean).join(' · ') || 'Spiel unbekannt'}
                         </Text>
                         {ev.overall_rating ? (
                           <View style={[styles.reportRatingBadge, { backgroundColor: potentialColor(ev.overall_rating) }]}>
@@ -1039,6 +1043,9 @@ const styles = StyleSheet.create({
   natFlag: {
     width: 20,
     height: 13,
+  },
+  natFlagEmoji: {
+    fontSize: 14,
   },
   // gleiche Schrift wie die übrigen Kartenwerte (z.B. Position)
   detailClubText: {

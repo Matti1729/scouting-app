@@ -612,12 +612,41 @@ function normalizeAgentName(name: string | null | undefined): string | null {
   return trimmed
 }
 
+/** "Berater bekannt - Spieler unter 16": TM versteckt den Berater auf der
+ *  Profilseite, die TM-API liefert ihn aber trotzdem (consultantAgency). */
+async function resolveHiddenU16Agent(
+  tmPlayerId: string
+): Promise<{ name: string; company: string; url: string | null } | null> {
+  try {
+    const r = await fetch(`https://tmapi.transfermarkt.technology/player/${tmPlayerId}?locale=de`, {
+      headers: { 'User-Agent': getRandomUserAgent(), Accept: 'application/json' },
+    })
+    if (!r.ok) return null
+    const j = await r.json()
+    const ag = j?.data?.attributes?.consultantAgency
+    // shortName bevorzugen: bei Sonderfällen deutsch ("Familienangehörige" statt "Relatives")
+    const name = (ag?.shortName || ag?.name || '').trim()
+    if (!name) return null
+    return {
+      name,
+      company: name,
+      url: ag?.relativeUrl ? `https://www.transfermarkt.de${ag.relativeUrl}` : null,
+    }
+  } catch {
+    return null
+  }
+}
+
 function agentsAreDifferent(oldName: string | null, newName: string | null): boolean {
   const normalizedOld = normalizeAgentName(oldName)
   const normalizedNew = normalizeAgentName(newName)
 
   // Beide null/leer → kein Wechsel
   if (!normalizedOld && !normalizedNew) return false
+
+  // Alter Eintrag war der U16-Platzhalter → wir erfahren nur den schon
+  // vorhandenen Berater, das ist KEIN Beraterwechsel
+  if (/spieler unter 16/i.test(oldName || '')) return false
 
   // Einer null, anderer nicht → Wechsel
   if (!normalizedOld || !normalizedNew) return true
@@ -820,6 +849,17 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
 
     // Berater-Info holen
     const agentInfo = await fetchAgentFromProfile(sp.profileUrl)
+
+    // U16-Platzhalter über die TM-API auflösen (Berater ist bekannt, nur versteckt)
+    if (agentInfo.agentName && /spieler unter 16/i.test(agentInfo.agentName)) {
+      const hidden = await resolveHiddenU16Agent(sp.tmPlayerId)
+      if (hidden) {
+        console.log(`U16-HIDDEN resolved for ${sp.name}: ${hidden.name}`)
+        agentInfo.agentName = hidden.name
+        agentInfo.agentCompany = hidden.company
+        agentInfo.agentUrl = hidden.url
+      }
+    }
 
     // Spieler existiert bereits in DB?
     const { data: existingPlayer } = await supabase
@@ -1406,6 +1446,41 @@ serve(async (req) => {
         const result = await cleanupVereinslose(supabase, 20)
         return new Response(
           JSON.stringify({ success: true, ...result }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+        )
+      }
+
+      case 'resolve_u16': {
+        // Einmal-Aktion: alle "Berater bekannt - Spieler unter 16"-Einträge
+        // über die TM-API auflösen (kein Wechsel, nur die Sichtbarkeit)
+        const { data: hiddenPlayers } = await supabase
+          .from('berater_players')
+          .select('id, player_name, tm_player_id')
+          .ilike('current_agent_name', '%unter 16%')
+          .eq('is_active', true)
+          .limit(200)
+        let resolved = 0
+        let failed = 0
+        for (const p of (hiddenPlayers || []) as any[]) {
+          if (!p.tm_player_id) { failed++; continue }
+          const hidden = await resolveHiddenU16Agent(p.tm_player_id)
+          if (hidden) {
+            await supabase.from('berater_players').update({
+              current_agent_name: hidden.name,
+              current_agent_company: hidden.company,
+              agent_url: hidden.url,
+              has_agent: true,
+              updated_at: new Date().toISOString(),
+            }).eq('id', p.id)
+            resolved++
+            console.log(`U16 resolved: ${p.player_name} -> ${hidden.name}`)
+          } else {
+            failed++
+          }
+          await sleep(150)
+        }
+        return new Response(
+          JSON.stringify({ success: true, total: (hiddenPlayers || []).length, resolved, failed }),
           { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
         )
       }

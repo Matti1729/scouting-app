@@ -44,6 +44,9 @@ import {
   loadObservedPlayers,
   mergeObservedDuplicates,
   ObservedPlayer,
+  findAmbiguousMergeCandidates,
+  AmbiguousMerge,
+  mergeScoutedInto,
 } from '../../services/beraterService';
 import { savePlayerNotesText, fetchSearchPlayer, StipendiumSearchPlayer, positionCode, ageFromBirthDate, agentDisplayName } from '../../services/stipendiumService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
@@ -57,12 +60,25 @@ const MATCH_EVAL_COLUMNS: ColumnDef[] = [
 ];
 
 const WATCHLIST_COLUMNS: ColumnDef[] = [
-  { key: 'name', label: 'Name', defaultFlex: 1.7, minWidth: 120 },
+  { key: 'name', label: 'Name', defaultFlex: 1.6, minWidth: 120 },
+  { key: 'alter', label: 'Alter', defaultFlex: 0.8, minWidth: 95 },
   { key: 'mv', label: 'Marktwert', defaultFlex: 0.7, minWidth: 60 },
   { key: 'club', label: 'Verein', defaultFlex: 1.4, minWidth: 80 },
   { key: 'agent', label: 'Berater', defaultFlex: 1.5, minWidth: 80 },
   { key: 'rating', label: 'Pot.', defaultFlex: 0.4, minWidth: 34 },
   { key: 'added', label: 'Hinzugefügt', defaultFlex: 0.7, minWidth: 70 },
+];
+
+// "Alle Berichte": gleiche Tabelle wie die Watchlist, statt "Hinzugefügt"
+// die Berichte-Anzahl + das Datum des letzten Berichts
+const OBSERVED_COLUMNS: ColumnDef[] = [
+  { key: 'name', label: 'Name', defaultFlex: 1.6, minWidth: 120 },
+  { key: 'alter', label: 'Alter', defaultFlex: 0.8, minWidth: 95 },
+  { key: 'mv', label: 'Marktwert', defaultFlex: 0.7, minWidth: 60 },
+  { key: 'club', label: 'Verein', defaultFlex: 1.4, minWidth: 80 },
+  { key: 'agent', label: 'Berater', defaultFlex: 1.5, minWidth: 80 },
+  { key: 'rating', label: 'Pot.', defaultFlex: 0.4, minWidth: 34 },
+  { key: 'last', label: 'Letzter Bericht', defaultFlex: 0.8, minWidth: 90 },
 ];
 
 // Farbe wie im Potential-Schiebebalken (1-3 rot, 4-6 orange, 7-9 grün, 10 gold)
@@ -71,6 +87,40 @@ function potentialColor(v: number): string {
   if (v >= 7) return '#22c55e';
   if (v >= 4) return '#e8930c';
   return '#dc2626';
+}
+
+/** Berichtsdatum ("11.04.2026" oder "2026-08-28") -> Timestamp für die Sortierung */
+function reportTs(d: string | null): number {
+  if (!d) return 0;
+  if (/^\d{4}-\d{2}-\d{2}/.test(d)) return new Date(d.slice(0, 10)).getTime();
+  const m = d.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+  if (!m) return 0;
+  let year = parseInt(m[3], 10);
+  if (year < 100) year += 2000;
+  return new Date(year, parseInt(m[2], 10) - 1, parseInt(m[1], 10)).getTime();
+}
+
+/** "16 J. (08.03.10)" — Alter + Geburtsdatum kurz für die Alter-Spalte */
+function formatAlter(birthDate: string | null): string {
+  if (!birthDate) return '–';
+  const parts = birthDate.split('.');
+  if (parts.length !== 3) return birthDate;
+  const birth = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
+  const now = new Date();
+  let age = now.getFullYear() - birth.getFullYear();
+  if (now.getMonth() < birth.getMonth() || (now.getMonth() === birth.getMonth() && now.getDate() < birth.getDate())) {
+    age--;
+  }
+  const short = birthDate.replace(/\.(\d{2})(\d{2})$/, '.$2');
+  if (age < 10 || age > 50) return short; // unplausibel -> nur das Datum zeigen
+  return `${age} J. (${short})`;
+}
+
+/** Berichtsdatum einheitlich deutsch anzeigen */
+function formatReportDate(d: string | null): string {
+  if (!d) return '–';
+  if (/^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 10).split('-').reverse().join('.');
+  return d;
 }
 
 export function WatchlistScreen() {
@@ -86,13 +136,18 @@ export function WatchlistScreen() {
   const [tableWidth, setTableWidth] = useState(0);
   const [detailTableWidth, setDetailTableWidth] = useState(0);
 
-  const table = useTableColumns(WATCHLIST_COLUMNS, tableWidth);
+  const table = useTableColumns(WATCHLIST_COLUMNS, tableWidth, 'watchlist_main_v2');
+  const observedTable = useTableColumns(OBSERVED_COLUMNS, tableWidth, 'watchlist_observed_v3');
   const matchEvalTable = useTableColumns(MATCH_EVAL_COLUMNS, detailTableWidth, 'watchlist_match_evals');
 
   // Sort
-  type SortKey = 'name' | 'mv' | 'club' | 'agent' | 'added';
+  type SortKey = 'name' | 'alter' | 'mv' | 'club' | 'agent' | 'added';
   const [sortKey, setSortKey] = useState<SortKey>('added');
   const [sortAsc, setSortAsc] = useState(false); // newest first by default
+  // Sortierung "Alle Berichte" (eigener Zustand, Standard: neuester Bericht oben)
+  type ObsSortKey = 'name' | 'alter' | 'mv' | 'club' | 'agent' | 'rating' | 'last';
+  const [obsSortKey, setObsSortKey] = useState<ObsSortKey>('last');
+  const [obsSortAsc, setObsSortAsc] = useState(false);
 
   // Detail modal
   const [selectedPlayer, setSelectedPlayer] = useState<BeraterPlayer | null>(null);
@@ -113,19 +168,25 @@ export function WatchlistScreen() {
   // Tabs: Watchlist (Interessant-Shortlist) | Beobachtet (alle Spieler mit ≥1 Bericht)
   const [viewTab, setViewTab] = useState<'watchlist' | 'beobachtet'>('watchlist');
   const [observed, setObserved] = useState<ObservedPlayer[]>([]);
+  // Unklare TM-Zuordnungen (mehrere Kandidaten) — der Nutzer ordnet von Hand zu
+  const [ambiguous, setAmbiguous] = useState<AmbiguousMerge[]>([]);
+  const [ambiguousHidden, setAmbiguousHidden] = useState<Set<string>>(new Set());
+  const [assigning, setAssigning] = useState(false);
 
   const fetchData = useCallback(async () => {
     // Gescoutete Spieler mit später aufgetauchten TM-Datensätzen zusammenführen
     // (z.B. U15 gesichtet, ab U17 bei Transfermarkt gelistet)
     await mergeObservedDuplicates();
-    const [data, evals, obs] = await Promise.all([
+    const [data, evals, obs, amb] = await Promise.all([
       loadWatchlist(),
       loadAllEvaluations(),
       loadObservedPlayers(),
+      findAmbiguousMergeCandidates(),
     ]);
     setWatchlist(data);
     setEvaluations(evals);
     setObserved(obs);
+    setAmbiguous(amb);
     setLoading(false);
   }, []);
 
@@ -243,6 +304,8 @@ export function WatchlistScreen() {
       switch (sortKey) {
         case 'name':
           return dir * formatNameLastFirst(pA.player_name).localeCompare(formatNameLastFirst(pB.player_name));
+        case 'alter':
+          return dir * (reportTs(pA.birth_date) - reportTs(pB.birth_date));
         case 'mv':
           return dir * (parseMvNumber(pA.market_value || '') - parseMvNumber(pB.market_value || ''));
         case 'club':
@@ -258,6 +321,42 @@ export function WatchlistScreen() {
   }, [watchlist, sortKey, sortAsc, evaluations]);
 
   const sortIndicator = (key: SortKey) => sortKey === key ? (sortAsc ? ' \u25B2' : ' \u25BC') : '';
+
+  const toggleObsSort = (key: ObsSortKey) => {
+    if (obsSortKey === key) {
+      setObsSortAsc(!obsSortAsc);
+    } else {
+      setObsSortKey(key);
+      setObsSortAsc(key === 'name' || key === 'club' || key === 'agent');
+    }
+  };
+
+  const sortedObserved = useMemo(() => {
+    const dir = obsSortAsc ? 1 : -1;
+    return [...observed].sort((a, b) => {
+      switch (obsSortKey) {
+        case 'name':
+          return dir * formatNameLastFirst(a.player.player_name).localeCompare(formatNameLastFirst(b.player.player_name), 'de');
+        case 'alter':
+          return dir * (reportTs(a.player.birth_date) - reportTs(b.player.birth_date));
+        case 'mv':
+          return dir * (parseMvNumber((a.player as any).market_value || '') - parseMvNumber((b.player as any).market_value || ''));
+        case 'club':
+          return dir * ((a.player as any).club_name || 'zzz').localeCompare((b.player as any).club_name || 'zzz', 'de');
+        case 'agent': {
+          const agA = agentDisplayName(a.player.current_agent_name, (a.player as any).current_agent_company) || 'zzz';
+          const agB = agentDisplayName(b.player.current_agent_name, (b.player as any).current_agent_company) || 'zzz';
+          return dir * agA.localeCompare(agB, 'de');
+        }
+        case 'rating':
+          return dir * ((a.lastRating ?? -1) - (b.lastRating ?? -1));
+        case 'last':
+          return dir * (reportTs(a.lastMatchDate) - reportTs(b.lastMatchDate));
+        default:
+          return 0;
+      }
+    });
+  }, [observed, obsSortKey, obsSortAsc]);
 
   // Modal handlers
   // Öffnet das geteilte Spielerprofil (PlayerDetailModal) — wie im Dashboard
@@ -483,8 +582,13 @@ export function WatchlistScreen() {
                   <Text style={[styles.playerColName, { color: RETRO.text }]} numberOfLines={1}>
                     {formatNameLastFirst(player.player_name)}
                   </Text>
-                  {age ? <Text style={[styles.playerColAge, { color: colors.textSecondary }]}>{age}</Text> : null}
                 </View>
+              );
+            case 'alter':
+              return (
+                <Text style={[{ fontSize: 13, color: RETRO.text }]} numberOfLines={1}>
+                  {formatAlter(player.birth_date)}
+                </Text>
               );
             case 'mv':
               return (
@@ -524,6 +628,129 @@ export function WatchlistScreen() {
     );
   };
 
+  // "Alle Berichte"-Zeile: gleiche Tabellen-Optik wie die Watchlist
+  const renderObservedRow = ({ item }: { item: ObservedPlayer }) => {
+    const player = item.player;
+    const agentLabel = getAgentLabel(player);
+    const age = calculateAge(player.birth_date);
+    return (
+      <TableRow
+        columnOrder={observedTable.columnOrder}
+        getColumnWidth={observedTable.getColumnWidth}
+        onPress={() => openPlayerDetail(player)}
+        style={[styles.playerRow, { borderBottomColor: RETRO.rowBorder }]}
+        renderCell={(key) => {
+          switch (key) {
+            case 'name':
+              return (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text style={[styles.playerColName, { color: RETRO.text }]} numberOfLines={1}>
+                    {formatNameLastFirst(player.player_name)}
+                  </Text>
+                </View>
+              );
+            case 'alter':
+              return (
+                <Text style={[{ fontSize: 13, color: RETRO.text }]} numberOfLines={1}>
+                  {formatAlter(player.birth_date)}
+                </Text>
+              );
+            case 'mv':
+              return (
+                <Text style={styles.monoCell} numberOfLines={1}>
+                  {(player as any).market_value || '–'}
+                </Text>
+              );
+            case 'club':
+              return (
+                <Text style={[{ fontSize: 13, color: RETRO.text, fontStyle: (player as any).is_vereinslos ? 'italic' : 'normal' }]} numberOfLines={1}>
+                  {(player as any).is_vereinslos ? `zuletzt: ${(player as any).club_name || ''}` : ((player as any).club_name || '')}
+                </Text>
+              );
+            case 'agent':
+              return (
+                <Text style={[{ fontSize: 13, color: agentLabel.color }]} numberOfLines={1}>
+                  {agentLabel.text}
+                </Text>
+              );
+            case 'rating':
+              return item.lastRating != null && item.lastRating > 0 ? (
+                <View style={[styles.potBadge, { backgroundColor: potentialColor(item.lastRating) }]}>
+                  <Text style={styles.potBadgeText}>{item.lastRating}</Text>
+                </View>
+              ) : null;
+            case 'last':
+              return (
+                <Text style={styles.monoCell} numberOfLines={1}>
+                  {formatReportDate(item.lastMatchDate)}
+                </Text>
+              );
+            default:
+              return null;
+          }
+        }}
+      />
+    );
+  };
+
+  // Manuelle Zuordnung: Bericht-Spieler in den gewählten TM-Datensatz überführen
+  const handleAssign = async (scoutedId: string, keeperId: string) => {
+    if (assigning) return;
+    setAssigning(true);
+    const ok = await mergeScoutedInto(scoutedId, keeperId);
+    if (ok) await fetchData();
+    setAssigning(false);
+  };
+
+  // Karte "ZUORDNUNG PRÜFEN": unklare Fälle mit Kandidaten-Buttons
+  const renderAmbiguousCard = () => {
+    const open = ambiguous.filter((a) => !ambiguousHidden.has(a.scouted.id));
+    if (open.length === 0) return null;
+    return (
+      <View style={[styles.ambigCard, { backgroundColor: colors.surface }, HARD_SHADOW]}>
+        <Text style={styles.ambigTitle}>ZUORDNUNG PRÜFEN ({open.length})</Text>
+        <Text style={styles.ambigHint}>
+          Für diese Bericht-Spieler gibt es mehrere mögliche Transfermarkt-Datensätze. Bitte zuordnen:
+        </Text>
+        {open.map((a) => (
+          <View key={a.scouted.id} style={styles.ambigRow}>
+            <Text style={styles.ambigName} numberOfLines={1}>
+              {formatNameLastFirst(a.scouted.player_name)}
+              {a.scouted.birth_date ? `  (${a.scouted.birth_date})` : ''}
+            </Text>
+            <View style={styles.ambigCandidates}>
+              {a.candidates.map((c) => (
+                <TouchableOpacity
+                  key={c.id}
+                  style={[styles.ambigBtn, HARD_SHADOW, assigning && { opacity: 0.5 }]}
+                  onPress={() => handleAssign(a.scouted.id, c.id)}
+                  disabled={assigning}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.ambigBtnText} numberOfLines={1}>
+                    {[
+                      `${c.player_name}${(() => { const a = ageFromBirthDate(c.birth_date); return a !== null ? ` (${a} J.)` : ''; })()}`,
+                      c.is_vereinslos ? 'vereinslos' : c.club_name,
+                    ].filter(Boolean).join(' · ')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+              <TouchableOpacity
+                style={[styles.ambigBtn, HARD_SHADOW]}
+                onPress={() =>
+                  setAmbiguousHidden((prev) => new Set(prev).add(a.scouted.id))
+                }
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.ambigBtnText, { color: colors.textSecondary }]}>Keiner davon</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
   const renderEmpty = () => (
     <View style={styles.emptyState}>
       <Text style={styles.emptyIcon}>⭐</Text>
@@ -539,8 +766,8 @@ export function WatchlistScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header (gelber Titelbalken wie im Dashboard) */}
       <RetroHeader
-        title={viewTab === 'beobachtet' ? 'Beobachtet' : 'Watchlist'}
-        subtitle={viewTab === 'beobachtet' ? 'Alle gesichteten Spieler' : 'Markierte Spieler im Blick'}
+        title={viewTab === 'beobachtet' ? 'Alle Berichte' : 'Watchlist'}
+        subtitle={viewTab === 'beobachtet' ? 'Alle Spieler mit Spielbericht' : 'Markierte Spieler im Blick'}
         onBack={() => navigation.goBack()}
         right={
           <View style={{ flexDirection: 'row', gap: 8 }}>
@@ -559,7 +786,7 @@ export function WatchlistScreen() {
               activeOpacity={0.7}
             >
               <Text style={[styles.headerTabText, viewTab === 'beobachtet' && styles.headerTabTextActive]}>
-                {`Beobachtet (${observed.length})`}
+                {`Alle Berichte (${observed.length})`}
               </Text>
             </TouchableOpacity>
           </View>
@@ -567,14 +794,59 @@ export function WatchlistScreen() {
       />
 
       {/* List */}
-      {viewTab === 'beobachtet' ? (
+      {viewTab === 'beobachtet' && !isMobile ? (
+        /* "Alle Berichte" als Tabelle — gleiche Optik wie die Watchlist */
+        <>
+        {renderAmbiguousCard()}
+        <View
+          style={[styles.listCard, { backgroundColor: colors.surface }, HARD_SHADOW]}
+          onLayout={(e) => setTableWidth(e.nativeEvent.layout.width)}
+        >
+          {observed.length > 0 && tableWidth > 0 && (
+            <TableHeader
+              columnDefs={OBSERVED_COLUMNS}
+              columnOrder={observedTable.columnOrder}
+              getColumnWidth={observedTable.getColumnWidth}
+              onResizeStart={observedTable.onResizeStart}
+              onDragStart={observedTable.onDragStart}
+              resizingKey={observedTable.resizingKey}
+              draggingKey={observedTable.draggingKey}
+              dragOverKey={observedTable.dragOverKey}
+              onSort={(key) => toggleObsSort(key as ObsSortKey)}
+              sortKey={obsSortKey}
+              sortAsc={obsSortAsc}
+              colors={colors}
+              setHeaderRef={observedTable.setHeaderRef}
+            />
+          )}
+          <FlatList
+            data={sortedObserved}
+            renderItem={renderObservedRow}
+            keyExtractor={(item) => item.player.id}
+            contentContainerStyle={observed.length === 0 && !loading ? styles.emptyContainer : undefined}
+            ListEmptyComponent={!loading ? (
+              <View style={styles.emptyState}>
+                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Noch keine Berichte</Text>
+                <Text style={[styles.emptyHint, { color: colors.textSecondary }]}>
+                  Spieler erscheinen hier, sobald ein Spielbericht zu ihnen gespeichert wurde
+                </Text>
+              </View>
+            ) : null}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
+            }
+          />
+        </View>
+        </>
+      ) : viewTab === 'beobachtet' ? (
         <FlatList
-          data={observed}
+          data={sortedObserved}
+          ListHeaderComponent={renderAmbiguousCard()}
           keyExtractor={(item) => item.player.id}
           contentContainerStyle={observed.length === 0 && !loading ? styles.emptyContainer : { padding: 12 }}
           ListEmptyComponent={!loading ? (
             <View style={styles.emptyState}>
-              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Noch keine beobachteten Spieler</Text>
+              <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Noch keine Berichte</Text>
               <Text style={[styles.emptyHint, { color: colors.textSecondary }]}>
                 Spieler erscheinen hier, sobald ein Spielbericht zu ihnen gespeichert wurde
               </Text>
@@ -594,8 +866,9 @@ export function WatchlistScreen() {
               activeOpacity={0.7}
             >
               <View style={{ flex: 1 }}>
-                <Text style={{ fontSize: 14, fontWeight: '600', color: colors.text }} numberOfLines={1}>
-                  {item.player.player_name}
+                {/* Schriftgrößen wie in den Tabellen (Suchmaschine): Zellen 13 */}
+                <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }} numberOfLines={1}>
+                  {formatNameLastFirst(item.player.player_name)}
                 </Text>
                 <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
                   {[item.player.club_name, item.player.birth_date, item.player.position].filter(Boolean).join(' · ') || '—'}
@@ -604,9 +877,6 @@ export function WatchlistScreen() {
               {item.lastRating != null && item.lastRating > 0 && (
                 <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primary }}>{item.lastRating}/10</Text>
               )}
-              <View style={{ backgroundColor: '#2563eb', borderRadius: 10, minWidth: 26, paddingHorizontal: 6, paddingVertical: 3, alignItems: 'center' }}>
-                <Text style={{ fontSize: 11, fontWeight: '800', color: '#fff' }}>{item.reportCount}×</Text>
-              </View>
               <Text style={{ fontSize: 11, fontFamily: MONO, color: colors.textSecondary, minWidth: 70, textAlign: 'right' }}>
                 {/* Datum kann ISO oder DD.MM.YYYY sein — einheitlich deutsch anzeigen */}
                 {item.lastMatchDate && /^\d{4}-\d{2}-\d{2}/.test(item.lastMatchDate)
@@ -870,6 +1140,68 @@ const styles = StyleSheet.create({
   },
   potBadgeText: {
     fontSize: 13,
+    fontWeight: '800' as const,
+    color: '#ffffff',
+  },
+  // Berichte-Anzahl ("2×") in der Alle-Berichte-Tabelle
+  // "ZUORDNUNG PRÜFEN"-Karte (unklare TM-Zuordnungen)
+  ambigCard: {
+    borderRadius: 2,
+    padding: 12,
+    marginBottom: 12,
+  },
+  ambigTitle: {
+    fontSize: 11,
+    fontWeight: '700' as const,
+    fontFamily: MONO,
+    letterSpacing: 1.5,
+    color: RETRO.text,
+    marginBottom: 4,
+  },
+  ambigHint: {
+    fontSize: 13,
+    color: '#4a4a55',
+    marginBottom: 8,
+  },
+  ambigRow: {
+    marginBottom: 8,
+  },
+  ambigName: {
+    fontSize: 13,
+    fontWeight: '700' as const,
+    color: RETRO.text,
+    marginBottom: 4,
+  },
+  ambigCandidates: {
+    flexDirection: 'row' as const,
+    flexWrap: 'wrap' as const,
+    gap: 8,
+  },
+  ambigBtn: {
+    backgroundColor: '#e6e2da',
+    borderRadius: 0,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    minHeight: 24,
+    alignItems: 'center' as const,
+    justifyContent: 'center' as const,
+  },
+  ambigBtnText: {
+    fontSize: 11,
+    fontWeight: '600' as const,
+    color: RETRO.text,
+  },
+  reportCountBadge: {
+    backgroundColor: '#2563eb',
+    borderRadius: 10,
+    minWidth: 26,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    alignItems: 'center' as const,
+    alignSelf: 'flex-start' as const,
+  },
+  reportCountText: {
+    fontSize: 11,
     fontWeight: '800' as const,
     color: '#ffffff',
   },

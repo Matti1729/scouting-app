@@ -2,6 +2,7 @@
 // Kommuniziert mit Supabase (direkte DB-Queries + Edge Function für Scans)
 
 import { supabase } from '../config/supabase';
+import { teamLabel, agRank } from './stipendiumService';
 
 const SUPABASE_URL = 'https://ozggtruvnwozhwjbznsm.supabase.co';
 const EDGE_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/berater-scan`;
@@ -646,6 +647,8 @@ export interface MatchEvaluation {
   match_id: string | null;
   match_name: string | null;
   match_date: string | null;
+  /** Art des Spiels (aus scouting_matches, z.B. "Punktspiel") */
+  match_type?: string | null;
   age_group: string | null;
   first_name: string | null;
   last_name: string | null;
@@ -661,6 +664,18 @@ export interface MatchEvaluation {
   speed_athleticism: any | null;
 }
 
+/** Spielart (Punktspiel/Freundschaftsspiel ...) aus scouting_matches anhängen */
+async function attachMatchTypes(evals: MatchEvaluation[]): Promise<MatchEvaluation[]> {
+  const ids = [...new Set(evals.map((e) => e.match_id).filter(Boolean))] as string[];
+  if (ids.length === 0) return evals;
+  const { data } = await supabase
+    .from('scouting_matches')
+    .select('id, match_type')
+    .in('id', ids);
+  const types = new Map((data || []).map((m: any) => [m.id, m.match_type]));
+  return evals.map((e) => ({ ...e, match_type: e.match_id ? types.get(e.match_id) ?? null : null }));
+}
+
 export async function loadMatchEvaluationsForPlayer(
   playerName: string,
   tmProfileUrl?: string | null,
@@ -674,7 +689,7 @@ export async function loadMatchEvaluationsForPlayer(
       .select('id, match_id, match_name, match_date, age_group, first_name, last_name, jersey_number, current_club, positions, transfermarkt_url, agent_name, birth_date, overall_rating, notes, body_structure, speed_athleticism')
       .eq('berater_player_id', beraterPlayerId)
       .order('match_date', { ascending: false });
-    if (data && data.length > 0) return data;
+    if (data && data.length > 0) return attachMatchTypes(data);
   }
 
   // Spielername aufteilen für Suche
@@ -694,7 +709,7 @@ export async function loadMatchEvaluationsForPlayer(
       .select('id, match_id, match_name, match_date, age_group, first_name, last_name, jersey_number, current_club, positions, transfermarkt_url, agent_name, birth_date, overall_rating, notes, body_structure, speed_athleticism')
       .eq('transfermarkt_url', tmProfileUrl)
       .order('match_date', { ascending: false });
-    if (data && data.length > 0) return data;
+    if (data && data.length > 0) return attachMatchTypes(data);
   }
 
   // 2. Per Name suchen
@@ -712,7 +727,7 @@ export async function loadMatchEvaluationsForPlayer(
     if (data) results = data;
   }
 
-  return results;
+  return attachMatchTypes(results);
 }
 
 // ============================================================================
@@ -1005,9 +1020,10 @@ export async function addStatPlayerToWatchlist(stat: PlayerStat, notes?: string)
       const { data: newPlayer, error: insertError } = await supabase
         .from('berater_players')
         .insert({
-          tm_player_id: stat.tm_player_id,
+          tm_player_id: stat.tm_player_id || null,
           player_name: stat.player_name,
-          tm_profile_url: stat.tm_profile_url || '',
+          // null statt '': leere Strings machen den Spieler fürs Duplikat-Merging unsichtbar
+          tm_profile_url: stat.tm_profile_url || null,
           birth_date: stat.birth_date,
           position: stat.position,
           is_active: true,
@@ -1405,26 +1421,7 @@ export async function mergeObservedDuplicates(): Promise<number> {
       if (!keeperId || losers.length === 0) continue;
 
       for (const s of losers) {
-        await supabase
-          .from('player_evaluations')
-          .update({ berater_player_id: keeperId })
-          .eq('berater_player_id', s.id);
-
-        for (const table of ['berater_watchlist', 'berater_player_evaluations']) {
-          const { data: existing } = await supabase
-            .from(table)
-            .select('id')
-            .eq('player_id', keeperId)
-            .maybeSingle();
-          if (existing) {
-            await supabase.from(table).delete().eq('player_id', s.id);
-          } else {
-            await supabase.from(table).update({ player_id: keeperId }).eq('player_id', s.id);
-          }
-        }
-
-        const { error: delError } = await supabase.from('berater_players').delete().eq('id', s.id);
-        if (!delError) merged++;
+        if (await mergeScoutedInto(s.id, keeperId)) merged++;
       }
 
       // 3) Unverknüpfte Berichte gleichen Namens andocken (jetzt eindeutig)
@@ -1445,6 +1442,139 @@ export async function mergeObservedDuplicates(): Promise<number> {
   } catch {
     // z.B. Spalte normalized_name existiert noch nicht (Migration offen) — still bleiben
     return 0;
+  }
+}
+
+/** Gescouteten Datensatz in einen (TM-)Datensatz überführen: Berichte,
+ *  Watchlist-Eintrag und Bewertung wandern mit, der gescoutete Datensatz
+ *  wird gelöscht. Auch für die manuelle Zuordnung aus der UI. */
+export async function mergeScoutedInto(scoutedId: string, keeperId: string): Promise<boolean> {
+  try {
+    await supabase
+      .from('player_evaluations')
+      .update({ berater_player_id: keeperId })
+      .eq('berater_player_id', scoutedId);
+
+    for (const table of ['berater_watchlist', 'berater_player_evaluations']) {
+      const { data: existing } = await supabase
+        .from(table)
+        .select('id')
+        .eq('player_id', keeperId)
+        .maybeSingle();
+      if (existing) {
+        await supabase.from(table).delete().eq('player_id', scoutedId);
+      } else {
+        await supabase.from(table).update({ player_id: keeperId }).eq('player_id', scoutedId);
+      }
+    }
+
+    const { error } = await supabase.from('berater_players').delete().eq('id', scoutedId);
+    return !error;
+  } catch {
+    return false;
+  }
+}
+
+export interface MergeCandidate {
+  id: string;
+  player_name: string;
+  birth_date: string | null;
+  club_name: string | null;
+  is_vereinslos: boolean;
+  tm_profile_url: string | null;
+}
+
+export interface AmbiguousMerge {
+  scouted: { id: string; player_name: string; birth_date: string | null; team: string | null };
+  candidates: MergeCandidate[];
+}
+
+/** Unklare TM-Zuordnungen sammeln: Bericht-Spieler ohne TM-Verknüpfung, für die
+ *  es MEHRERE passende TM-Datensätze gibt (oder nur widersprüchliche) — die
+ *  soll der Nutzer von Hand zuordnen, der Auto-Merge fasst sie bewusst nicht an. */
+export async function findAmbiguousMergeCandidates(): Promise<AmbiguousMerge[]> {
+  try {
+    const { data: scouted } = await supabase
+      .from('berater_players')
+      .select('id, player_name, normalized_name, birth_date')
+      .is('club_id', null)
+      .is('tm_profile_url', null)
+      .eq('is_active', true)
+      .limit(500);
+    const out: AmbiguousMerge[] = [];
+    const SELECT = 'id, player_name, normalized_name, birth_date, is_vereinslos, tm_profile_url, berater_clubs (club_name)';
+    for (const s of (scouted || []) as any[]) {
+      if (isPlaceholderName(s.player_name)) continue;
+      const norm = s.normalized_name || normalizePlayerName(s.player_name);
+      if (!norm) continue;
+
+      const found = new Map<string, any>();
+      const { data: exact } = await supabase
+        .from('berater_players')
+        .select(SELECT)
+        .eq('normalized_name', norm)
+        .or('tm_profile_url.not.is.null,club_id.not.is.null')
+        .limit(5);
+      for (const f of exact || []) found.set((f as any).id, f);
+      const toks = norm.split(' ').filter((t: string) => t.length >= 3).slice(0, 4);
+      for (const tok of toks) {
+        const { data: fuzzy } = await supabase
+          .from('berater_players')
+          .select(SELECT)
+          .ilike('normalized_name', `%${tok}%`)
+          .or('tm_profile_url.not.is.null,club_id.not.is.null')
+          .limit(10);
+        for (const f of fuzzy || []) found.set((f as any).id, f);
+      }
+
+      const compat = [...found.values()].filter((t: any) => {
+        const tn = t.normalized_name || normalizePlayerName(t.player_name);
+        return tn === norm || namesCompatible(norm, tn);
+      });
+      if (compat.length === 0) continue;
+      // Eindeutig + konfliktfrei macht der Auto-Merge selbst — hier nur die unklaren Fälle
+      const conflictFree = compat.filter(
+        (t: any) => !(s.birth_date && t.birth_date && s.birth_date !== t.birth_date)
+      );
+      if (compat.length === 1 && conflictFree.length === 1) continue;
+
+      out.push({
+        scouted: { id: s.id, player_name: s.player_name, birth_date: s.birth_date, team: null },
+        candidates: compat.map((t: any) => ({
+          id: t.id,
+          player_name: t.player_name,
+          birth_date: t.birth_date,
+          club_name: t.berater_clubs?.club_name || null,
+          is_vereinslos: !!t.is_vereinslos,
+          tm_profile_url: t.tm_profile_url || null,
+        })),
+      });
+    }
+    // Mannschaft aus dem Bericht (fürs Anzeigen im Merge-Dialog)
+    if (out.length > 0) {
+      const ids = out.map((o) => o.scouted.id);
+      const { data: evals } = await supabase
+        .from('player_evaluations')
+        .select('berater_player_id, current_club, age_group, match_date')
+        .in('berater_player_id', ids)
+        .not('current_club', 'is', null);
+      const best = new Map<string, { club: string; ag: string | null; rank: number; ts: number }>();
+      for (const e of (evals || []) as any[]) {
+        const rank = agRank(e.age_group || null);
+        const ts = reportDateTs(e.match_date);
+        const prev = best.get(e.berater_player_id);
+        if (!prev || rank > prev.rank || (rank === prev.rank && ts > prev.ts)) {
+          best.set(e.berater_player_id, { club: e.current_club, ag: e.age_group || null, rank, ts });
+        }
+      }
+      for (const o of out) {
+        const b = best.get(o.scouted.id);
+        if (b) o.scouted.team = teamLabel(b.club, b.ag);
+      }
+    }
+    return out;
+  } catch {
+    return [];
   }
 }
 
@@ -1505,23 +1635,34 @@ export async function loadObservedPlayers(): Promise<ObservedPlayer[]> {
   try {
     const { data: evals, error } = await supabase
       .from('player_evaluations')
-      .select('berater_player_id, match_date, match_name, overall_rating')
+      .select('berater_player_id, match_date, match_name, overall_rating, current_club, age_group')
       .not('berater_player_id', 'is', null);
     if (error) throw error;
 
-    // Je Spieler: Anzahl + jüngster Bericht
-    type Agg = { count: number; lastTs: number; lastDate: string | null; lastName: string | null; lastRating: number | null };
+    // Je Spieler: Anzahl + jüngster Bericht; zusätzlich die Berichts-Mannschaft
+    // (höchste Altersklasse gewinnt, dann neuester Bericht — gleiche Regel wie
+    // in der Suchmaschine) für Spieler ohne TM-Verein
+    type Agg = {
+      count: number; lastTs: number; lastDate: string | null; lastName: string | null; lastRating: number | null;
+      clubBest: { club: string; ag: string | null; rank: number; ts: number } | null;
+    };
     const byPlayer = new Map<string, Agg>();
     for (const e of (evals || []) as any[]) {
       const id = e.berater_player_id as string;
       const ts = reportDateTs(e.match_date);
-      const agg = byPlayer.get(id) || { count: 0, lastTs: -1, lastDate: null, lastName: null, lastRating: null };
+      const agg = byPlayer.get(id) || { count: 0, lastTs: -1, lastDate: null, lastName: null, lastRating: null, clubBest: null };
       agg.count++;
       if (ts >= agg.lastTs) {
         agg.lastTs = ts;
         agg.lastDate = e.match_date || null;
         agg.lastName = e.match_name || null;
         agg.lastRating = e.overall_rating ?? null;
+      }
+      if (e.current_club) {
+        const rank = agRank(e.age_group || null);
+        if (!agg.clubBest || rank > agg.clubBest.rank || (rank === agg.clubBest.rank && ts > agg.clubBest.ts)) {
+          agg.clubBest = { club: e.current_club, ag: e.age_group || null, rank, ts };
+        }
       }
       byPlayer.set(id, agg);
     }
@@ -1541,10 +1682,15 @@ export async function loadObservedPlayers(): Promise<ObservedPlayer[]> {
 
     const result: ObservedPlayer[] = players.map((p: any) => {
       const agg = byPlayer.get(p.id)!;
+      // Kein TM-Verein? Dann die Mannschaft aus dem Bericht anzeigen
+      const clubFallback =
+        !p.berater_clubs?.club_name && !p.is_vereinslos && agg.clubBest
+          ? teamLabel(agg.clubBest.club, agg.clubBest.ag)
+          : null;
       return {
         player: {
           ...p,
-          club_name: p.berater_clubs?.club_name,
+          club_name: p.berater_clubs?.club_name || clubFallback,
           league_id: p.berater_clubs?.league_id,
           league_name: p.berater_clubs?.berater_leagues?.name,
         },

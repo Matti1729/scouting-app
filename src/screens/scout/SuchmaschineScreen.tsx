@@ -27,8 +27,10 @@ import {
   addStipendiumEntry,
   searchStipendiumPlayers,
   loadAllClubs,
+  loadReportTeams,
   normalizeSearch,
   agentDisplayName,
+  baseClubName,
 } from '../../services/stipendiumService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
 import { RatingBar } from '../../components/evaluation/RatingBar';
@@ -456,6 +458,11 @@ const ldStyles = StyleSheet.create({
     paddingVertical: 9,
     borderBottomWidth: 1,
   },
+  clubLogo: {
+    width: 18,
+    height: 18,
+    marginRight: 6,
+  },
   moreHint: {
     fontSize: 11,
     fontFamily: MONO,
@@ -489,12 +496,17 @@ interface ClubGroup {
   children: ClubOption[];    // die einzelnen Mannschaften (voller Name)
 }
 
-/** "Borussia Dortmund U19" -> "Borussia Dortmund" (Mannschafts-Suffix abtrennen) */
-function baseClubName(name: string): string {
-  return name.replace(/\s+(U-?\d{1,2}|II|III|IV|B|2|Amateure|Jugend)$/i, '').trim() || name;
+/** Sortierung der Mannschaften im Verein: 1. Mannschaft, II, III, dann U-Teams absteigend (U23, U19, U17 ...) */
+function teamRank(name: string, base: string): number {
+  const suffix = name.slice(base.length).trim().toLowerCase();
+  if (!suffix) return 0; // 1. Mannschaft
+  if (suffix === 'ii' || suffix === '2') return 1;
+  if (suffix === 'iii') return 2;
+  if (suffix === 'iv') return 3;
+  const m = suffix.match(/^u-?(\d{1,2})$/);
+  if (m) return 100 - parseInt(m[1], 10); // U23 vor U19 vor U17 ...
+  return 10; // Sonstiges (Amateure, B, Jugend) zwischen Reserven und U-Teams
 }
-
-const CLUB_LIST_CAP = 60; // Dropdown flüssig halten — Rest über die Suche erreichbar
 
 function ClubDropdown({
   clubs,
@@ -529,29 +541,29 @@ function ClubDropdown({
       else byBase.set(base, [c]);
     }
     return Array.from(byBase.entries())
-      .map(([base, teams]) => ({
-        key: base,
-        label: base,
-        ids: teams.map((t) => t.id),
-        children: teams,
-      }))
+      .map(([base, teams]) => {
+        const sorted = [...teams].sort(
+          (a, b) => teamRank(a.name, base) - teamRank(b.name, base) || a.name.localeCompare(b.name, 'de')
+        );
+        return {
+          key: base,
+          label: base,
+          ids: sorted.map((t) => t.id),
+          children: sorted,
+        };
+      })
       .sort((a, b) => a.label.localeCompare(b.label, 'de'));
   }, [clubs]);
 
-  // Suche: Verein ODER einzelne Mannschaft matcht; Trefferliste gecappt
-  const { visible, hiddenCount } = useMemo(() => {
+  // Suche: Verein ODER einzelne Mannschaft matcht; alle Treffer scrollbar
+  const visible = useMemo(() => {
     const needle = normalizeSearch(search.trim());
-    const matching = !needle
-      ? groups
-      : groups.filter(
-          (g) =>
-            normalizeSearch(g.label).includes(needle) ||
-            g.children.some((c) => normalizeSearch(c.name).includes(needle))
-        );
-    return {
-      visible: matching.slice(0, CLUB_LIST_CAP),
-      hiddenCount: Math.max(0, matching.length - CLUB_LIST_CAP),
-    };
+    if (!needle) return groups;
+    return groups.filter(
+      (g) =>
+        normalizeSearch(g.label).includes(needle) ||
+        g.children.some((c) => normalizeSearch(c.name).includes(needle))
+    );
   }, [groups, search]);
 
   const isChecked = (ids: string[]) => ids.length > 0 && ids.every((id) => selected.has(id));
@@ -650,11 +662,20 @@ function ClubDropdown({
                   {visible.map((g) => {
                     const single = g.children.length === 1;
                     const isExpanded = expanded.has(g.key) || !!search.trim();
+                    // Wappen nur in der Vereinszeile (nicht bei den Mannschaften)
+                    const logoId = g.children.find((c) => c.tm_club_id)?.tm_club_id;
                     return (
                       <View key={g.key}>
                         <View style={[ldStyles.row, { paddingLeft: 12 }]}>
                           <TouchableOpacity style={ldStyles.rowMain} onPress={() => toggleIds(g.ids)}>
                             {renderCheckbox(isChecked(g.ids), isPartial(g.ids))}
+                            {logoId ? (
+                              <Image
+                                source={{ uri: `https://tmssl.akamaized.net/images/wappen/head/${logoId}.png` }}
+                                style={ldStyles.clubLogo}
+                                resizeMode="contain"
+                              />
+                            ) : null}
                             <Text style={[ldStyles.rowLabel, { color: RETRO.text }]} numberOfLines={1}>
                               {single ? g.children[0].name : g.label}
                             </Text>
@@ -680,11 +701,6 @@ function ClubDropdown({
                       </View>
                     );
                   })}
-                  {hiddenCount > 0 && (
-                    <Text style={[ldStyles.moreHint, { color: RETRO.textMuted }]}>
-                      … {hiddenCount} weitere Vereine — Namen eingeben, um sie zu finden
-                    </Text>
-                  )}
                   {visible.length === 0 && (
                     <Text style={[ldStyles.moreHint, { color: RETRO.textMuted }]}>Kein Verein gefunden</Text>
                   )}
@@ -740,7 +756,7 @@ function NationDropdown({
 
   const displayText =
     selected.size === 0
-      ? 'Egal'
+      ? 'Alle'
       : selected.size <= 2
         ? [...selected].map((c) => COUNTRY_NAMES[c] || c).join(', ')
         : `${selected.size} Länder ausgewählt`;
@@ -1016,16 +1032,36 @@ export function SuchmaschineScreen() {
   const [selectedPotentials, setSelectedPotentials] = useState<Set<number>>(new Set());
   const [selectedLeagueIds, setSelectedLeagueIds] = useState<Set<string>>(new Set());
   const [nations, setNations] = useState<Set<string>>(new Set());
-  // Vereins-Filter: konkrete Mannschaften (berater_clubs.id)
+  // Vereins-Filter: konkrete Mannschaften (berater_clubs.id) oder
+  // Berichts-Mannschaften (synthetische "report:"-Einträge, z.B. Dortmund U15)
   const [selectedClubIds, setSelectedClubIds] = useState<Set<string>>(new Set());
   const [clubOptions, setClubOptions] = useState<ClubOption[]>([]);
+  const [reportTeamLabels, setReportTeamLabels] = useState<string[]>([]);
+  // Berichts-Mannschaften als Dropdown-Einträge ergänzen (Land vom TM-Schwesterteam erben)
+  const clubOptionsMerged = useMemo<ClubOption[]>(() => {
+    if (reportTeamLabels.length === 0) return clubOptions;
+    const merged = [...clubOptions];
+    for (const label of reportTeamLabels) {
+      if (clubOptions.some((c) => c.name === label)) continue; // gibt es schon als TM-Team
+      const base = baseClubName(label);
+      const sibling = clubOptions.find((c) => baseClubName(c.name) === base);
+      merged.push({
+        id: `report:${label}`,
+        name: label,
+        league_id: null,
+        country: sibling?.country ?? null,
+        tm_club_id: null,
+      });
+    }
+    return merged;
+  }, [clubOptions, reportTeamLabels]);
   // Kaskade: Land-/Liga-Auswahl schränkt die Vereinsliste im Dropdown ein
   const clubsForDropdown = useMemo(() => {
-    let list = clubOptions;
+    let list = clubOptionsMerged;
     if (nations.size > 0) list = list.filter((c) => c.country && nations.has(c.country));
     if (selectedLeagueIds.size > 0) list = list.filter((c) => c.league_id && selectedLeagueIds.has(c.league_id));
     return list;
-  }, [clubOptions, nations, selectedLeagueIds]);
+  }, [clubOptionsMerged, nations, selectedLeagueIds]);
   const [vereinslos, setVereinslos] = useState(false);
   const [contractExpiring, setContractExpiring] = useState(false);
   // Marktwert-Korridor (null = offen)
@@ -1054,6 +1090,11 @@ export function SuchmaschineScreen() {
   const [leagueOptions, setLeagueOptions] = useState<LeagueOption[]>([]);
   // Nationen (Länder der aktiven Ligen)
   const [nationOptions, setNationOptions] = useState<string[]>([]);
+  // Kaskade: Land-Auswahl schränkt auch die Ligen ein (Options-Key beginnt mit dem Länderkürzel)
+  const leaguesForDropdown = useMemo(() => {
+    if (nations.size === 0) return leagueOptions;
+    return leagueOptions.filter((o) => nations.has(o.key.split('|')[0]));
+  }, [leagueOptions, nations]);
 
   // Spieler-Detail-Modal
   const [detailPlayer, setDetailPlayer] = useState<StipendiumSearchPlayer | null>(null);
@@ -1077,6 +1118,7 @@ export function SuchmaschineScreen() {
     loadData();
     loadLeagueOptions();
     loadAllClubs().then(setClubOptions).catch(() => {});
+    loadReportTeams().then(setReportTeamLabels).catch(() => {});
     loadAlertSubscriptionIds().then(setAlertIds).catch(() => {});
     Promise.all([loadWatchlist(), loadAllEvaluations()]).then(([wl, evals]) => {
       setWatchlistIds(new Set(wl.map((w) => w.player_id).filter(Boolean) as string[]));
@@ -1194,16 +1236,24 @@ export function SuchmaschineScreen() {
       positions: Array.from(selectedPositions),
       leagueIds,
       nations: nations.size > 0 ? Array.from(nations) : undefined,
-      clubIds: selectedClubIds.size > 0 ? Array.from(selectedClubIds) : undefined,
-      // Basisnamen der gewählten Vereine: findet auch Bericht-Spieler (U15/U16)
-      clubBaseNames:
-        selectedClubIds.size > 0
-          ? Array.from(
-              new Set(
-                clubOptions.filter((c) => selectedClubIds.has(c.id)).map((c) => baseClubName(c.name))
-              )
-            )
-          : undefined,
+      // Echte TM-Mannschaften vs. Berichts-Mannschaften (synthetische Einträge)
+      clubIds: (() => {
+        const real = Array.from(selectedClubIds).filter((id) => !id.startsWith('report:'));
+        return real.length > 0 ? real : undefined;
+      })(),
+      reportTeams: (() => {
+        const labels = Array.from(selectedClubIds)
+          .filter((id) => id.startsWith('report:'))
+          .map((id) => id.slice(7));
+        return labels.length > 0 ? labels : undefined;
+      })(),
+      // Basisnamen der gewählten TM-Vereine: findet auch Bericht-Spieler (U15/U16)
+      clubBaseNames: (() => {
+        const real = clubOptions.filter((c) => selectedClubIds.has(c.id));
+        return real.length > 0
+          ? Array.from(new Set(real.map((c) => baseClubName(c.name))))
+          : undefined;
+      })(),
       vereinslos,
       contractExpiring,
       wechselTage: wechselTage || undefined,
@@ -1284,7 +1334,7 @@ export function SuchmaschineScreen() {
     if (selectedLeagueIds.size > 0) parts.push(`${selectedLeagueIds.size} Ligen`);
     if (nations.size > 0) parts.push([...nations].map((n) => COUNTRY_NAMES[n] || n).join(', '));
     if (selectedClubIds.size > 0) {
-      const names = clubOptions.filter((c) => selectedClubIds.has(c.id)).map((c) => c.name);
+      const names = clubOptionsMerged.filter((c) => selectedClubIds.has(c.id)).map((c) => c.name);
       parts.push(names.length <= 2 ? names.join(', ') : `${names.length} Mannschaften`);
     }
     if (vereinslos) parts.push('vereinslos');
@@ -1299,7 +1349,7 @@ export function SuchmaschineScreen() {
     if (nurGlocke) parts.push('Glocke aktiv');
     if (wechselTage > 0) parts.push(`Neuer Berater seit ${wechselTage} ${wechselTage === 1 ? 'Tag' : 'Tagen'}`);
     return parts.length > 0 ? parts.join(' · ') : 'Keine Filter gesetzt';
-  }, [searchName, selectedAges, agePlus, selectedPositions, selectedPotentials, selectedLeagueIds, nations, selectedClubIds, clubOptions, vereinslos, contractExpiring, mvMin, mvMax, ohneBerater, aufWatchlist, nurGlocke, wechselTage]);
+  }, [searchName, selectedAges, agePlus, selectedPositions, selectedPotentials, selectedLeagueIds, nations, selectedClubIds, clubOptionsMerged, vereinslos, contractExpiring, mvMin, mvMax, ohneBerater, aufWatchlist, nurGlocke, wechselTage]);
 
   const togglePotential = (val: number) => {
     setSelectedPotentials((prev) => {
@@ -1537,14 +1587,14 @@ export function SuchmaschineScreen() {
               case 'berater':
                 return (
                   <Text style={[styles.tableCell, { color: RETRO.text }]} numberOfLines={1}>
-                    {agentDisplay(item) || 'kein Eintrag'}
+                    {agentDisplay(item) || 'kein Beratereintrag'}
                   </Text>
                 );
               case 'wvorher':
                 // alter Zustand ausgegraut — der Blick fällt auf "Berater neu"
                 return item.last_change ? (
                   <Text style={[styles.tableCell, { color: RETRO.textMuted }]} numberOfLines={1}>
-                    {item.last_change.from || 'kein Berater'}
+                    {item.last_change.from || 'kein Beratereintrag'}
                   </Text>
                 ) : null;
               case 'wneu':
@@ -1557,7 +1607,7 @@ export function SuchmaschineScreen() {
                     ]}
                     numberOfLines={1}
                   >
-                    {item.last_change.to || 'kein Berater'}
+                    {item.last_change.to || 'kein Beratereintrag'}
                   </Text>
                 ) : null;
               case 'wdatum':
@@ -1677,7 +1727,7 @@ export function SuchmaschineScreen() {
             <Text style={nc.rowLabel}>{vereinslos ? 'LETZTE LIGA' : 'LIGA'}</Text>
             <View style={nc.dropdownWrap}>
               <LeagueDropdown
-                options={leagueOptions}
+                options={leaguesForDropdown}
                 selected={selectedLeagueIds}
                 onChange={setSelectedLeagueIds}
               />
