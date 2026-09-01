@@ -53,7 +53,28 @@ serve(async (req) => {
   }
 
   try {
-    const { playerName, clubHint, searchViaClub, fetchAgentInfo, profileUrl, searchWithFullInfo } = await req.json()
+    const { playerName, clubHint, searchViaClub, fetchAgentInfo, profileUrl, searchWithFullInfo, clubSearch } = await req.json()
+
+    // Modus: Verein per TM-Schnellsuche finden (fürs Wappen unbekannter Vereine)
+    if (clubSearch) {
+      const url = `https://www.transfermarkt.de/schnellsuche/ergebnis/schnellsuche?query=${encodeURIComponent(clubSearch)}`
+      const res = await fetchWithRetry(url)
+      const html = await res.text()
+      // Erster Vereins-Treffer: <a title="TSGV Waldstetten" href="/tsgv-waldstetten/startseite/verein/25538">
+      const m = html.match(/title="([^"]*)"\s+href="\/[^"]*\/startseite\/verein\/(\d+)"/)
+        || html.match(/href="\/[^"]*\/startseite\/verein\/(\d+)"[^>]*title="([^"]*)"/)
+      let clubId: string | null = null
+      let clubName: string | null = null
+      if (m) {
+        // Reihenfolge der Gruppen hängt vom Match-Muster ab
+        clubId = /^\d+$/.test(m[1]) ? m[1] : m[2]
+        clubName = /^\d+$/.test(m[1]) ? m[2] : m[1]
+      }
+      return new Response(
+        JSON.stringify({ success: true, club: clubId ? { tm_club_id: clubId, club_name: clubName } : null }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+      )
+    }
 
     // Modus: Berater-Info von Profil-URL abrufen (Legacy - wird noch für Einzelabfragen genutzt)
     if (fetchAgentInfo && profileUrl) {

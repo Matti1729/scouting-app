@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, Image, Linking, StyleSheet, Platform, ActivityIndicator, TextInput, Modal } from 'react-native';
+import { View, Text, TouchableOpacity, Image, Linking, StyleSheet, Platform, ActivityIndicator, TextInput, Modal, ScrollView } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
 import { MONO, HARD_SHADOW, HARD_SHADOW_LG, RETRO_CHIP, RETRO_CHIP_TEXT, RETRO } from '../../theme/retro';
 import { Position } from '../../types';
@@ -484,7 +484,8 @@ export function EvalHeader({
         {reportList.length === 0 ? (
           <Text style={styles.reportEmpty}>Noch keine Berichte</Text>
         ) : (
-          reportList.map((ev, idx) => {
+          <ScrollView style={styles.reportScroll} nestedScrollEnabled>
+          {reportList.map((ev, idx) => {
             const isCurrent = !!currentReportId && ev.id === currentReportId;
             return (
               <TouchableOpacity
@@ -496,7 +497,12 @@ export function EvalHeader({
               >
                 <Text style={styles.reportDate} numberOfLines={1}>{ev.match_date || '—'}</Text>
                 <Text style={styles.reportMatch} numberOfLines={1}>
-                  {[ev.match_name, ev.age_group, ev.match_type].filter(Boolean).join(' · ') || 'Spiel unbekannt'}
+                  {ev.match_name || 'Spiel unbekannt'}
+                  {[ev.age_group, ev.match_type].filter(Boolean).length > 0 && (
+                    <Text style={styles.reportMeta}>
+                      {' · ' + [ev.age_group, ev.match_type].filter(Boolean).join(' · ')}
+                    </Text>
+                  )}
                 </Text>
                 {ev.overall_rating ? (
                   <View style={[styles.reportRatingBadge, { backgroundColor: potentialColor(ev.overall_rating) }]}>
@@ -508,7 +514,8 @@ export function EvalHeader({
                 ) : null}
               </TouchableOpacity>
             );
-          })
+          })}
+          </ScrollView>
         )}
       </View>
     </View>
@@ -570,6 +577,10 @@ const styles = StyleSheet.create({
     flexBasis: 0,
     minWidth: 320,
   },
+  reportScroll: {
+    // 3 Zeilen (à ~33px) sichtbar, ab dem 4. Bericht wird in der Karte gescrollt
+    maxHeight: 100,
+  },
   reportRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -590,6 +601,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: RETRO.text,
+  },
+  reportMeta: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#4a4a55',
   },
   reportRatingBadge: {
     minWidth: 24,

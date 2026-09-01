@@ -3,6 +3,8 @@ export type RootStackParamList = {
   Dashboard: undefined;
   MatchList: { openMatchId?: string } | undefined;
   PlayerEvaluation: {
+    /** Bestehenden Bericht direkt laden (nötig bei Berichten ohne Spiel) */
+    evaluationId?: string;
     matchId?: string;
     matchName?: string;
     matchDate?: string;

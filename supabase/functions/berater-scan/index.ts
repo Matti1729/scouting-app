@@ -1485,6 +1485,25 @@ serve(async (req) => {
         )
       }
 
+      case 'cleanup_u16_changes': {
+        // Einmal-Aktion: alte Wechsel-Einträge mit dem U16-Platzhalter löschen.
+        // Kein echter Beraterwechsel (Berater war nur versteckt, siehe agentsAreDifferent)
+        const { data: staleChanges } = await supabase
+          .from('berater_changes')
+          .select('id')
+          .or('previous_agent_name.ilike.%unter 16%,new_agent_name.ilike.%unter 16%')
+          .limit(500)
+        const ids = ((staleChanges || []) as any[]).map((c) => c.id)
+        if (ids.length > 0) {
+          const { error: delErr } = await supabase.from('berater_changes').delete().in('id', ids)
+          if (delErr) throw new Error(`cleanup_u16_changes delete failed: ${delErr.message}`)
+        }
+        return new Response(
+          JSON.stringify({ success: true, deleted: ids.length }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+        )
+      }
+
       case 'get_status': {
         const result = await getStatus(supabase)
         return new Response(

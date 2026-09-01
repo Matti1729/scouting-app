@@ -325,7 +325,7 @@ export async function loadWatchlist(): Promise<WatchlistEntry[]> {
     return [];
   }
 
-  return (data || []).map((w: any) => ({
+  const entries: WatchlistEntry[] = (data || []).map((w: any) => ({
     ...w,
     player: w.berater_players ? {
       ...w.berater_players,
@@ -334,6 +334,47 @@ export async function loadWatchlist(): Promise<WatchlistEntry[]> {
       league_name: w.berater_players.berater_clubs?.berater_leagues?.name,
     } : undefined,
   }));
+
+  // Gescoutete Spieler ohne TM-Profil: Verein/Geburtsdatum aus den Berichten
+  // übernehmen (höchste Altersklasse gewinnt, dann neuester Bericht) — bis der
+  // Spieler irgendwann ein TM-Profil bekommt und sich verbindet
+  const needIds = entries
+    .filter((e) => e.player && ((!e.player.club_name && !e.player.is_vereinslos) || !e.player.birth_date))
+    .map((e) => e.player_id);
+  if (needIds.length > 0) {
+    const { data: evals } = await supabase
+      .from('player_evaluations')
+      .select('berater_player_id, current_club, age_group, match_date, birth_date')
+      .in('berater_player_id', needIds);
+    type Best = { club: { name: string; ag: string | null; rank: number; ts: number } | null; birth: string | null };
+    const byPlayer = new Map<string, Best>();
+    for (const e of (evals || []) as any[]) {
+      const id = e.berater_player_id as string;
+      const ts = reportDateTs(e.match_date);
+      const b = byPlayer.get(id) || { club: null, birth: null };
+      if (e.current_club) {
+        const rank = agRank(e.age_group || null);
+        if (!b.club || rank > b.club.rank || (rank === b.club.rank && ts > b.club.ts)) {
+          b.club = { name: e.current_club, ag: e.age_group || null, rank, ts };
+        }
+      }
+      if (e.birth_date && !b.birth) b.birth = e.birth_date;
+      byPlayer.set(id, b);
+    }
+    for (const e of entries) {
+      if (!e.player) continue;
+      const b = byPlayer.get(e.player_id);
+      if (!b) continue;
+      if (!e.player.club_name && !e.player.is_vereinslos && b.club) {
+        e.player.club_name = teamLabel(b.club.name, b.club.ag);
+      }
+      if (!e.player.birth_date && b.birth) {
+        e.player.birth_date = b.birth;
+      }
+    }
+  }
+
+  return entries;
 }
 
 /**

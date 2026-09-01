@@ -1949,10 +1949,16 @@ export function SuchmaschineScreen() {
                 return next;
               });
             }}
+            onCreateReport={(navParams) => {
+              returnToPlayerRef.current = p;
+              setDetailPlayer(null);
+              (navigation as any).navigate('PlayerEvaluation', navParams);
+            }}
             onOpenEvaluation={(ev) => {
               returnToPlayerRef.current = p;
               setDetailPlayer(null);
               (navigation as any).navigate('PlayerEvaluation', {
+                evaluationId: ev.id,
                 matchId: ev.match_id,
                 matchName: ev.match_name,
                 matchDate: ev.match_date,

@@ -99,10 +99,15 @@ const styles = StyleSheet.create({
     flexShrink: 1,
   },
   box: {
+    // Standard-Maß für ALLE Boxen/Buttons im gelben Titelbalken:
+    // paddingVertical 5, paddingHorizontal 10, minHeight 25, fontSize 12 MONO 700
     backgroundColor: RETRO.white,
     borderRadius: 2,
     paddingHorizontal: 10,
     paddingVertical: 5,
+    minHeight: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   boxText: {
     fontSize: 12,

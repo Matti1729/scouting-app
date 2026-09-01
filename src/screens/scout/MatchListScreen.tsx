@@ -46,12 +46,14 @@ import {
   shortVenueName,
   resolveGameVenue,
   saveGameVenue,
+  loadClubLogoMap,
+  clubLogoUriFor,
   AreaLeague,
 } from '../../services/areaGamesService';
 import { GamesMapView, GameMapFeature } from '../../components/GamesMapView';
 import { Image } from 'react-native';
 
-import { RETRO, HARD_SHADOW, HARD_SHADOW_LG, BLUE_GRADIENT, RETRO_BTN, RETRO_THEME, MONO } from '../../theme/retro';
+import { RETRO, HARD_SHADOW, HARD_SHADOW_LG, BLUE_GRADIENT, RETRO_BTN, RETRO_THEME, MONO, RETRO_CHIP, RETRO_CHIP_TEXT } from '../../theme/retro';
 import {
   pickAndExtractLineups,
   MediaSource,
@@ -100,6 +102,7 @@ import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
 import { RetroHeader } from '../../components/RetroHeader';
+import { TeamLogo } from '../../components/ClubLogo';
 import { TableRow } from '../../components/table/TableRow';
 
 // Dropdown Optionen
@@ -457,6 +460,12 @@ export function MatchListScreen({ navigation, route }: any) {
   const [filterMenu, setFilterMenu] = useState<'jahrgang' | 'art' | null>(null);
   const [dateFilter, setDateFilter] = useState(''); // ISO "YYYY-MM-DD", leer = alle
   const [hoveredMapKey, setHoveredMapKey] = useState<string | null>(null);
+  // Vereinswappen (normalisierte Vereins-Basis -> tm_club_id)
+  const [clubLogoMap, setClubLogoMap] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    loadClubLogoMap().then(setClubLogoMap).catch(() => {});
+  }, []);
+  const clubLogoUri = (teamName: string): string | null => clubLogoUriFor(clubLogoMap, teamName);
   // Detail-Modal für Umgebungs-Spiele (+ "Zu Meine Spiele hinzufügen")
   const [areaDetail, setAreaDetail] = useState<Match | null>(null);
 
@@ -2149,11 +2158,11 @@ export function MatchListScreen({ navigation, route }: any) {
     return (
       <View style={{ position: 'relative', zIndex: open ? 1000 : 1 }}>
         <TouchableOpacity
-          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 },
+          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, backgroundColor: RETRO.white },
             sel.length > 0 && { backgroundColor: RETRO.faceSelected }]}
           onPress={() => setFilterMenu(open ? null : key)}
         >
-          <Text style={{ fontSize: 13, fontWeight: sel.length ? '700' : '600', color: RETRO.text }}>{text} ▾</Text>
+          <Text style={{ fontSize: 11, fontWeight: sel.length ? '700' : '600', color: RETRO.text }}>{text} ▾</Text>
         </TouchableOpacity>
         {open && (
           <View style={[HARD_SHADOW_LG, {
@@ -2216,7 +2225,7 @@ export function MatchListScreen({ navigation, route }: any) {
     }
     return Object.values(byLoc).map(v => {
       const addrLinks = Array.from(v.addrs.entries()).slice(0, 3).map(([q, txt]) =>
-        `<div><a href="https://www.google.de/maps?q=${encodeURIComponent(q)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none">📍 ${esc(txt)}</a></div>`
+        `<div><a href="https://www.google.de/maps?q=${encodeURIComponent(q)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none">${esc(txt)}</a></div>`
       ).join('');
       return {
         type: 'Feature' as const,
@@ -2313,7 +2322,7 @@ export function MatchListScreen({ navigation, route }: any) {
                 return item.ort ? (
                   <TouchableOpacity onPress={() => openLocationInMaps(item.ort || '')}>
                     <Text style={[styles.cellText, { color: colors.accent }]} numberOfLines={1}>
-                      📍 {item.ort}
+                      {item.ort}
                     </Text>
                   </TouchableOpacity>
                 ) : (
@@ -2409,20 +2418,9 @@ export function MatchListScreen({ navigation, route }: any) {
           )}
         </View>
 
-        {/* Footer: Ort (klickbar) + Checkbox */}
+        {/* Footer: Checkbox (Ort steht im Spiel-Modal) */}
         <View style={[styles.matchCardFooter, { borderTopColor: colors.border }]}>
-          {item.ort ? (
-            <TouchableOpacity
-              style={styles.matchCardLocationBtn}
-              onPress={() => openLocationInMaps(item.ort || '')}
-            >
-              <Text style={[styles.matchCardLocation, { color: colors.accent }]} numberOfLines={1}>
-                📍 {item.ort}
-              </Text>
-            </TouchableOpacity>
-          ) : (
-            <View style={{ flex: 1 }} />
-          )}
+          <View style={{ flex: 1 }} />
           <TouchableOpacity
             style={[
               styles.matchCardCheckbox,
@@ -2572,7 +2570,7 @@ export function MatchListScreen({ navigation, route }: any) {
                   key={t.key}
                   style={[
                     HARD_SHADOW,
-                    { backgroundColor: '#ffffff', borderRadius: 2, paddingVertical: 6, paddingHorizontal: 12 },
+                    { backgroundColor: '#ffffff', borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 25, alignItems: 'center' as const, justifyContent: 'center' as const },
                     viewTab === t.key && { backgroundColor: RETRO.text },
                   ]}
                   onPress={() => setViewTab(t.key)}
@@ -2601,9 +2599,8 @@ export function MatchListScreen({ navigation, route }: any) {
         <View style={[styles.header, { backgroundColor: 'transparent', borderBottomWidth: 0 }, filterMenu ? ({ zIndex: 1000 } as any) : null]}>
           {/* Suchleiste */}
           <View style={[styles.searchContainer, HARD_SHADOW, {
-            backgroundColor: RETRO.inputBg, borderColor: RETRO.shadowDark, borderRadius: 0,
+            backgroundColor: RETRO.inputBg, borderWidth: 0, borderRadius: 0,
           }]}>
-            <Text style={[styles.searchIcon, { color: RETRO.textMuted }]}>🔍</Text>
             <TextInput
               style={[styles.searchInput, { color: RETRO.text }]}
               value={searchQuery}
@@ -2624,12 +2621,13 @@ export function MatchListScreen({ navigation, route }: any) {
                 style: {
                   background: RETRO.inputBg,
                   color: RETRO.text,
-                  border: `1px solid ${RETRO.shadowDark}`,
+                  border: 'none',
                   borderRadius: 0,
-                  padding: '7px 8px',
-                  fontSize: 13,
+                  padding: '0 8px',
+                  height: 24,
+                  fontSize: 12,
                   colorScheme: 'light',
-                  width: 140,
+                  width: 130,
                   boxShadow: '2px 2px 3px rgba(20, 20, 45, 0.45)',
                 },
               })}
@@ -2641,20 +2639,20 @@ export function MatchListScreen({ navigation, route }: any) {
           <View style={styles.tabBar}>
             {/* Neues Spiel Button */}
             <TouchableOpacity
-              style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12 }]}
+              style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, backgroundColor: RETRO.white }]}
               onPress={() => setAddMatchModalVisible(true)}
             >
-              <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }}>+ Event anlegen</Text>
+              <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>+ Event anlegen</Text>
             </TouchableOpacity>
 
             {/* Kalender-Export Button (nur wenn Spiele ausgewählt) */}
             {selectedMatches.length > 0 && (
               <TouchableOpacity
-                style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 8, paddingHorizontal: 12, backgroundColor: '#b7cdb7' }]}
+                style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, backgroundColor: '#b7cdb7' }]}
                 onPress={exportSelectedToCalendar}
               >
-                <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }}>
-                  📅 {selectedMatches.length} exportieren
+                <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>
+                  {selectedMatches.length} exportieren
                 </Text>
               </TouchableOpacity>
             )}
@@ -2749,7 +2747,7 @@ export function MatchListScreen({ navigation, route }: any) {
                         }}
                       >
                         <Text style={{ fontSize: 13, fontWeight: '600', textAlign: 'right', color: '#2563eb' }} numberOfLines={1}>
-                          📍 {shortVenueName(areaDetail.ort)}
+                          {shortVenueName(areaDetail.ort)}
                         </Text>
                       </TouchableOpacity>
                     ))
@@ -2852,60 +2850,90 @@ export function MatchListScreen({ navigation, route }: any) {
           Im Archiv nur die Liste (archivierte Events haben keine Koordinaten). */}
       {!isMobile ? (
         <View style={{ flex: 1, flexDirection: 'row', marginHorizontal: 16, marginBottom: 16, marginTop: 4, gap: 14 }}>
-          {/* Liste links */}
-          <View style={{ flex: 1, minWidth: 420 }}>
-            {/* Blauer Abschnittsbalken (Anstoss) */}
-            <View style={[HARD_SHADOW, BLUE_GRADIENT, {
-              backgroundColor: RETRO.headerBg, paddingVertical: 7, paddingHorizontal: 12,
-              flexDirection: 'row', alignItems: 'center',
-            }]}>
-              <Text style={{ color: RETRO.headerText, fontWeight: '700', fontSize: 14, flex: 1 }}>
-                {viewTab === 'archiv' ? 'Archiv' : viewTab === 'meine' ? 'Meine Spiele' : 'Spiele'}
-              </Text>
-              <Text style={{ color: RETRO.headerText, fontWeight: '700', fontSize: 14 }}>{filteredMatches.length}</Text>
-            </View>
-            <View style={{ flex: 1, marginTop: 10, backgroundColor: RETRO.panel, borderWidth: 1, borderColor: RETRO.rowBorder }}>
+          {/* Liste links: Karte mit blauem Chip auf der Oberkante (wie im Spielerprofil) */}
+          <View style={{ flex: 1, minWidth: 420, marginTop: 10 }}>
+            <View style={[HARD_SHADOW, { flex: 1, backgroundColor: RETRO.panel }]}>
+              <View style={RETRO_CHIP as any}>
+                <Text style={RETRO_CHIP_TEXT}>
+                  {`${viewTab === 'archiv' ? 'ARCHIV' : viewTab === 'meine' ? 'MEINE SPIELE' : 'SPIELE'} (${filteredMatches.length})`}
+                </Text>
+              </View>
               <FlatList
+                style={{ marginTop: 12 }}
                 data={filteredMatches}
                 keyExtractor={(item) => item.id}
                 renderItem={({ item }) => {
                   const badge = getMatchTypeBadgeStyle(item.art);
+                  const isToday = isEventActive(item.datum, item.datumEnde);
                   return (
                     <TouchableOpacity
                       onPress={() => (viewTab === 'archiv' && !item.isAreaGame ? handleMatchPress(item) : setAreaDetail(item))}
                       {...(Platform.OS === 'web'
                         ? ({ onMouseEnter: () => setHoveredMapKey(item.id), onMouseLeave: () => setHoveredMapKey(null) } as any)
                         : {})}
-                      style={[HARD_SHADOW, {
-                        backgroundColor: RETRO.white, borderWidth: 1, borderColor: RETRO.rowBorder,
-                        // Nur heute stattfindende Spiele markieren (grüner Streifen)
-                        borderLeftWidth: 3,
-                        borderLeftColor: isEventActive(item.datum, item.datumEnde) ? '#10b981' : 'transparent',
-                        paddingVertical: 8, paddingHorizontal: 12,
-                        marginHorizontal: 10, marginTop: 10,
-                      }]}
+                      style={{
+                        flexDirection: 'row', alignItems: 'stretch',
+                        backgroundColor: RETRO.white,
+                        borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder,
+                      }}
                     >
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                        <Text style={{ color: RETRO.textMuted, fontSize: 11, flexShrink: 1 }} numberOfLines={1}>
-                          {formatDateGerman(item.datum, item.datumEnde)}{item.zeit ? ` · ${item.zeit} Uhr` : ''} · {item.mannschaft}
+                      {/* Datum/Anstoßzeit-Block links (heute: grün statt gelb) */}
+                      <View style={{
+                        width: 86, backgroundColor: isToday ? '#22c55e' : RETRO.yellow,
+                        alignItems: 'center', justifyContent: 'center',
+                        paddingVertical: 8, paddingHorizontal: 4,
+                        borderRightWidth: 1, borderRightColor: RETRO.rowBorder,
+                      }}>
+                        <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text, opacity: 0.75 }} numberOfLines={1}>
+                          {isToday ? 'Heute' : formatDateGerman(item.datum, item.datumEnde)}
                         </Text>
-                        <View style={{ backgroundColor: badge.backgroundColor, paddingHorizontal: 5, paddingVertical: 1 }}>
-                          <Text style={{ color: badge.color, fontSize: 10, fontWeight: '700' }}>{item.art}</Text>
+                        <Text style={{ fontSize: 14, fontWeight: '800', color: RETRO.text, marginTop: 1 }} numberOfLines={1}>
+                          {item.zeit || '–'}
+                        </Text>
+                      </View>
+                      {/* Inhalt: Begegnung + Altersklasse/Spielart */}
+                      <View style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, justifyContent: 'center' }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                          {(!item.isAreaGame || isAreaGameAdded(item)) && (
+                            <View style={{ width: 8, height: 8, borderRadius: 1, backgroundColor: '#e8930c' }} />
+                          )}
+                          {(() => {
+                            // Begegnung splitten, Wappen innen am "-" (wie im Dashboard)
+                            const [home, ...rest] = (item.spiel || '').split(' - ');
+                            const away = rest.join(' - ');
+                            if (!away) {
+                              return (
+                                <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
+                                  {item.spiel}
+                                </Text>
+                              );
+                            }
+                            
+                            return (
+                              <>
+                                <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
+                                  {home}
+                                </Text>
+                                <TeamLogo name={home} map={clubLogoMap} />
+                                <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700' }}>-</Text>
+                                <TeamLogo name={away} map={clubLogoMap} />
+                                <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
+                                  {away}
+                                </Text>
+                              </>
+                            );
+                          })()}
                         </View>
-                      </View>
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                        {(!item.isAreaGame || isAreaGameAdded(item)) && (
-                          <View style={{ width: 8, height: 8, borderRadius: 1, backgroundColor: '#e8930c' }} />
-                        )}
-                        <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '600', flexShrink: 1 }} numberOfLines={1}>
-                          {item.spiel}
-                        </Text>
-                      </View>
-                      {item.ort ? (
-                        <Text style={{ color: RETRO.textMuted, fontSize: 11, marginTop: 1, fontStyle: 'italic' }} numberOfLines={1}>
-                          📍 {item.ort}
-                        </Text>
-                      ) : null}
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 }}>
+                          {item.mannschaft ? (
+                            <Text style={{ fontSize: 10, color: RETRO.textMuted }}>{item.mannschaft}</Text>
+                          ) : null}
+                          {item.art ? (
+                            <Text style={{ fontSize: 10, color: RETRO.textMuted }}>
+                              {item.art}
+                            </Text>
+                          ) : null}
+                        </View>
                       {(() => {
                         const chg = matchChanges.get(item.id);
                         if (!chg) return null;
@@ -2932,10 +2960,10 @@ export function MatchListScreen({ navigation, route }: any) {
                           </View>
                         );
                       })()}
+                      </View>
                     </TouchableOpacity>
                   );
                 }}
-                contentContainerStyle={{ paddingBottom: 10 }}
                 ListEmptyComponent={
                   <View style={styles.emptyState}>
                     <Text style={[styles.emptyText, { color: RETRO.textMuted }]}>
@@ -2946,16 +2974,16 @@ export function MatchListScreen({ navigation, route }: any) {
               />
             </View>
           </View>
-          {/* Karte rechts (nur Anstehend) */}
+          {/* Karte rechts (nur Anstehend): gleiche Chip-Optik wie die Liste */}
           {!showArchive && (
-            <View style={{ flex: 1.2 }}>
-              <View style={[HARD_SHADOW, BLUE_GRADIENT, {
-                backgroundColor: RETRO.headerBg, paddingVertical: 7, paddingHorizontal: 12,
-              }]}>
-                <Text style={{ color: RETRO.headerText, fontWeight: '700', fontSize: 14 }}>Karte</Text>
-              </View>
-              <View style={[HARD_SHADOW_LG, { flex: 1, marginTop: 10, borderWidth: 1, borderColor: RETRO.shadowDark, overflow: 'hidden' }]}>
-                <GamesMapView features={mapFeatures} hoverKey={hoveredMapKey} />
+            <View style={{ flex: 1.2, marginTop: 10 }}>
+              <View style={[HARD_SHADOW_LG, { flex: 1 }]}>
+                <View style={[RETRO_CHIP as any, { zIndex: 10 }]}>
+                  <Text style={RETRO_CHIP_TEXT}>KARTE</Text>
+                </View>
+                <View style={{ flex: 1, overflow: 'hidden' }}>
+                  <GamesMapView features={mapFeatures} hoverKey={hoveredMapKey} />
+                </View>
               </View>
             </View>
           )}
@@ -2993,7 +3021,7 @@ export function MatchListScreen({ navigation, route }: any) {
               style={styles.floatingExportBtn}
               onPress={exportSelectedToCalendar}
             >
-              <Text style={styles.floatingExportBtnText}>📅 {selectedMatches.length} exportieren</Text>
+              <Text style={styles.floatingExportBtnText}>{selectedMatches.length} exportieren</Text>
             </TouchableOpacity>
           )}
 
@@ -3570,7 +3598,7 @@ export function MatchListScreen({ navigation, route }: any) {
                             );
                           }}
                         >
-                          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>🔍 HTML</Text>
+                          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '600' }}>HTML</Text>
                         </TouchableOpacity>
                       )}
                     </View>
@@ -4074,21 +4102,18 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   searchContainer: {
+    // Höhe wie die Standard-Buttons in der Toolbar
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
     borderRadius: 8,
-    paddingHorizontal: 12,
-    height: 36,
-  },
-  searchIcon: {
-    marginRight: 8,
-    fontSize: 14,
+    paddingHorizontal: 10,
+    height: 24,
   },
   searchInput: {
     flex: 1,
-    fontSize: 14,
+    fontSize: 13,
     height: '100%',
   },
   // Mobile Header Styles (wie KMH-App)

@@ -35,6 +35,7 @@ import {
 } from '../../services/stipendiumService';
 import { PlayerDetailModal, splitName } from '../../components/PlayerDetailModal';
 import { RetroHeader } from '../../components/RetroHeader';
+import { MONO } from '../../theme/retro';
 
 /** Anzeige "Nachname, Vorname" (Namenszusätze wie "van" gehören zum Nachnamen) */
 function displayName(full: string): string {
@@ -483,9 +484,7 @@ export function SportstipendiumScreen() {
               ]}
               onPress={() => setShowArchive(true)}
             >
-              <Text style={styles.archiveIcon}>🗄️</Text>
-              <Text style={styles.archiveLabel}>Archiv</Text>
-              <Text style={styles.archiveCount}>{archivedEntries.length}</Text>
+              <Text style={styles.archiveLabel}>{`Archiv (${archivedEntries.length})`}</Text>
             </TouchableOpacity>
           </View>
         }
@@ -522,11 +521,17 @@ export function SportstipendiumScreen() {
         <PlayerDetailModal
           player={detailPlayer}
           onClose={() => setDetailPlayer(null)}
+          onCreateReport={(navParams) => {
+            returnToPlayerRef.current = detailPlayer;
+            setDetailPlayer(null);
+            (navigation as any).navigate('PlayerEvaluation', navParams);
+          }}
           onOpenEvaluation={(ev) => {
             const playerId = detailPlayer.id;
             returnToPlayerRef.current = detailPlayer;
             setDetailPlayer(null);
             (navigation as any).navigate('PlayerEvaluation', {
+              evaluationId: ev.id,
               matchId: ev.match_id,
               matchName: ev.match_name,
               matchDate: ev.match_date,
@@ -877,27 +882,20 @@ const styles = StyleSheet.create({
 
   // Archiv (erhabener Retro-Button)
   archiveButton: {
+    // Standard-Maß der Titelbalken-Boxen (wie RetroHeader.box), randlos + HARD_SHADOW
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'center',
     gap: 6,
-    borderWidth: 1,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    backgroundColor: RETRO.face,
-    borderColor: RETRO.shadowDark,
-  },
-  archiveIcon: {
-    fontSize: 14,
+    paddingHorizontal: 10,
+    height: 25, // hart fixiert — das Emoji hat sonst eine höhere Zeilenhöhe
+    backgroundColor: RETRO.white,
   },
   archiveLabel: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 12,
+    fontWeight: '700',
+    fontFamily: MONO,
     color: RETRO.text,
-  },
-  archiveCount: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: RETRO.textMuted,
   },
   archiveOverlay: {
     flex: 1,

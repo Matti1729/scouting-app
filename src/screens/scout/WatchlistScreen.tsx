@@ -165,8 +165,8 @@ export function WatchlistScreen() {
   const [modalEvalStatus, setModalEvalStatus] = useState<'interessant' | 'nicht_interessant' | 'top_ziel' | null>(null);
   const notesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Tabs: Watchlist (Interessant-Shortlist) | Beobachtet (alle Spieler mit ≥1 Bericht)
-  const [viewTab, setViewTab] = useState<'watchlist' | 'beobachtet'>('watchlist');
+  // Tabs: Watchlist | Zielspieler (aktiv ansprechen) | Alle Berichte
+  const [viewTab, setViewTab] = useState<'watchlist' | 'ziel' | 'beobachtet'>('watchlist');
   const [observed, setObserved] = useState<ObservedPlayer[]>([]);
   // Unklare TM-Zuordnungen (mehrere Kandidaten) — der Nutzer ordnet von Hand zu
   const [ambiguous, setAmbiguous] = useState<AmbiguousMerge[]>([]);
@@ -319,6 +319,13 @@ export function WatchlistScreen() {
       }
     });
   }, [watchlist, sortKey, sortAsc, evaluations]);
+
+  // Zielspieler = alle Top-Ziele (kein eigener Status, spart den Extra-Button)
+  const zielList = useMemo(
+    () => sortedWatchlist.filter((w) => evaluations.get(w.player_id || '')?.status === 'top_ziel'),
+    [sortedWatchlist, evaluations]
+  );
+  const activeList = viewTab === 'ziel' ? zielList : sortedWatchlist;
 
   const sortIndicator = (key: SortKey) => sortKey === key ? (sortAsc ? ' \u25B2' : ' \u25BC') : '';
 
@@ -512,14 +519,19 @@ export function WatchlistScreen() {
       >
         <View style={styles.mobileCardHeader}>
           <View style={styles.mobileCardNameRow}>
-            {ev?.status === 'top_ziel' && (
-              <View style={styles.topZielBadge}>
-                <Text style={styles.topZielBadgeText}>TOP-ZIEL</Text>
-              </View>
-            )}
             <Text style={[styles.mobileCardName, { color: colors.text }]} numberOfLines={1}>
               {formatNameLastFirst(player.player_name)}
             </Text>
+            {/* Nur EIN Badge: Top-Ziel (Potential 8+) schlägt Zielspieler */}
+            {rating != null && rating >= 8 ? (
+              <View style={styles.topZielBadge}>
+                <Text style={styles.topZielBadgeText}>TOP-ZIEL</Text>
+              </View>
+            ) : viewTab !== 'ziel' && ev?.status === 'top_ziel' ? (
+              <View style={styles.topZielBadge}>
+                <Text style={styles.topZielBadgeText}>ZIELSPIELER</Text>
+              </View>
+            ) : null}
             {age ? <Text style={[styles.mobileCardAge, { color: colors.textSecondary }]}>{age}</Text> : null}
             {rating != null && (
               <View style={[styles.ratingBadge, { backgroundColor: rating >= 7 ? colors.success + '25' : rating >= 4 ? '#f5a623' + '25' : colors.error + '25' }]}>
@@ -574,14 +586,19 @@ export function WatchlistScreen() {
             case 'name':
               return (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  {ev?.status === 'top_ziel' && (
-                    <View style={styles.topZielBadge}>
-                      <Text style={styles.topZielBadgeText}>TOP-ZIEL</Text>
-                    </View>
-                  )}
                   <Text style={[styles.playerColName, { color: RETRO.text }]} numberOfLines={1}>
                     {formatNameLastFirst(player.player_name)}
                   </Text>
+                  {/* Nur EIN Badge: Top-Ziel (Potential 8+) schlägt Zielspieler */}
+                  {rating != null && rating >= 8 ? (
+                    <View style={styles.topZielBadge}>
+                      <Text style={styles.topZielBadgeText}>TOP-ZIEL</Text>
+                    </View>
+                  ) : viewTab !== 'ziel' && ev?.status === 'top_ziel' ? (
+                    <View style={styles.topZielBadge}>
+                      <Text style={styles.topZielBadgeText}>ZIELSPIELER</Text>
+                    </View>
+                  ) : null}
                 </View>
               );
             case 'alter':
@@ -647,6 +664,12 @@ export function WatchlistScreen() {
                   <Text style={[styles.playerColName, { color: RETRO.text }]} numberOfLines={1}>
                     {formatNameLastFirst(player.player_name)}
                   </Text>
+                  {/* Top-Ziel automatisch ab Potential 8 */}
+                  {item.lastRating != null && item.lastRating >= 8 && (
+                    <View style={styles.topZielBadge}>
+                      <Text style={styles.topZielBadgeText}>TOP-ZIEL</Text>
+                    </View>
+                  )}
                 </View>
               );
             case 'alter':
@@ -754,9 +777,13 @@ export function WatchlistScreen() {
   const renderEmpty = () => (
     <View style={styles.emptyState}>
       <Text style={styles.emptyIcon}>⭐</Text>
-      <Text style={[styles.emptyText, { color: colors.textSecondary }]}>Watchlist ist leer</Text>
+      <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
+        {viewTab === 'ziel' ? 'Noch keine Zielspieler' : 'Watchlist ist leer'}
+      </Text>
       <Text style={[styles.emptyHint, { color: colors.textSecondary }]}>
-        Füge Spieler im Beraterstatus-Tracker zur Watchlist hinzu
+        {viewTab === 'ziel'
+          ? 'Markiere Spieler im Spielerprofil als Zielspieler'
+          : 'Füge Spieler im Beraterstatus-Tracker zur Watchlist hinzu'}
       </Text>
     </View>
   );
@@ -766,11 +793,26 @@ export function WatchlistScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header (gelber Titelbalken wie im Dashboard) */}
       <RetroHeader
-        title={viewTab === 'beobachtet' ? 'Alle Berichte' : 'Watchlist'}
-        subtitle={viewTab === 'beobachtet' ? 'Alle Spieler mit Spielbericht' : 'Markierte Spieler im Blick'}
+        title={viewTab === 'beobachtet' ? 'Alle Berichte' : viewTab === 'ziel' ? 'Zielspieler' : 'Watchlist'}
+        subtitle={
+          viewTab === 'beobachtet'
+            ? 'Alle Spieler mit Spielbericht'
+            : viewTab === 'ziel'
+              ? 'Kandidaten für die Ansprache'
+              : 'Markierte Spieler im Blick'
+        }
         onBack={() => navigation.goBack()}
         right={
           <View style={{ flexDirection: 'row', gap: 8 }}>
+            <TouchableOpacity
+              onPress={() => setViewTab('ziel')}
+              style={[styles.headerTab, HARD_SHADOW, viewTab === 'ziel' && styles.headerTabActive]}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.headerTabText, viewTab === 'ziel' && styles.headerTabTextActive]}>
+                {`Zielspieler (${zielList.length})`}
+              </Text>
+            </TouchableOpacity>
             <TouchableOpacity
               onPress={() => setViewTab('watchlist')}
               style={[styles.headerTab, HARD_SHADOW, viewTab === 'watchlist' && styles.headerTabActive]}
@@ -888,14 +930,14 @@ export function WatchlistScreen() {
         />
       ) : isMobile ? (
         <FlatList
-          data={sortedWatchlist}
+          data={activeList}
           renderItem={renderMobileCard}
           keyExtractor={(item) => item.id}
           extraData={[evaluations, watchlist]}
           ListEmptyComponent={!loading ? renderEmpty : null}
           contentContainerStyle={[
             styles.mobileListContent,
-            watchlist.length === 0 && !loading ? styles.emptyContainer : undefined,
+            activeList.length === 0 && !loading ? styles.emptyContainer : undefined,
           ]}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
@@ -906,7 +948,7 @@ export function WatchlistScreen() {
           style={[styles.listCard, { backgroundColor: colors.surface }, HARD_SHADOW]}
           onLayout={(e) => setTableWidth(e.nativeEvent.layout.width)}
         >
-          {watchlist.length > 0 && tableWidth > 0 && (
+          {activeList.length > 0 && tableWidth > 0 && (
             <TableHeader
               columnDefs={WATCHLIST_COLUMNS}
               columnOrder={table.columnOrder}
@@ -924,13 +966,13 @@ export function WatchlistScreen() {
             />
           )}
           <FlatList
-            data={sortedWatchlist}
+            data={activeList}
             renderItem={renderDesktopRow}
             keyExtractor={(item) => item.id}
-            extraData={[evaluations, watchlist]}
+            extraData={[evaluations, watchlist, viewTab]}
             ListEmptyComponent={!loading ? renderEmpty : null}
             contentContainerStyle={
-              watchlist.length === 0 && !loading ? styles.emptyContainer : undefined
+              activeList.length === 0 && !loading ? styles.emptyContainer : undefined
             }
             refreshControl={
               <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
@@ -945,10 +987,16 @@ export function WatchlistScreen() {
           player={detailPlayer}
           onClose={() => setDetailPlayer(null)}
           onStatusChanged={() => fetchData()}
+          onCreateReport={(navParams) => {
+            returnToPlayerRef.current = detailPlayer;
+            setDetailPlayer(null);
+            (navigation as any).navigate('PlayerEvaluation', navParams);
+          }}
           onOpenEvaluation={(ev) => {
             returnToPlayerRef.current = detailPlayer;
             setDetailPlayer(null);
             (navigation as any).navigate('PlayerEvaluation', {
+              evaluationId: ev.id,
               matchId: ev.match_id,
               matchName: ev.match_name,
               matchDate: ev.match_date,
@@ -979,10 +1027,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   headerTab: {
+    // gleiche Maße wie die Datum-/Initialen-Box im RetroHeader
     backgroundColor: '#ffffff',
     borderRadius: 2,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    minHeight: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTabActive: {
     backgroundColor: RETRO.text,

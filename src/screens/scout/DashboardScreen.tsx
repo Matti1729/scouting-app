@@ -23,9 +23,10 @@ import { useAuth } from '../../contexts/AuthContext';
 import { RootStackParamList } from '../../navigation/types';
 import { RETRO, HARD_SHADOW, HARD_SHADOW_LG, MONO } from '../../theme/retro';
 import { loadScanStatus, BeraterStats, loadWatchlist, WatchlistEntry, loadAllEvaluations, PlayerEvaluation, loadUnseenAlerts, markAlertSeen, AgentAlertNotification, findAmbiguousMergeCandidates, AmbiguousMerge, mergeScoutedInto } from '../../services/beraterService';
-import { areaAge, areaArt, shortVenueName } from '../../services/areaGamesService';
+import { areaAge, areaArt, shortVenueName, stripAge, loadClubLogoMap, clubLogoUriFor } from '../../services/areaGamesService';
 import { createMatch, deleteMatch } from '../../services/matchService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
+import { TeamLogo } from '../../components/ClubLogo';
 import { fetchSearchPlayer, StipendiumSearchPlayer, positionCode, ageFromBirthDate, agentDisplayName } from '../../services/stipendiumService';
 import { BLUE_GRADIENT } from '../../theme/retro';
 import { supabase } from '../../config/supabase';
@@ -37,6 +38,8 @@ interface TodayGame {
   matchId: string; // Match-ID im Spiele-Screen ("area:<match_key>" bzw. eigene ID)
   zeit: string | null;
   begegnung: string;
+  home: string;
+  away: string;
   liga: string;
   art: string;
   ort: string | null;
@@ -69,6 +72,9 @@ export function DashboardScreen() {
   const [evaluations, setEvaluations] = useState<Map<string, PlayerEvaluation>>(new Map());
   const [beraterStats, setBeraterStats] = useState<BeraterStats | null>(null);
   const [todayGames, setTodayGames] = useState<TodayGame[]>([]);
+  // Wappen-Lookup: normalisierte Vereins-Basis -> tm_club_id
+  const [clubLogoMap, setClubLogoMap] = useState<Map<string, string>>(new Map());
+  const clubLogoUri = (teamName: string): string | null => clubLogoUriFor(clubLogoMap, teamName);
   const [gameDetail, setGameDetail] = useState<TodayGame | null>(null);
   // Glocken-Benachrichtigungen (Beraterstatus-Änderungen abonnierter Spieler)
   const [alerts, setAlerts] = useState<AgentAlertNotification[]>([]);
@@ -191,6 +197,9 @@ export function DashboardScreen() {
 
     loadWatchlist().then(setWatchlist).catch(() => {});
     loadAllEvaluations().then(setEvaluations).catch(() => {});
+
+    // Vereinswappen: alle bekannten Vereine einmal laden (Lookup über Namensbasis)
+    loadClubLogoMap().then(setClubLogoMap).catch(() => {});
     loadUnseenAlerts().then(setAlerts).catch(() => {});
     findAmbiguousMergeCandidates().then(setAmbiguous).catch(() => {});
 
@@ -233,6 +242,8 @@ export function DashboardScreen() {
         matchId: String(m.id),
         zeit: m.match_time ? String(m.match_time).slice(0, 5) : null,
         begegnung: `${m.home_team} - ${m.away_team}`,
+        home: stripAge(m.home_team),
+        away: stripAge(m.away_team),
         liga: m.age_group || '—',
         art: m.match_type || 'Punktspiel',
         ort: m.location || null,
@@ -246,6 +257,8 @@ export function DashboardScreen() {
           matchId: `area:${g.match_key}`,
           zeit: g.kickoff_time ? String(g.kickoff_time).slice(0, 5) : null,
           begegnung: `${g.home_name} - ${g.away_name}`,
+          home: stripAge(g.home_name),
+          away: stripAge(g.away_name),
           liga: areaAge(g, leagueNames.get(g.league_key) || ''),
           art: areaArt(g),
           ort: g.venue_address ? `${g.venue ? `${g.venue}, ` : ''}${g.venue_address}` : g.venue || null,
@@ -262,15 +275,15 @@ export function DashboardScreen() {
   // Watchlist-System: Status-Eintrag vor Watchlist-Feld)
   const watchlistRating = (w: WatchlistEntry): number | null =>
     evaluations.get(w.player_id)?.rating ?? w.rating ?? null;
+  // Zielspieler-Panel: alle Spieler mit Zielspieler-Status, höchstes Potential zuerst
   const topWatchlist = [...watchlist]
     .map((w) => ({
       entry: w,
       rating: watchlistRating(w),
       topZiel: evaluations.get(w.player_id)?.status === 'top_ziel',
     }))
-    .filter((x) => x.rating !== null || x.topZiel)
-    // Top-Ziele ("sofort machen") zuerst, danach höchstes Potential
-    .sort((a, b) => (a.topZiel === b.topZiel ? (b.rating || 0) - (a.rating || 0) : a.topZiel ? -1 : 1))
+    .filter((x) => x.topZiel)
+    .sort((a, b) => (b.rating || 0) - (a.rating || 0))
     .slice(0, 6);
 
   // Farbe wie im Potential-Schiebebalken
@@ -468,36 +481,58 @@ export function DashboardScreen() {
           {/* Heutige Spiele */}
           <View style={[styles.panelCard, styles.panelHeute, HARD_SHADOW]}>
             {chip(`HEUTE${todayGames.length > 0 ? ` (${todayGames.length})` : ''}`, true)}
-            <View style={styles.tableHead}>
-              <Text style={[styles.tableHeadText, styles.colDatum]}>UHRZEIT</Text>
-              <Text style={[styles.tableHeadText, styles.colBegegnung]}>BEGEGNUNG</Text>
-              <Text style={[styles.tableHeadText, styles.colLiga]}>ALTERSKLASSE</Text>
-              <View style={styles.colChevron} />
-            </View>
             {todayGames.length === 0 ? (
               <Text style={styles.emptyText}>Heute keine Spiele</Text>
             ) : (
               todayGames.map((g, idx) => (
                 <TouchableOpacity
                   key={g.key}
-                  style={[styles.tableRow, idx === todayGames.length - 1 && { borderBottomWidth: 0 }]}
+                  style={{
+                    flexDirection: 'row', alignItems: 'stretch',
+                    backgroundColor: RETRO.white,
+                    borderBottomWidth: idx === todayGames.length - 1 ? 0 : 1,
+                    borderBottomColor: RETRO.rowBorder,
+                  }}
                   onPress={() => setGameDetail(g)}
                   activeOpacity={0.7}
                 >
-                  <Text style={[styles.tableCellMono, styles.colDatum]} numberOfLines={1}>
-                    {g.zeit || '—'}
-                  </Text>
-                  <View style={[styles.colBegegnung, { flexDirection: 'row', alignItems: 'center', gap: 6 }]}>
-                    {g.isOwn && <View style={styles.attendMarker} />}
-                    <Text style={[styles.tableCell, { flexShrink: 1 }]} numberOfLines={1}>
-                      {g.begegnung}
+                  {/* Anstoßzeit-Block links: heute = grün (wie in der Spiele-Übersicht) */}
+                  <View style={{
+                    width: 86, backgroundColor: '#22c55e',
+                    alignItems: 'center', justifyContent: 'center',
+                    paddingVertical: 8, paddingHorizontal: 4,
+                    borderRightWidth: 1, borderRightColor: RETRO.rowBorder,
+                  }}>
+                    <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text, opacity: 0.75 }} numberOfLines={1}>
+                      Heute
+                    </Text>
+                    <Text style={{ fontSize: 14, fontWeight: '800', color: RETRO.text, marginTop: 1 }} numberOfLines={1}>
+                      {g.zeit || '–'}
                     </Text>
                   </View>
-                  <Text style={[styles.tableCellMono, styles.colLiga]} numberOfLines={1}>
-                    {g.liga}
-                  </Text>
-                  <View style={styles.colChevron}>
-                    <Ionicons name="chevron-forward" size={13} color={RETRO.shadowDark} />
+                  <View style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, justifyContent: 'center' }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      {g.isOwn && <View style={styles.attendMarker} />}
+                      <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
+                        {g.home}
+                      </Text>
+                      <TeamLogo name={g.home} map={clubLogoMap} />
+                      <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700' }}>-</Text>
+                      <TeamLogo name={g.away} map={clubLogoMap} />
+                      <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
+                        {g.away}
+                      </Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 }}>
+                      {g.liga ? (
+                        <Text style={{ fontSize: 10, color: RETRO.textMuted }}>{g.liga}</Text>
+                      ) : null}
+                      {g.art ? (
+                        <Text style={{ fontSize: 10, color: RETRO.textMuted }}>
+                          {g.art}
+                        </Text>
+                      ) : null}
+                    </View>
                   </View>
                 </TouchableOpacity>
               ))
@@ -506,13 +541,13 @@ export function DashboardScreen() {
 
           {/* Zuletzt zur Watchlist hinzugefügt */}
           <View style={[styles.panelCard, styles.panelWatchlist, HARD_SHADOW]}>
-            {chip('TOP-POTENTIALE', true)}
+            {chip('ZIELSPIELER', true)}
             <View style={styles.tableHead}>
               <Text style={[styles.tableHeadText, { flex: 1 }]}>SPIELER</Text>
               <Text style={styles.tableHeadText}>POT.</Text>
             </View>
             {topWatchlist.length === 0 ? (
-              <Text style={styles.emptyText}>Noch keine bewerteten Spieler auf der Watchlist</Text>
+              <Text style={styles.emptyText}>Noch keine Zielspieler markiert</Text>
             ) : (
               topWatchlist.map(({ entry: w, rating, topZiel }, idx) => (
                 <TouchableOpacity
@@ -526,19 +561,26 @@ export function DashboardScreen() {
                       {nameLastFirst(w.player?.player_name || '?')}
                     </Text>
                     {w.player?.club_name ? (
-                      <Text style={styles.tableCellSub} numberOfLines={1}>
-                        {w.player.club_name}
-                      </Text>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5, marginTop: 1 }}>
+                        <TeamLogo name={w.player.club_name} map={clubLogoMap} />
+                        <Text style={[styles.tableCellSub, { marginTop: 0, flexShrink: 1 }]} numberOfLines={1}>
+                          {w.player.club_name}
+                        </Text>
+                      </View>
                     ) : null}
                   </View>
-                  {topZiel && (
+                  {/* Top-Ziel automatisch ab Potential 8 */}
+                  {(rating || 0) >= 8 && (
                     <View style={styles.topZielBadge}>
                       <Text style={styles.topZielBadgeText}>TOP-ZIEL</Text>
                     </View>
                   )}
-                  <View style={[styles.potBadge, { backgroundColor: potentialColor(rating || 0) }]}>
-                    <Text style={styles.potBadgeText}>{rating}</Text>
-                  </View>
+                  {/* Ohne Potential-Eintrag keine Farbe (nicht eingetragen ≠ schlecht) */}
+                  {rating != null && rating > 0 && (
+                    <View style={[styles.potBadge, { backgroundColor: potentialColor(rating) }]}>
+                      <Text style={styles.potBadgeText}>{rating}</Text>
+                    </View>
+                  )}
                 </TouchableOpacity>
               ))
             )}
@@ -764,10 +806,16 @@ export function DashboardScreen() {
           player={detailPlayer}
           onClose={() => setDetailPlayer(null)}
           onStatusChanged={() => loadData()}
+          onCreateReport={(navParams) => {
+            returnToPlayerRef.current = detailPlayer;
+            setDetailPlayer(null);
+            (navigation as any).navigate('PlayerEvaluation', navParams);
+          }}
           onOpenEvaluation={(ev) => {
             returnToPlayerRef.current = detailPlayer;
             setDetailPlayer(null);
             (navigation as any).navigate('PlayerEvaluation', {
+              evaluationId: ev.id,
               matchId: ev.match_id,
               matchName: ev.match_name,
               matchDate: ev.match_date,
@@ -898,10 +946,14 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   headerBox: {
+    // Standard-Maß der Titelbalken-Boxen (wie RetroHeader.box)
     backgroundColor: RETRO.white,
     borderRadius: 2,
     paddingHorizontal: 10,
     paddingVertical: 5,
+    minHeight: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   headerBoxText: {
     fontSize: 12,
@@ -1066,6 +1118,10 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 1,
     backgroundColor: '#e8930c',
+  },
+  clubLogoSm: {
+    width: 16,
+    height: 16,
   },
   colBegegnung: {
     flex: 1,

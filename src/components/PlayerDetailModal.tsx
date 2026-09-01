@@ -29,6 +29,8 @@ import {
   savePlayerNote,
   fetchEntryAddedBy,
   agentDisplayName,
+  teamLabel,
+  agRank,
 } from '../services/stipendiumService';
 import {
   loadMatchEvaluationsForPlayer,
@@ -188,6 +190,7 @@ export function PlayerDetailModal({
   onClose,
   actions,
   onOpenEvaluation,
+  onCreateReport,
   onStatusChanged,
 }: {
   player: StipendiumSearchPlayer;
@@ -195,6 +198,9 @@ export function PlayerDetailModal({
   actions?: React.ReactNode;
   /** Klick auf einen Bericht (öffnet die Spielbewertung) — optional */
   onOpenEvaluation?: (ev: MatchEvaluation) => void;
+  /** Neuen Bericht ohne Spiel anlegen (Betreff statt Partie) — bekommt fertige
+   *  Navigations-Params für den PlayerEvaluation-Screen */
+  onCreateReport?: (navParams: Record<string, any>) => void;
   /** Nach Änderung des Scouting-Status (Watchlist/Top-Ziel/Uninteressant) — optional */
   onStatusChanged?: (status: ScoutStatus) => void;
 }) {
@@ -213,6 +219,9 @@ export function PlayerDetailModal({
   const [statusSaving, setStatusSaving] = useState(false);
   // Offene Nachfrage vor Entfernen/Wechsel eines gesetzten Status
   const [pendingChange, setPendingChange] = useState<{ next: ScoutStatus; text: string } | null>(null);
+  // Neuer Bericht ohne Spiel: Betreff-Abfrage
+  const [newReportOpen, setNewReportOpen] = useState(false);
+  const [newReportBetreff, setNewReportBetreff] = useState('');
   // Glocke: Abo auf Beraterstatus-Änderungen
   const [alertOn, setAlertOn] = useState(false);
   const [alertSaving, setAlertSaving] = useState(false);
@@ -288,7 +297,7 @@ export function PlayerDetailModal({
   const STATUS_LABELS: Record<Exclude<ScoutStatus, 'neutral'>, string> = {
     uninteressant: 'Uninteressant',
     watchlist: 'Watchlist',
-    top_ziel: 'Top-Ziel',
+    top_ziel: 'Zielspieler',
   };
 
   const applyStatus = async (next: ScoutStatus) => {
@@ -445,6 +454,30 @@ export function PlayerDetailModal({
   };
 
   const p = player;
+  // Kein TM-Verein? Dann die Mannschaft aus den Berichten anzeigen (höchste
+  // Altersklasse gewinnt, dann neuester Bericht) — wie in Watchlist/Alle Berichte
+  const reportClub = (() => {
+    if (p.club_name || p.is_vereinslos) return null;
+    const ts = (d: string | null): number => {
+      if (!d) return 0;
+      if (/^\d{4}-\d{2}-\d{2}/.test(d)) return new Date(d.slice(0, 10)).getTime();
+      const m = d.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+      if (!m) return 0;
+      let y = parseInt(m[3], 10);
+      if (y < 100) y += 2000;
+      return new Date(y, parseInt(m[2], 10) - 1, parseInt(m[1], 10)).getTime();
+    };
+    let best: { name: string; ag: string | null; rank: number; t: number } | null = null;
+    for (const e of matchEvals) {
+      if (!e.current_club) continue;
+      const rank = agRank(e.age_group || null);
+      const t = ts(e.match_date);
+      if (!best || rank > best.rank || (rank === best.rank && t > best.t)) {
+        best = { name: e.current_club, ag: e.age_group || null, rank, t };
+      }
+    }
+    return best ? teamLabel(best.name, best.ag) : null;
+  })();
   const contract = formatContract(p.contract_until);
   const vereinslosTransfer = tmDetails?.transfers?.find(
     (t) => t.to && /vereinslos|ohne verein|career break/i.test(t.to)
@@ -469,6 +502,30 @@ export function PlayerDetailModal({
       <Text style={styles.cardChipText}>{title}</Text>
     </View>
   );
+
+  // Bericht ohne Spiel anlegen: Betreff ersetzt die Partie, Datum = heute
+  const handleCreateReport = () => {
+    const betreff = newReportBetreff.trim();
+    if (!betreff || !onCreateReport) return;
+    const parts = player.player_name.trim().split(/\s+/);
+    const last = parts.length > 1 ? parts[parts.length - 1] : player.player_name.trim();
+    const first = parts.length > 1 ? parts.slice(0, -1).join(' ') : '';
+    const t = new Date();
+    const today = `${String(t.getDate()).padStart(2, '0')}.${String(t.getMonth() + 1).padStart(2, '0')}.${t.getFullYear()}`;
+    setNewReportOpen(false);
+    setNewReportBetreff('');
+    onCreateReport({
+      matchName: betreff,
+      matchDate: today,
+      playerName: `${last}, ${first}`,
+      playerPosition: player.position || null,
+      playerBirthDate: player.birth_date,
+      playerClub: player.club_name,
+      agentName: agentDisplayName(player.current_agent_name, player.current_agent_company),
+      transfermarktUrl: player.tm_profile_url,
+      beraterPlayerId: player.id,
+    });
+  };
 
   // Potential: neuester Bericht mit Bewertung, sonst Bewertung aus dem Watchlist-System
   const latestRating = (matchEvals.find((e) => e.overall_rating)?.overall_rating ?? null) || wlRating;
@@ -551,7 +608,7 @@ export function PlayerDetailModal({
                       <Text style={styles.detailClubText} numberOfLines={1}>
                         {p.is_vereinslos
                           ? `vereinslos${p.club_name ? ` (zuletzt ${p.club_name}${lastClubSeason ? `, ${lastClubSeason}` : ''})` : ''}`
-                          : p.club_name || '—'}
+                          : p.club_name || reportClub || '—'}
                       </Text>
                     </View>
                   )}
@@ -688,6 +745,12 @@ export function PlayerDetailModal({
                       </Text>
                     );
                   })()}
+                  {/* Top-Ziel automatisch ab Potential 8 */}
+                  {latestRating != null && latestRating >= 8 && (
+                    <View style={styles.potTopZielBadge}>
+                      <Text style={styles.potTopZielBadgeText}>TOP-ZIEL</Text>
+                    </View>
+                  )}
                 </View>
               </View>
 
@@ -711,12 +774,23 @@ export function PlayerDetailModal({
                 </View>
                 <View style={[styles.card, styles.cardBerichte, HARD_SHADOW]}>
                   {cardChip(`BERICHTE${matchEvals.length > 0 ? ` (${matchEvals.length})` : ''}`)}
+                  {onCreateReport && (
+                    <TouchableOpacity
+                      style={[styles.reportAddBtn, HARD_SHADOW]}
+                      onPress={() => setNewReportOpen(true)}
+                      activeOpacity={0.7}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <Ionicons name="add" size={13} color="#ffffff" />
+                    </TouchableOpacity>
+                  )}
                   {evalsLoading ? (
                     <ActivityIndicator size="small" color={RETRO.headerBg} style={{ alignSelf: 'flex-start', margin: 4 }} />
                   ) : matchEvals.length === 0 ? (
                     <Text style={styles.reportEmpty}>Noch keine Berichte</Text>
                   ) : (
-                    matchEvals.map((ev, idx) => (
+                    <ScrollView style={styles.reportScroll} nestedScrollEnabled>
+                    {matchEvals.map((ev, idx) => (
                       <TouchableOpacity
                         key={ev.id}
                         style={[styles.reportRow, idx === matchEvals.length - 1 && { borderBottomWidth: 0 }]}
@@ -726,7 +800,12 @@ export function PlayerDetailModal({
                       >
                         <Text style={styles.reportDate} numberOfLines={1}>{ev.match_date || '—'}</Text>
                         <Text style={styles.reportMatch} numberOfLines={1}>
-                          {[ev.match_name, ev.age_group, ev.match_type].filter(Boolean).join(' · ') || 'Spiel unbekannt'}
+                          {ev.match_name || 'Spiel unbekannt'}
+                          {[ev.age_group, ev.match_type].filter(Boolean).length > 0 && (
+                            <Text style={styles.reportMeta}>
+                              {' · ' + [ev.age_group, ev.match_type].filter(Boolean).join(' · ')}
+                            </Text>
+                          )}
                         </Text>
                         {ev.overall_rating ? (
                           <View style={[styles.reportRatingBadge, { backgroundColor: potentialColor(ev.overall_rating) }]}>
@@ -737,7 +816,8 @@ export function PlayerDetailModal({
                           <Ionicons name="chevron-forward" size={14} color={RETRO.shadowDark} />
                         ) : null}
                       </TouchableOpacity>
-                    ))
+                    ))}
+                    </ScrollView>
                   )}
                 </View>
               </View>
@@ -789,7 +869,7 @@ export function PlayerDetailModal({
                   {renderStatusBtn({ key: 'uninteressant', idle: 'Uninteressant', active: 'aussortiert', bg: '#dc2626', fg: '#ffffff' })}
                   {actions ? <View style={styles.detailActions}>{actions}</View> : null}
                 </View>
-                {/* Rechts: Glocke + Watchlist + Top-Ziel */}
+                {/* Rechts: Glocke + Watchlist + Zielspieler (Status-Key bleibt top_ziel) */}
                 <View style={styles.statusGroup}>
                   <TouchableOpacity
                     style={[styles.statusBtn, HARD_SHADOW, alertOn && { backgroundColor: '#dc2626' }]}
@@ -804,7 +884,7 @@ export function PlayerDetailModal({
                     />
                   </TouchableOpacity>
                   {renderStatusBtn({ key: 'watchlist', idle: 'Watchlist', active: 'Watchlist', bg: '#22c55e', fg: '#ffffff' })}
-                  {renderStatusBtn({ key: 'top_ziel', idle: 'Top-Ziel', active: 'Top-Ziel', bg: '#22c55e', fg: '#ffffff' })}
+                  {renderStatusBtn({ key: 'top_ziel', idle: 'Zielspieler', active: 'Zielspieler', bg: '#22c55e', fg: '#ffffff' })}
                 </View>
               </View>
 
@@ -844,6 +924,46 @@ export function PlayerDetailModal({
               )}
 
               {/* Nachfrage vor dem Entfernen/Wechseln eines gesetzten Status */}
+              {newReportOpen && (
+                <Modal visible transparent animationType="fade" onRequestClose={() => setNewReportOpen(false)}>
+                  <View style={styles.confirmOverlay}>
+                    <View style={[styles.confirmBox, HARD_SHADOW_LG]}>
+                      <View style={[styles.confirmBar, HARD_SHADOW]}>
+                        <Text style={styles.confirmTitle}>Neuer Bericht</Text>
+                      </View>
+                      <Text style={styles.confirmText}>
+                        Bericht ohne Spiel anlegen. Der Betreff steht dann anstelle der Partie.
+                      </Text>
+                      <TextInput
+                        style={styles.betreffInput}
+                        value={newReportBetreff}
+                        onChangeText={setNewReportBetreff}
+                        placeholder="Betreff, z.B. Videoanalyse"
+                        placeholderTextColor="#8a867e"
+                        autoFocus
+                        onSubmitEditing={handleCreateReport}
+                      />
+                      <View style={styles.confirmActions}>
+                        <TouchableOpacity
+                          style={[styles.statusBtn, HARD_SHADOW]}
+                          onPress={() => { setNewReportOpen(false); setNewReportBetreff(''); }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={styles.statusBtnText}>Abbrechen</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[styles.statusBtn, HARD_SHADOW, { backgroundColor: '#1a5f2a' }, !newReportBetreff.trim() && { opacity: 0.5 }]}
+                          onPress={handleCreateReport}
+                          disabled={!newReportBetreff.trim()}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={[styles.statusBtnText, { color: '#ffffff' }]}>Anlegen</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  </View>
+                </Modal>
+              )}
               {pendingChange && (
                 <Modal visible transparent animationType="fade" onRequestClose={() => setPendingChange(null)}>
                   <View style={styles.confirmOverlay}>
@@ -966,6 +1086,33 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#c6c2ba',
   },
+  reportScroll: {
+    // 3 Zeilen (à ~33px) sichtbar, ab dem 4. Bericht wird in der Karte gescrollt
+    maxHeight: 100,
+  },
+  reportAddBtn: {
+    position: 'absolute',
+    top: -10,
+    right: 10,
+    width: 18,
+    height: 18,
+    backgroundColor: RETRO.headerBg, // Retro-Blau wie der Karten-Chip
+    borderRadius: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  betreffInput: {
+    marginHorizontal: 14,
+    marginBottom: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: RETRO.shadowDark,
+    borderRadius: 2,
+    fontSize: 13,
+    color: RETRO.text,
+  },
   reportDate: {
     fontSize: 11,
     fontWeight: '600',
@@ -977,6 +1124,11 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     color: RETRO.text,
+  },
+  reportMeta: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#4a4a55',
   },
   reportRatingBadge: {
     minWidth: 24,
@@ -1143,6 +1295,21 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     opacity: 0.9,
     marginTop: 2,
+  },
+  // Top-Ziel: automatisches gelbes Badge unter der Potential-Zahl (ab 8)
+  potTopZielBadge: {
+    backgroundColor: '#F0C040',
+    borderRadius: 2,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    marginTop: 5,
+    ...HARD_SHADOW,
+  },
+  potTopZielBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+    color: '#14141e',
   },
   agentValue: {
     flex: 1,

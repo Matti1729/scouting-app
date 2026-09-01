@@ -89,7 +89,11 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
   // Event-Daten (aus Navigation)
   const [matchName] = useState(params.matchName || '');
   const [matchDate] = useState(params.matchDate || '');
-  const [ageGroup] = useState<AgeGroup>((params.mannschaft as AgeGroup) || 'U15');
+  // Ohne Spielbezug (Bericht mit Betreff, z.B. Videoanalyse) bleibt die
+  // Altersklasse leer statt auf U15 zu raten
+  const [ageGroup] = useState<AgeGroup>(
+    (params.mannschaft as AgeGroup) || (params.matchId ? 'U15' : ('' as AgeGroup))
+  );
 
   // Spielerdaten (Name editierbar für k.A.-Spieler ohne fussball.de-/TM-Eintrag)
   const [lastName, setLastName] = useState(parsedName.lastName);
@@ -266,16 +270,25 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
   // Bestehende Bewertung laden
   useEffect(() => {
     const loadExisting = async () => {
-      if (!params.matchId || !parsedName.lastName) {
+      if (!params.evaluationId && (!params.matchId || !parsedName.lastName)) {
         hasLoadedRef.current = true;
         setIsLoading(false);
         return;
       }
       try {
+        // 0. Direkt über die Berichts-ID (Berichte ohne Spiel haben keine match_id)
+        let data: any = null;
+        if (params.evaluationId) {
+          const { data: byId } = await supabase
+            .from('player_evaluations')
+            .select('*')
+            .eq('id', params.evaluationId)
+            .maybeSingle();
+          data = byId;
+        }
         // 1. Bevorzugt über die eindeutige Aufstellungs-Zeile laden — Namen sind
         //    bei "k.A."-Spielern mehrdeutig und würden fremde Berichte laden.
-        let data: any = null;
-        if (params.lineupPlayerId) {
+        if (!data && params.matchId && params.lineupPlayerId) {
           const { data: byLineup } = await supabase
             .from('player_evaluations')
             .select('*')
@@ -285,7 +298,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
           data = byLineup;
         }
         // 2. Fallback per Name — nur mit echtem Namen, nie mit Platzhalter
-        if (!data && parsedName.lastName && !isPlaceholderName(parsedName.lastName)) {
+        if (!data && params.matchId && parsedName.lastName && !isPlaceholderName(parsedName.lastName)) {
           let query = supabase
             .from('player_evaluations')
             .select('*')
@@ -671,11 +684,13 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
           flexDirection: 'row', alignItems: 'center', gap: 10,
         }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-            <View style={{ backgroundColor: colors.primary, paddingHorizontal: 5, paddingVertical: 1 }}>
-              <Text style={{ fontSize: 10, fontWeight: '700', color: colors.primaryText }}>
-                {ageGroup}
-              </Text>
-            </View>
+            {ageGroup ? (
+              <View style={{ backgroundColor: colors.primary, paddingHorizontal: 5, paddingVertical: 1 }}>
+                <Text style={{ fontSize: 10, fontWeight: '700', color: colors.primaryText }}>
+                  {ageGroup}
+                </Text>
+              </View>
+            ) : null}
             {matchArt ? (
               <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
                 {matchArt}
@@ -749,6 +764,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
               onOpenReport={(ev) => {
                 // Anderen Bericht desselben Spielers öffnen (gleicher Screen, neue Params)
                 (navigation as any).push('PlayerEvaluation', {
+                  evaluationId: ev.id,
                   matchId: ev.match_id,
                   matchName: ev.match_name,
                   matchDate: ev.match_date,
@@ -884,19 +900,19 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         </KeyboardAvoidingView>
       </View>
 
-      {/* Nach dem Speichern: Hochstufen vorschlagen (7/8 Watchlist, 9/10 Top-Ziel) */}
+      {/* Nach dem Speichern: Hochstufen vorschlagen (7/8 Watchlist, 9/10 Zielspieler) */}
       {statusPrompt && (
         <Modal visible transparent animationType="fade" onRequestClose={() => { setStatusPrompt(null); navigation.goBack(); }}>
           <View style={styles.promptOverlay}>
             <View style={[styles.promptBox, HARD_SHADOW_LG]}>
               <View style={[styles.promptBar, HARD_SHADOW]}>
                 <Text style={styles.promptTitle}>
-                  {statusPrompt.target === 'top_ziel' ? 'Top-Ziel' : 'Watchlist'}
+                  {statusPrompt.target === 'top_ziel' ? 'Zielspieler' : 'Watchlist'}
                 </Text>
               </View>
               <Text style={styles.promptText}>
                 {`${[firstName, lastName].filter(Boolean).join(' ')} wurde mit ${overallRating} bewertet. ` +
-                  (statusPrompt.target === 'top_ziel' ? 'Als Top-Ziel markieren?' : 'Zur Watchlist hinzufügen?')}
+                  (statusPrompt.target === 'top_ziel' ? 'Als Zielspieler markieren?' : 'Zur Watchlist hinzufügen?')}
               </Text>
               <View style={styles.promptActions}>
                 <TouchableOpacity
@@ -920,7 +936,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                   activeOpacity={0.7}
                 >
                   <Text style={[styles.promptBtnText, { color: '#ffffff' }]}>
-                    {statusPrompt.target === 'top_ziel' ? 'Top-Ziel' : 'Zur Watchlist'}
+                    {statusPrompt.target === 'top_ziel' ? 'Zielspieler' : 'Zur Watchlist'}
                   </Text>
                 </TouchableOpacity>
               </View>
