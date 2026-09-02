@@ -525,7 +525,7 @@ export function DashboardScreen() {
                       // Laufender mehrtägiger DFB-Termin: Beginn / bis / Ende
                       <>
                         <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text }} numberOfLines={1}>{fmtShort(g.matchDate)}</Text>
-                        <Text style={{ fontSize: 10, fontFamily: MONO, color: RETRO.text, opacity: 0.75, marginTop: 1 }} numberOfLines={1}>bis</Text>
+                        <Text style={{ fontSize: 10, fontFamily: MONO, color: RETRO.text, opacity: 0.75, marginTop: 1 }} numberOfLines={1}>-</Text>
                         <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text, marginTop: 1 }} numberOfLines={1}>{fmtShort(g.matchDateEnd)}</Text>
                       </>
                     ) : (

@@ -148,6 +148,8 @@ export interface PlayerTmDetails {
   statsLastSeason: PlayerTmSeasonStats | null;
   transfers: PlayerTmTransfer[];
   nationalTeam: PlayerNationalTeam | null;
+  /** aktueller Verein laut TM (z. B. "1. FC Nürnberg U17") */
+  currentClub?: string | null;
 }
 
 /** TM-Länderflagge (kleines PNG) zur TM-Land-ID — Fallback, wenn kein Emoji bekannt */

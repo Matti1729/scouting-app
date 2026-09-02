@@ -221,6 +221,25 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       });
     return () => { cancelled = true; };
   }, [beraterPlayerId]);
+  // Keine berater_players-ID mitgegeben (z. B. Spieler aus DFB-Kader, gerade erst
+  // per TM-Suche gefunden): über die TM-ID nachschlagen, damit Verein/Vertrag/
+  // Berater aus unserer Datenbank kommen
+  useEffect(() => {
+    if (beraterPlayerId) return;
+    const tmId = extractTmPlayerId(transfermarktUrl);
+    if (!tmId) return;
+    let cancelled = false;
+    supabase
+      .from('berater_players')
+      .select('id')
+      .eq('tm_player_id', tmId)
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (!cancelled && data?.id) setBeraterPlayerId(String(data.id));
+      });
+    return () => { cancelled = true; };
+  }, [beraterPlayerId, transfermarktUrl]);
   // TM-Details (Einsätze + Nationalmannschaft) für die Kopfkarten
   const [tmDetails, setTmDetails] = useState<PlayerTmDetails | null>(null);
   const [tmLoading, setTmLoading] = useState(false);
@@ -744,7 +763,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
               onRatingChange={setOverallRating}
               transfermarktUrl={transfermarktUrl}
               clubLogoUrl={clubLogoUrl}
-              clubName={beraterInfo?.club_name || [currentClub, ageGroup].filter(Boolean).join(' ')}
+              clubName={beraterInfo?.club_name || tmDetails?.currentClub || [currentClub, ageGroup].filter(Boolean).join(' ')}
               leagueName={beraterInfo?.league_name}
               contractUntil={beraterInfo?.contract_until}
               marketValue={beraterInfo?.market_value}

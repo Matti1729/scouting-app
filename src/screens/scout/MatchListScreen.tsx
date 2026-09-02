@@ -140,6 +140,8 @@ interface Match {
   isArchived?: boolean;
   // 'dfb' = automatisch von dfb.de gesynct (Termine U15–U21 + Kader)
   source?: string | null;
+  // DFB-Termin: Link zur "Spiele und Termine"-Seite des Jahrgangs auf dfb.de
+  dfbUrl?: string | null;
   // Spiele "in der Umgebung" (aus der KMH-Datenbank, read-only)
   isAreaGame?: boolean;
   lat?: number | null;
@@ -312,7 +314,14 @@ const dbMatchToMatch = (dbMatch: DbMatch): Match => ({
   ergebnis: dbMatch.result || undefined,
   isArchived: dbMatch.is_archived,
   source: dbMatch.source || null,
+  dfbUrl: dbMatch.source === 'dfb' ? dfbTerminePageUrl(dbMatch.age_group) : null,
 });
+
+// dfb.de-Seite des Jahrgangs (U15–U21 Männer), z. B. .../u-16/spiele-und-termine
+function dfbTerminePageUrl(ageGroup: string | null): string | null {
+  const m = (ageGroup || '').match(/^U(\d{2})$/i);
+  return m ? `https://www.dfb.de/maenner/nationalmannschaften/u-${m[1]}/spiele-und-termine` : null;
+}
 
 // Wochentag als Zwei-Buchstaben-Kürzel ("Mi") für die Titelleiste
 const weekdayShort = (datum: string): string => {
@@ -1355,6 +1364,29 @@ export function MatchListScreen({ navigation, route }: any) {
 
     // TM-URL und Agent-Info suchen wenn noch nicht vorhanden
     let tmUrl = player.transfermarkt_url;
+
+    // U16-Platzhalter ("Berater bekannt - Spieler unter 16") aus früherer Suche:
+    // Berater jetzt über die TM-API nachladen (Proxy löst ihn auf)
+    if (tmUrl && /spieler unter 16/i.test(player.agent_name || '')) {
+      try {
+        const result = await fetchAgentInfo(tmUrl);
+        if (result.success && result.agentInfo?.agentName && !/spieler unter 16/i.test(result.agentInfo.agentName)) {
+          await updatePlayer(player.id, {
+            agent_name: result.agentInfo.agentName,
+            agent_company: result.agentInfo.agentCompany ?? undefined,
+            has_agent: result.agentInfo.hasAgent,
+          });
+          player.agent_name = result.agentInfo.agentName;
+          const patch = (players: Player[]) => players.map(p => (p.id === player.id ? { ...p, agent_name: player.agent_name } : p));
+          setHomeLineup(prev => patch(prev));
+          setAwayLineup(prev => patch(prev));
+          setHomeSubs(prev => patch(prev));
+          setAwaySubs(prev => patch(prev));
+        }
+      } catch (err) {
+        console.error('Fehler beim Nachladen des U16-Beraters:', err);
+      }
+    }
 
     if (!tmUrl) {
       const fullName = `${player.vorname} ${player.name}`;
@@ -2422,7 +2454,7 @@ export function MatchListScreen({ navigation, route }: any) {
                               {formatDateGerman(item.datum, null)}
                             </Text>
                             <Text style={{ fontSize: 10, fontFamily: MONO, color: RETRO.text, opacity: 0.75, marginTop: 1 }} numberOfLines={1}>
-                              bis
+                              -
                             </Text>
                             <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text, marginTop: 1 }} numberOfLines={1}>
                               {formatDateGerman(item.datumEnde, null)}
@@ -2871,6 +2903,20 @@ export function MatchListScreen({ navigation, route }: any) {
                       />
                     </TouchableOpacity>
                   ) : null}
+                  {areaDetail.dfbUrl ? (
+                    <TouchableOpacity
+                      onPress={() => {
+                        if (Platform.OS === 'web') window.open(areaDetail.dfbUrl as string, '_blank');
+                        else Linking.openURL(areaDetail.dfbUrl as string);
+                      }}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <Image
+                        source={require('../../../assets/dfb-logo.png')}
+                        style={{ width: 20, height: 20, borderWidth: 1, borderColor: RETRO.shadowDark }}
+                      />
+                    </TouchableOpacity>
+                  ) : null}
                   <TouchableOpacity onPress={() => setAreaDetail(null)} hitSlop={8}>
                     <Ionicons name="close" size={20} color={RETRO.text} />
                   </TouchableOpacity>
@@ -3178,6 +3224,18 @@ export function MatchListScreen({ navigation, route }: any) {
                             >
                               <Image
                                 source={require('../../../assets/fussballde-logo.png')}
+                                style={{ width: 20, height: 20, borderWidth: 1, borderColor: RETRO.shadowDark }}
+                              />
+                            </TouchableOpacity>
+                          ) : null}
+                          {selectedMatch.dfbUrl ? (
+                            <TouchableOpacity
+                              onPress={() => Linking.openURL(selectedMatch.dfbUrl!)}
+                              activeOpacity={0.7}
+                              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                            >
+                              <Image
+                                source={require('../../../assets/dfb-logo.png')}
                                 style={{ width: 20, height: 20, borderWidth: 1, borderColor: RETRO.shadowDark }}
                               />
                             </TouchableOpacity>

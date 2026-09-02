@@ -84,6 +84,28 @@ interface NationalTeamInfo {
   countryId: number | null
 }
 
+/** Aktueller Verein (clubAssignment type=current), deutscher Name via locale=de */
+async function fetchCurrentClub(playerId: string): Promise<string | null> {
+  try {
+    const r = await fetch(`https://tmapi.transfermarkt.technology/player/${playerId}`, {
+      headers: { ...FETCH_HEADERS, Accept: 'application/json' },
+    })
+    if (!r.ok) return null
+    const j = await r.json()
+    const assignments: any[] = j?.data?.clubAssignments || []
+    const cur = assignments.find((a) => a?.type === 'current')
+    if (!cur?.clubId) return null
+    const rc = await fetch(`https://tmapi.transfermarkt.technology/club/${cur.clubId}?locale=de`, {
+      headers: { ...FETCH_HEADERS, Accept: 'application/json' },
+    })
+    if (!rc.ok) return null
+    const jc = await rc.json()
+    return jc?.data?.name || null
+  } catch {
+    return null
+  }
+}
+
 /** Aktuelle Nationalmannschaft (clubAssignment type=nationalTeam) inkl. Land */
 async function fetchNationalTeam(playerId: string): Promise<NationalTeamInfo | null> {
   // 1) TM-API: clubAssignment type=nationalTeam — fehlt allerdings bei
@@ -149,10 +171,11 @@ serve(async (req: Request) => {
     const now = new Date()
     const seasonYear = now.getMonth() + 1 >= 7 ? now.getFullYear() : now.getFullYear() - 1
 
-    const [transfers, gamesBySeason, nationalTeam] = await Promise.all([
+    const [transfers, gamesBySeason, nationalTeam, currentClub] = await Promise.all([
       fetchTransfers(pid),
       fetchGamesBySeason(pid),
       fetchNationalTeam(pid),
+      fetchCurrentClub(pid),
     ])
 
     const cur = gamesBySeason ? gamesBySeason[seasonYear] : null
@@ -166,6 +189,7 @@ serve(async (req: Request) => {
       statsLastSeason: gamesBySeason ? last || { games: 0, goals: 0, assists: 0 } : null,
       transfers,
       nationalTeam,
+      currentClub,
     })
   } catch (e) {
     return json({ success: false, error: String(e) }, 200)

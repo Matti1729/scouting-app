@@ -351,6 +351,25 @@ function findBestPlayerMatch(
 /**
  * Holt Berater-Informationen und Geburtsdatum von einer Spieler-Profilseite.
  */
+/** Versteckten U16-Berater über die TM-API holen (consultantAgency) */
+async function resolveHiddenU16Agent(
+  tmPlayerId: string
+): Promise<{ name: string; company: string; url: string | null } | null> {
+  try {
+    const r = await fetch(`https://tmapi.transfermarkt.technology/player/${tmPlayerId}?locale=de`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', Accept: 'application/json' },
+    })
+    if (!r.ok) return null
+    const j = await r.json()
+    const ag = j?.data?.attributes?.consultantAgency
+    const name = (ag?.shortName || ag?.name || '').trim()
+    if (!name) return null
+    return { name, company: name, url: ag?.relativeUrl ? `https://www.transfermarkt.de${ag.relativeUrl}` : null }
+  } catch {
+    return null
+  }
+}
+
 async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
   try {
     // Stelle sicher, dass die URL vollständig ist
@@ -532,6 +551,16 @@ async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
 
       if (textContent && textContent !== '-' && textContent !== '---') {
         console.log('Found agent text (no link):', textContent)
+        // "Berater bekannt - Spieler unter 16": TM versteckt den Berater auf der
+        // Seite, die TM-API liefert ihn trotzdem (consultantAgency)
+        if (/spieler unter 16/i.test(textContent)) {
+          const pid = fullUrl.match(/\/spieler\/(\d+)/)?.[1]
+          const resolved = pid ? await resolveHiddenU16Agent(pid) : null
+          if (resolved) {
+            console.log('U16-Berater über TM-API aufgelöst:', resolved.name)
+            return { agentName: resolved.name, agentCompany: resolved.company, agentUrl: resolved.url, birthDate }
+          }
+        }
         return {
           agentName: textContent,
           agentCompany: null,
