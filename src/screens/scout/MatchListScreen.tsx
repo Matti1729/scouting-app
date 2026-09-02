@@ -3215,7 +3215,7 @@ export function MatchListScreen({ navigation, route }: any) {
                   )}
 
                   {/* Mobile: Team-Tabs */}
-                  {isMobile && (
+                  {isMobile && !(selectedMatch.source === 'dfb' && !selectedMatch.spiel.includes(' - ') && !isEditMode) && (
                     <View style={styles.teamTabsContainer}>
                       <TouchableOpacity
                         style={[
@@ -3287,7 +3287,8 @@ export function MatchListScreen({ navigation, route }: any) {
                     {!isMobile && <View style={[styles.lineupDivider, { backgroundColor: 'transparent' }]} />}
 
                     {/* Auswärtsmannschaft - Desktop oder wenn auf Mobile activeTeam === 'away' */}
-                    {(!isMobile || activeTeam === 'away') && (
+                    {/* DFB-Lehrgang/Turnier ohne Gegner: Gast-Spalte ausblenden (außer beim Bearbeiten) */}
+                    {(!isMobile || activeTeam === 'away') && !(selectedMatch.source === 'dfb' && !selectedMatch.spiel.includes(' - ') && !isEditMode) && (
                       <View style={[styles.lineupColumn, isMobile && styles.lineupColumnMobile, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                         {!isMobile && (
                           isEditMode ? (

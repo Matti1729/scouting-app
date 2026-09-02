@@ -46,6 +46,8 @@ interface TodayGame {
   ort: string | null;
   fussballDeUrl: string | null;
   isOwn: boolean;
+  /** automatisch von dfb.de gesynct (kein "Ich bin dabei"-Marker) */
+  isDfb?: boolean;
 }
 
 const WEEKDAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -253,6 +255,7 @@ export function DashboardScreen() {
         ort: m.location || null,
         fussballDeUrl: m.fussball_de_url || null,
         isOwn: true,
+        isDfb: m.source === 'dfb',
       }));
       const ownNames = new Set(own.map((g) => g.begegnung));
       const area: TodayGame[] = ((areaRes.data as any[]) || [])
@@ -520,7 +523,7 @@ export function DashboardScreen() {
                       flexDirection: 'row', alignItems: 'center', gap: 4,
                       
                     }}>
-                      {g.isOwn && <View style={styles.attendMarker} />}
+                      {g.isOwn && !g.isDfb && <View style={styles.attendMarker} />}
                       {g.liga ? (
                         <Text style={{ fontSize: 10, color: RETRO.textMuted }}>{g.liga}</Text>
                       ) : null}

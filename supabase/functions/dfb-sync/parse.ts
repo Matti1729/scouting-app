@@ -398,7 +398,8 @@ export function parseKaderPdfItems(items: PdfTextItem[]): DfbKaderPlayer[] {
       };
       const parts: Record<string, string[]> = { nummer: [], nachname: [], vorname: [], verein: [] };
       for (const it of r.items) parts[bucket(it.x)].push(it.str.trim());
-      nummer = parts.nummer.join(' ').trim() || null;
+      // Ziffern kommen teils als getrennte Items ("1","3") → ohne Leerzeichen zusammensetzen
+      nummer = parts.nummer.join('').trim() || null;
       nachname = parts.nachname.join(' ').trim();
       vorname = parts.vorname.join(' ').trim();
       verein = parts.verein.join(' ').trim();
