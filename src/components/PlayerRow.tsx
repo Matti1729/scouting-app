@@ -144,12 +144,15 @@ export const PlayerRow = memo<PlayerRowProps>(({
           keyboardType="number-pad"
           maxLength={3}
         />
-      ) : (
+      ) : player.nummer ? (
         <View style={[styles.playerNumber, { backgroundColor: colors.surfaceSecondary, borderColor: colors.inputBorder }]}>
           <Text style={[styles.playerNumberText, { color: colors.text }]}>
-            {player.nummer?.replace(/^0+/, '') || player.nummer}
+            {player.nummer.replace(/^0+/, '') || player.nummer}
           </Text>
         </View>
+      ) : (
+        // Ohne Rückennummer (z. B. DFB-Kaderliste): kein leeres Kästchen
+        <View style={styles.playerNumber} />
       )}
 
       <View style={styles.playerInfo}>

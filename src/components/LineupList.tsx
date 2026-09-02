@@ -18,7 +18,9 @@ const sortByNumber = (players: Player[]): Player[] => {
     // Dann nach Trikotnummer
     const numA = parseInt(a.nummer, 10) || 999;
     const numB = parseInt(b.nummer, 10) || 999;
-    return numA - numB;
+    if (numA !== numB) return numA - numB;
+    // Ohne Nummer (z. B. DFB-Kader): alphabetisch
+    return `${a.name} ${a.vorname}`.localeCompare(`${b.name} ${b.vorname}`, 'de');
   });
 };
 

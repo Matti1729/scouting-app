@@ -415,9 +415,9 @@ export function parseKaderPdfItems(items: PdfTextItem[]): DfbKaderPlayer[] {
       nummer = m[1]; nachname = m[2]; vorname = m[3]; verein = m[4];
     }
     if (!nachname || !/[a-zäöü]/i.test(nachname)) continue;
-    if (nummer && !/^\d{1,2}$/.test(nummer)) nummer = null;
+    // Die Zahl in DFB-Kaderlisten ist nur eine laufende Nummer, keine Rückennummer → nicht übernehmen
     out.push({
-      nummer,
+      nummer: null,
       vorname,
       name: nachname,
       club: verein || null,

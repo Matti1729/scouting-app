@@ -48,6 +48,8 @@ interface TodayGame {
   isOwn: boolean;
   /** automatisch von dfb.de gesynct (kein "Ich bin dabei"-Marker) */
   isDfb?: boolean;
+  matchDate?: string | null;
+  matchDateEnd?: string | null;
 }
 
 const WEEKDAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -59,6 +61,13 @@ function todayHeader(): string {
 }
 
 /** "Vorname Nachname" -> "Nachname, Vorname" */
+// "2026-09-14" → "14.09.26"
+function fmtShort(iso?: string | null): string {
+  if (!iso) return '-';
+  const [y, m, d] = String(iso).slice(0, 10).split('-');
+  return y && m && d ? `${d}.${m}.${y.slice(-2)}` : String(iso);
+}
+
 function nameLastFirst(fullName: string): string {
   const parts = (fullName || '').trim().split(/\s+/);
   if (parts.length <= 1) return fullName;
@@ -227,7 +236,7 @@ export function DashboardScreen() {
       const [ownRes, areaRes, leaguesRes] = await Promise.all([
         supabase
           .from('scouting_matches')
-          .select('id, home_team, away_team, match_time, age_group, match_type, location, fussball_de_url, source')
+          .select('id, home_team, away_team, match_date, match_date_end, match_time, age_group, match_type, location, fussball_de_url, source')
           .eq('is_archived', false)
           // heute beginnend ODER mehrtägig und heute laufend (DFB-Lehrgänge)
           .or(`match_date.eq.${today},and(match_date.lte.${today},match_date_end.gte.${today})`)
@@ -256,6 +265,8 @@ export function DashboardScreen() {
         fussballDeUrl: m.fussball_de_url || null,
         isOwn: true,
         isDfb: m.source === 'dfb',
+        matchDate: m.match_date || null,
+        matchDateEnd: m.match_date_end || null,
       }));
       const ownNames = new Set(own.map((g) => g.begegnung));
       const area: TodayGame[] = ((areaRes.data as any[]) || [])
@@ -510,12 +521,23 @@ export function DashboardScreen() {
                     paddingVertical: 8, paddingHorizontal: 4,
                     borderRightWidth: 1, borderRightColor: RETRO.rowBorder,
                   }}>
-                    <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text, opacity: 0.75 }} numberOfLines={1}>
-                      Heute
-                    </Text>
-                    <Text style={{ fontSize: 14, fontWeight: '800', color: RETRO.text, marginTop: 1 }} numberOfLines={1}>
-                      {g.zeit || '–'}
-                    </Text>
+                    {g.isDfb && g.matchDateEnd && g.matchDateEnd !== g.matchDate ? (
+                      // Laufender mehrtägiger DFB-Termin: Beginn / bis / Ende
+                      <>
+                        <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text }} numberOfLines={1}>{fmtShort(g.matchDate)}</Text>
+                        <Text style={{ fontSize: 10, fontFamily: MONO, color: RETRO.text, opacity: 0.75, marginTop: 1 }} numberOfLines={1}>bis</Text>
+                        <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text, marginTop: 1 }} numberOfLines={1}>{fmtShort(g.matchDateEnd)}</Text>
+                      </>
+                    ) : (
+                      <>
+                        <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text, opacity: 0.75 }} numberOfLines={1}>
+                          Heute
+                        </Text>
+                        <Text style={{ fontSize: 14, fontWeight: '800', color: RETRO.text, marginTop: 1 }} numberOfLines={1}>
+                          {g.zeit || '–'}
+                        </Text>
+                      </>
+                    )}
                   </View>
                   <View style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, justifyContent: 'center' }}>
                     {/* Zeile 1: Altersklasse + Art (dezente Trennlinie), darunter Heim + Gast */}
@@ -534,7 +556,7 @@ export function DashboardScreen() {
                     {/* Kurzer Trennstrich */}
                     <View style={{ width: 28, height: 1, backgroundColor: 'rgba(198, 194, 186, 0.9)', marginTop: 3 }} />
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                      {g.away ? <TeamLogo name={g.home} map={clubLogoMap} /> : null}
+                      <TeamLogo name={g.away || !g.isDfb ? g.home : 'Deutschland'} map={clubLogoMap} />
                       <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
                         {g.home}
                       </Text>
@@ -546,9 +568,6 @@ export function DashboardScreen() {
                           {g.away}
                         </Text>
                       </View>
-                    ) : null}
-                    {!g.away && g.ort ? (
-                      <Text style={{ color: RETRO.textMuted, fontSize: 13, marginTop: 2 }} numberOfLines={1}>{g.ort}</Text>
                     ) : null}
                   </View>
                 </TouchableOpacity>

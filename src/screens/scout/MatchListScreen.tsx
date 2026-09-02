@@ -1350,7 +1350,8 @@ export function MatchListScreen({ navigation, route }: any) {
     // Bestimmen ob Spieler von Heim- oder Auswärtsmannschaft
     const [homeTeam, awayTeam] = selectedMatch.spiel.split(' - ') || [];
     const isHomePlayer = homeLineup.some(p => p.id === player.id) || homeSubs.some(p => p.id === player.id);
-    const playerClub = isHomePlayer ? homeTeam : awayTeam;
+    // DFB-Kader: Verein aus der Kaderliste (nicht "Lehrgang"); sonst Mannschaft aus der Begegnung
+    const playerClub = player.club || (isHomePlayer ? homeTeam : awayTeam);
 
     // TM-URL und Agent-Info suchen wenn noch nicht vorhanden
     let tmUrl = player.transfermarkt_url;
@@ -2414,12 +2415,29 @@ export function MatchListScreen({ navigation, route }: any) {
                         paddingVertical: 8, paddingHorizontal: 4,
                         borderRightWidth: 1, borderRightColor: RETRO.rowBorder,
                       }}>
-                        <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text, opacity: 0.75 }} numberOfLines={1}>
-                          {isToday ? 'Heute' : formatDateGerman(item.datum, item.datumEnde)}
-                        </Text>
-                        <Text style={{ fontSize: 14, fontWeight: '800', color: RETRO.text, marginTop: 1 }} numberOfLines={1}>
-                          {item.zeit || '–'}
-                        </Text>
+                        {item.source === 'dfb' && item.datumEnde && item.datumEnde !== item.datum ? (
+                          // Mehrtägiger DFB-Termin (Lehrgang/Turnier): Beginn / bis / Ende
+                          <>
+                            <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text }} numberOfLines={1}>
+                              {formatDateGerman(item.datum, null)}
+                            </Text>
+                            <Text style={{ fontSize: 10, fontFamily: MONO, color: RETRO.text, opacity: 0.75, marginTop: 1 }} numberOfLines={1}>
+                              bis
+                            </Text>
+                            <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text, marginTop: 1 }} numberOfLines={1}>
+                              {formatDateGerman(item.datumEnde, null)}
+                            </Text>
+                          </>
+                        ) : (
+                          <>
+                            <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text, opacity: 0.75 }} numberOfLines={1}>
+                              {isToday ? 'Heute' : formatDateGerman(item.datum, item.datumEnde)}
+                            </Text>
+                            <Text style={{ fontSize: 14, fontWeight: '800', color: RETRO.text, marginTop: 1 }} numberOfLines={1}>
+                              {item.zeit || '–'}
+                            </Text>
+                          </>
+                        )}
                       </View>
                       {/* Inhalt: Altersklasse/Art oben, darunter Heim + Gast je eigene Zeile */}
                       <View style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, justifyContent: 'center' }}>
@@ -2442,12 +2460,12 @@ export function MatchListScreen({ navigation, route }: any) {
                         {(() => {
                           const [home, ...rest] = (item.spiel || '').split(' - ');
                           const away = rest.join(' - ');
-                          // DFB-Event ohne Gegner (Lehrgang, Turnier, Camp): kein Wappen, Ort als 2. Zeile
+                          // DFB-Event ohne Gegner (Lehrgang, Turnier, Camp): DFB-Wappen vor dem Titel; Ort nur im Modal
                           const isDfbEvent = !away && item.source === 'dfb';
                           return (
                             <>
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                                {isDfbEvent ? null : <TeamLogo name={home} map={clubLogoMap} />}
+                                <TeamLogo name={isDfbEvent ? 'Deutschland' : home} map={clubLogoMap} />
                                 <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
                                   {home}
                                 </Text>
@@ -2459,11 +2477,6 @@ export function MatchListScreen({ navigation, route }: any) {
                                     {away}
                                   </Text>
                                 </View>
-                              ) : null}
-                              {isDfbEvent && item.ort ? (
-                                <Text style={{ color: RETRO.textMuted, fontSize: 13, marginTop: 2, flexShrink: 1 }} numberOfLines={1}>
-                                  {item.ort}
-                                </Text>
                               ) : null}
                             </>
                           );

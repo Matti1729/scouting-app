@@ -104,7 +104,7 @@ async function syncLineup(
     if (ex) {
       const patch: any = {}
       if (p.club && ex.club !== p.club) patch.club = p.club
-      if (p.nummer && ex.nummer !== p.nummer) patch.nummer = p.nummer
+      if ((ex.nummer || null) !== (p.nummer || null)) patch.nummer = p.nummer
       if (p.isGoalkeeper !== !!ex.is_goalkeeper) patch.is_goalkeeper = p.isGoalkeeper
       if (!ex.jahrgang && jahrgang) patch.jahrgang = jahrgang
       if (!ex.birth_date && birth) patch.birth_date = birth
