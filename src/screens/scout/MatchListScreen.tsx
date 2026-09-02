@@ -305,9 +305,11 @@ const dbMatchToMatch = (dbMatch: DbMatch): Match => ({
   datumEnde: dbMatch.match_date_end || null,
   zeit: dbMatch.match_time || '',
   mannschaft: dbMatch.age_group || 'Herren',
+  // Anzeige immer bereinigt (ohne U-Labels, LZ/NLZ, Klammer-Zusätze) — wie in
+  // den Spielzeilen; die DB behält die Original-Namen
   spiel: dbMatch.away_team
-    ? `${dbMatch.home_team} - ${dbMatch.away_team}`
-    : dbMatch.home_team, // Für Events ohne Gegner (Lehrgänge etc.)
+    ? `${stripAge(dbMatch.home_team)} - ${stripAge(dbMatch.away_team)}`
+    : stripAge(dbMatch.home_team), // Für Events ohne Gegner (Lehrgänge etc.)
   art: dbMatch.match_type || 'Punktspiel',
   ort: dbMatch.location || null,
   fussballDeUrl: dbMatch.fussball_de_url || undefined,
@@ -514,6 +516,9 @@ export function MatchListScreen({ navigation, route }: any) {
   // DFB-Sync State
   const [dfbSyncLoading, setDfbSyncLoading] = useState(false);
   const [showDfbSyncModal, setShowDfbSyncModal] = useState(false);
+  // Mobil: Umschalter Liste/Karte + eingeklapptes Filter-Panel
+  const [mobileView, setMobileView] = useState<'liste' | 'karte'>('liste');
+  const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
 
   // Spielerprofil-Modal State
   const [playerProfileModalVisible, setPlayerProfileModalVisible] = useState(false);
@@ -2436,8 +2441,118 @@ export function MatchListScreen({ navigation, route }: any) {
     );
   };
 
+  // Anstehend-Zähler (übernommene Umgebungs-Spiele nicht doppelt zählen)
+  const anstehendCount = (() => {
+    const ownUrls = new Set(matches.map((m) => m.fussballDeUrl).filter(Boolean));
+    return (
+      matches.filter((m) => !m.isArchived && !isMatchFinished(m.datum)).length +
+      areaMatches.filter((a) => !a.fussballDeUrl || !ownUrls.has(a.fussballDeUrl)).length
+    );
+  })();
+
+  // Spielzeile (Retro): Datum/Zeit-Block links, AK/Art + Teams gestapelt —
+  // gemeinsamer Renderer für Desktop-Liste und mobile Ansicht
+  const renderGameRow = ({ item }: { item: Match }) => {
+    const isToday = isEventActive(item.datum, item.datumEnde);
+    return (
+                    <TouchableOpacity
+                      onPress={() => (viewTab === 'archiv' && !item.isAreaGame ? handleMatchPress(item) : setAreaDetail(item))}
+                      {...(Platform.OS === 'web'
+                        ? ({ onMouseEnter: () => setHoveredMapKey(item.id), onMouseLeave: () => setHoveredMapKey(null) } as any)
+                        : {})}
+                      style={{
+                        flexDirection: 'row', alignItems: 'stretch',
+                        backgroundColor: RETRO.white,
+                        borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder,
+                      }}
+                    >
+                      {/* Datum/Anstoßzeit-Block links (heute: grün statt gelb) */}
+                      <View style={{
+                        width: 86, backgroundColor: isToday ? '#22c55e' : RETRO.yellow,
+                        alignItems: 'center', justifyContent: 'center',
+                        paddingVertical: 8, paddingHorizontal: 4,
+                        borderRightWidth: 1, borderRightColor: RETRO.rowBorder,
+                      }}>
+                        <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text, opacity: 0.75 }} numberOfLines={1}>
+                          {isToday ? 'Heute' : formatDateGerman(item.datum, item.datumEnde)}
+                        </Text>
+                        <Text style={{ fontSize: 14, fontWeight: '800', color: RETRO.text, marginTop: 1 }} numberOfLines={1}>
+                          {item.zeit || '–'}
+                        </Text>
+                      </View>
+                      {/* Inhalt: Altersklasse/Art oben, darunter Heim + Gast je eigene Zeile */}
+                      <View style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, justifyContent: 'center' }}>
+                        <View style={{
+                          flexDirection: 'row', alignItems: 'center', gap: 4,
+                          
+                        }}>
+                          {(!item.isAreaGame || isAreaGameAdded(item)) && (
+                            <View style={{ width: 8, height: 8, borderRadius: 1, backgroundColor: '#e8930c' }} />
+                          )}
+                          {item.mannschaft ? (
+                            <Text style={{ fontSize: 10, color: RETRO.textMuted }}>{item.mannschaft}</Text>
+                          ) : null}
+                          {item.art ? (
+                            <Text style={{ fontSize: 10, color: RETRO.textMuted }}>{item.art}</Text>
+                          ) : null}
+                        </View>
+                        {/* Kurzer Trennstrich */}
+                        <View style={{ width: 28, height: 1, backgroundColor: 'rgba(198, 194, 186, 0.9)', marginTop: 3 }} />
+                        {(() => {
+                          const [home, ...rest] = (item.spiel || '').split(' - ');
+                          const away = rest.join(' - ');
+                          return (
+                            <>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
+                                <TeamLogo name={home} map={clubLogoMap} />
+                                <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
+                                  {home}
+                                </Text>
+                              </View>
+                              {away ? (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                                  <TeamLogo name={away} map={clubLogoMap} />
+                                  <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
+                                    {away}
+                                  </Text>
+                                </View>
+                              ) : null}
+                            </>
+                          );
+                        })()}
+                      {(() => {
+                        const chg = matchChanges.get(item.id);
+                        if (!chg) return null;
+                        const parts: string[] = [];
+                        if (chg.missing) parts.push('Nicht mehr im fussball.de-Spielplan — evtl. abgesetzt/verlegt');
+                        if (chg.newDate) parts.push(`Verlegt auf ${formatDateGerman(chg.newDate, null)}${chg.newTime ? `, ${chg.newTime}` : ''}`);
+                        if (!chg.newDate && chg.newTime) parts.push(`Neue Anstoßzeit: ${chg.newTime}`);
+                        if (chg.newVenue) parts.push(`Neuer Spielort: ${chg.newVenue}`);
+                        return (
+                          <View style={{
+                            backgroundColor: '#fef3c7', borderWidth: 1, borderColor: '#f59e0b',
+                            paddingHorizontal: 8, paddingVertical: 4, marginTop: 5,
+                            flexDirection: 'row', alignItems: 'center', gap: 6,
+                          }}>
+                            <Text style={{ flex: 1, fontSize: 11, color: '#92400e' }}>⚠️ {parts.join(' · ')}</Text>
+                            {!chg.missing && (
+                              <TouchableOpacity
+                                onPress={() => handleApplyMatchChange(item.id)}
+                                style={{ backgroundColor: '#f59e0b', paddingHorizontal: 8, paddingVertical: 3 }}
+                              >
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#451a03' }}>Übernehmen</Text>
+                              </TouchableOpacity>
+                            )}
+                          </View>
+                        );
+                      })()}
+                      </View>
+                    </TouchableOpacity>
+    );
+  };
+
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: isMobile ? colors.background : RETRO.page }]}>
+    <SafeAreaView style={[styles.container, { backgroundColor: RETRO.page }]}>
       {/* Verwaschenes Hintergrundfoto (Anstoss-Optik, nur Desktop) */}
       {!isMobile && (
         <Image
@@ -2452,95 +2567,187 @@ export function MatchListScreen({ navigation, route }: any) {
           resizeMode="cover"
         />
       )}
-      {/* Mobile Header (wie KMH-App) */}
+      {/* Mobile: gelber Titelbalken + Tabs im gelben Bereich, darunter Suche/Filter */}
       {isMobile ? (
         <>
-          {/* Main Header: Burger | Title | Profile */}
-          <View style={[styles.mobileHeader, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-            {/* Burger Menu - exakt wie KMH mit Ionicons */}
+          <RetroHeader
+            title="Spiele-Übersicht"
+            onBack={() => navigation.navigate('Dashboard')}
+          />
+          {/* Tabs auf gelbem Grund (Fortsetzung des Titelbalkens) */}
+          <View style={{
+            flexDirection: 'row', alignItems: 'center', gap: 6,
+            paddingHorizontal: 10, paddingBottom: 10, paddingTop: 2,
+            backgroundColor: RETRO.yellow,
+          }}>
+            {(
+              [
+                { key: 'anstehend' as const, label: `Anstehend (${anstehendCount})` },
+                { key: 'meine' as const, label: `Meine (${meineCount})` },
+                { key: 'archiv' as const, label: `Archiv (${archivedCount})` },
+              ]
+            ).map((t) => (
+              <TouchableOpacity
+                key={t.key}
+                style={[
+                  HARD_SHADOW,
+                  { backgroundColor: RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 8, minHeight: 25, alignItems: 'center' as const, justifyContent: 'center' as const },
+                  viewTab === t.key && { backgroundColor: RETRO.text },
+                ]}
+                onPress={() => setViewTab(t.key)}
+                activeOpacity={0.7}
+              >
+                <Text style={{
+                  fontSize: 11, fontWeight: '700', fontFamily: MONO,
+                  color: viewTab === t.key ? RETRO.yellow : RETRO.text,
+                }}>
+                  {t.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            <View style={{ flex: 1 }} />
             <TouchableOpacity
-              style={[styles.mobileMenuBtn, { backgroundColor: colors.surfaceSecondary }]}
-              onPress={() => navigation.navigate('Dashboard')}
+              style={[HARD_SHADOW, { backgroundColor: RETRO.white, borderRadius: 2, minHeight: 25, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4, justifyContent: 'center' }]}
+              onPress={() => setShowDfbSyncModal(true)}
+              activeOpacity={0.7}
             >
-              <Ionicons name="menu" size={24} color={colors.text} />
-            </TouchableOpacity>
-
-            {/* Title */}
-            <Text style={[styles.mobileHeaderTitle, { color: colors.text }]}>Spiele-Übersicht</Text>
-
-            {/* Profile Button - exakt wie KMH */}
-            <TouchableOpacity
-              style={[styles.mobileProfileBtn, { backgroundColor: colors.primary }]}
-              onPress={() => navigation.navigate('Dashboard')}
-            >
-              <Text style={[styles.mobileProfileInitials, { color: colors.primaryText }]}>SC</Text>
+              <Text style={{ fontSize: 11, fontWeight: '700', fontFamily: MONO, color: RETRO.text }}>DFB</Text>
+              <Ionicons name="refresh" size={12} color={RETRO.text} />
             </TouchableOpacity>
           </View>
-
-          {/* Toolbar: Zurück | Checkbox | Sync */}
-          <View style={[styles.mobileToolbar, { backgroundColor: colors.surface, borderBottomColor: colors.border }]}>
-            {/* Zurück Button - exakt wie KMH */}
+          {/* Suche + Filter + Event anlegen */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingTop: 10 }}>
+            <View style={[HARD_SHADOW, { flex: 1, height: 25, backgroundColor: RETRO.inputBg, borderRadius: 2, justifyContent: 'center', paddingHorizontal: 10 }]}>
+              <TextInput
+                style={{ fontSize: 13, color: RETRO.text, height: '100%', ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : {}) }}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+                placeholder="Team, Spiel, Ort ..."
+                placeholderTextColor={RETRO.textMuted}
+              />
+            </View>
+            {(() => {
+              const filterCount = jahrgangFilter.length + artFilter.length + (dateFilter ? 1 : 0);
+              return (
+                <TouchableOpacity
+                  style={[HARD_SHADOW, { backgroundColor: RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 25, alignItems: 'center', justifyContent: 'center' }, filterCount > 0 && { backgroundColor: RETRO.faceSelected }]}
+                  onPress={() => setMobileFilterOpen(true)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: filterCount > 0 ? '700' : '600', color: RETRO.text }}>
+                    {filterCount > 0 ? `Filter · ${filterCount}` : 'Filter'}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })()}
             <TouchableOpacity
-              style={[styles.mobileBackBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
-              onPress={() => navigation.navigate('Dashboard')}
+              style={[HARD_SHADOW, { backgroundColor: RETRO.headerBg, borderRadius: 2, minHeight: 25, minWidth: 25, alignItems: 'center', justifyContent: 'center' }]}
+              onPress={() => setAddMatchModalVisible(true)}
+              activeOpacity={0.7}
             >
-              <Text style={[styles.mobileBackBtnText, { color: colors.textSecondary }]}>← Zurück</Text>
+              <Text style={{ fontSize: 14, fontWeight: '700', color: '#ffffff', lineHeight: 16 }}>+</Text>
             </TouchableOpacity>
-
-            <View style={{ flex: 1 }} />
-
-            {/* Alle auswählen - exakt wie KMH mit Ionicons */}
+          </View>
+          {/* Umschalter Liste/Karte: volle Segmente (wie blauer Listen-Header) */}
+          <View style={[HARD_SHADOW, { flexDirection: 'row', marginTop: 12 }]}>
             <TouchableOpacity
               style={[
-                styles.mobileIconBtn,
-                { backgroundColor: colors.surfaceSecondary, borderColor: colors.border },
-                filteredMatches.length > 0 && filteredMatches.every(m => selectedMatches.includes(m.id)) && styles.mobileIconBtnActive
+                { flex: 1, paddingVertical: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: RETRO.face },
+                mobileView === 'liste' && [{ backgroundColor: RETRO.headerBg }, BLUE_GRADIENT],
               ]}
-              onPress={toggleSelectAll}
+              onPress={() => setMobileView('liste')}
+              activeOpacity={0.7}
             >
-              <Ionicons
-                name={filteredMatches.length > 0 && filteredMatches.every(m => selectedMatches.includes(m.id)) ? "checkbox" : "checkbox-outline"}
-                size={18}
-                color={filteredMatches.length > 0 && filteredMatches.every(m => selectedMatches.includes(m.id)) ? "#fff" : colors.textSecondary}
-              />
+              <Text style={{
+                fontSize: 11, fontWeight: '700', fontFamily: MONO, letterSpacing: 1.5,
+                color: mobileView === 'liste' ? '#ffffff' : RETRO.text,
+              }}>
+                {`${viewTab === 'archiv' ? 'ARCHIV' : viewTab === 'meine' ? 'MEINE SPIELE' : 'SPIELE'} (${filteredMatches.length})`}
+              </Text>
             </TouchableOpacity>
-
-            {/* DFB-Sync */}
-            <TouchableOpacity
-              style={[styles.mobileIconBtn, { backgroundColor: colors.surfaceSecondary, borderColor: colors.border }]}
-              onPress={() => setShowDfbSyncModal(true)}
-            >
-              <Text style={[styles.mobileIconBtnText, { color: colors.textSecondary }]}>↻</Text>
-            </TouchableOpacity>
+            {!showArchive && (
+              <TouchableOpacity
+                style={[
+                  { flex: 1, paddingVertical: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: RETRO.face },
+                  mobileView === 'karte' && [{ backgroundColor: RETRO.headerBg }, BLUE_GRADIENT],
+                ]}
+                onPress={() => setMobileView('karte')}
+                activeOpacity={0.7}
+              >
+                <Text style={{
+                  fontSize: 11, fontWeight: '700', fontFamily: MONO, letterSpacing: 1.5,
+                  color: mobileView === 'karte' ? '#ffffff' : RETRO.text,
+                }}>KARTE</Text>
+              </TouchableOpacity>
+            )}
           </View>
-
-          {/* Toggle: Anstehend | Meine Spiele | Archiv */}
-          <View style={[styles.mobileToggle, { backgroundColor: colors.surfaceSecondary }]}>
-            <TouchableOpacity
-              style={[styles.mobileToggleBtn, viewTab === 'anstehend' && [styles.mobileToggleBtnActive, { backgroundColor: colors.surface }]]}
-              onPress={() => setViewTab('anstehend')}
-            >
-              <Text style={[styles.mobileToggleBtnText, { color: colors.textSecondary }, viewTab === 'anstehend' && { color: colors.text, fontWeight: '600' }]}>
-                Anstehend ({matches.filter(m => !m.isArchived && !isMatchFinished(m.datum)).length + areaMatches.length})
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.mobileToggleBtn, viewTab === 'meine' && [styles.mobileToggleBtnActive, { backgroundColor: colors.surface }]]}
-              onPress={() => setViewTab('meine')}
-            >
-              <Text style={[styles.mobileToggleBtnText, { color: colors.textSecondary }, viewTab === 'meine' && { color: colors.text, fontWeight: '600' }]}>
-                Meine ({meineCount})
-              </Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={[styles.mobileToggleBtn, viewTab === 'archiv' && [styles.mobileToggleBtnActive, { backgroundColor: colors.surface }]]}
-              onPress={() => setViewTab('archiv')}
-            >
-              <Text style={[styles.mobileToggleBtnText, { color: colors.textSecondary }, viewTab === 'archiv' && { color: colors.text, fontWeight: '600' }]}>
-                Archiv ({archivedCount})
-              </Text>
-            </TouchableOpacity>
-          </View>
+          {/* Filter-Panel (Datum / Jahrgang / Art) */}
+          {mobileFilterOpen && (
+            <Modal visible transparent animationType="fade" onRequestClose={() => setMobileFilterOpen(false)}>
+              <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }} onPress={() => setMobileFilterOpen(false)}>
+                <Pressable style={[HARD_SHADOW_LG, { backgroundColor: '#e9e5dd', borderRadius: 2, paddingBottom: 12 }]}>
+                  <View style={[HARD_SHADOW, { backgroundColor: RETRO.yellow, paddingVertical: 8, paddingHorizontal: 12, margin: 10, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }]}>
+                    <Text style={{ fontSize: 16, fontWeight: '700', color: RETRO.text, flex: 1 }}>Filter</Text>
+                    <TouchableOpacity onPress={() => setMobileFilterOpen(false)} hitSlop={8}>
+                      <Ionicons name="close" size={20} color={RETRO.text} />
+                    </TouchableOpacity>
+                  </View>
+                  {Platform.OS === 'web' && (
+                    <View style={{ paddingHorizontal: 12, marginBottom: 8 }}>
+                      {React.createElement('input' as any, {
+                        type: 'date',
+                        value: dateFilter,
+                        onChange: (e: any) => setDateFilter(e.target.value),
+                        style: { background: RETRO.inputBg, color: RETRO.text, border: 'none', borderRadius: 0, padding: '0 8px', height: 25, fontSize: 12, colorScheme: 'light', width: '100%', boxShadow: '2px 2px 3px rgba(20, 20, 45, 0.45)' },
+                      })}
+                    </View>
+                  )}
+                  <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, letterSpacing: 1, color: RETRO.textMuted, paddingHorizontal: 12, marginTop: 4 }}>JAHRGANG</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 12, paddingTop: 6 }}>
+                    {jahrgangOptions.map((j) => (
+                      <TouchableOpacity
+                        key={j}
+                        style={[HARD_SHADOW, { backgroundColor: jahrgangFilter.includes(j) ? RETRO.faceSelected : RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 24 }]}
+                        onPress={() => setJahrgangFilter((prev) => prev.includes(j) ? prev.filter((x) => x !== j) : [...prev, j])}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{j}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, letterSpacing: 1, color: RETRO.textMuted, paddingHorizontal: 12, marginTop: 12 }}>ART</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 12, paddingTop: 6 }}>
+                    {SPIELART_OPTIONS.map((o) => (
+                      <TouchableOpacity
+                        key={o.value}
+                        style={[HARD_SHADOW, { backgroundColor: artFilter.includes(o.value) ? RETRO.faceSelected : RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 24 }]}
+                        onPress={() => setArtFilter((prev) => prev.includes(o.value) ? prev.filter((x) => x !== o.value) : [...prev, o.value])}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{o.label}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, paddingHorizontal: 12, paddingTop: 14 }}>
+                    <TouchableOpacity
+                      style={[HARD_SHADOW, { backgroundColor: RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 24 }]}
+                      onPress={() => { setJahrgangFilter([]); setArtFilter([]); setDateFilter(''); }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Zurücksetzen</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[HARD_SHADOW, { backgroundColor: '#1a5f2a', borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 24 }]}
+                      onPress={() => setMobileFilterOpen(false)}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: '#ffffff' }}>Fertig</Text>
+                    </TouchableOpacity>
+                  </View>
+                </Pressable>
+              </Pressable>
+            </Modal>
+          )}
         </>
       ) : (
         <>
@@ -2862,108 +3069,7 @@ export function MatchListScreen({ navigation, route }: any) {
                 style={{ marginTop: 12 }}
                 data={filteredMatches}
                 keyExtractor={(item) => item.id}
-                renderItem={({ item }) => {
-                  const badge = getMatchTypeBadgeStyle(item.art);
-                  const isToday = isEventActive(item.datum, item.datumEnde);
-                  return (
-                    <TouchableOpacity
-                      onPress={() => (viewTab === 'archiv' && !item.isAreaGame ? handleMatchPress(item) : setAreaDetail(item))}
-                      {...(Platform.OS === 'web'
-                        ? ({ onMouseEnter: () => setHoveredMapKey(item.id), onMouseLeave: () => setHoveredMapKey(null) } as any)
-                        : {})}
-                      style={{
-                        flexDirection: 'row', alignItems: 'stretch',
-                        backgroundColor: RETRO.white,
-                        borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder,
-                      }}
-                    >
-                      {/* Datum/Anstoßzeit-Block links (heute: grün statt gelb) */}
-                      <View style={{
-                        width: 86, backgroundColor: isToday ? '#22c55e' : RETRO.yellow,
-                        alignItems: 'center', justifyContent: 'center',
-                        paddingVertical: 8, paddingHorizontal: 4,
-                        borderRightWidth: 1, borderRightColor: RETRO.rowBorder,
-                      }}>
-                        <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text, opacity: 0.75 }} numberOfLines={1}>
-                          {isToday ? 'Heute' : formatDateGerman(item.datum, item.datumEnde)}
-                        </Text>
-                        <Text style={{ fontSize: 14, fontWeight: '800', color: RETRO.text, marginTop: 1 }} numberOfLines={1}>
-                          {item.zeit || '–'}
-                        </Text>
-                      </View>
-                      {/* Inhalt: Begegnung + Altersklasse/Spielart */}
-                      <View style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, justifyContent: 'center' }}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                          {(!item.isAreaGame || isAreaGameAdded(item)) && (
-                            <View style={{ width: 8, height: 8, borderRadius: 1, backgroundColor: '#e8930c' }} />
-                          )}
-                          {(() => {
-                            // Begegnung splitten, Wappen innen am "-" (wie im Dashboard)
-                            const [home, ...rest] = (item.spiel || '').split(' - ');
-                            const away = rest.join(' - ');
-                            if (!away) {
-                              return (
-                                <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
-                                  {item.spiel}
-                                </Text>
-                              );
-                            }
-                            
-                            return (
-                              <>
-                                <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
-                                  {home}
-                                </Text>
-                                <TeamLogo name={home} map={clubLogoMap} />
-                                <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700' }}>-</Text>
-                                <TeamLogo name={away} map={clubLogoMap} />
-                                <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
-                                  {away}
-                                </Text>
-                              </>
-                            );
-                          })()}
-                        </View>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 }}>
-                          {item.mannschaft ? (
-                            <Text style={{ fontSize: 10, color: RETRO.textMuted }}>{item.mannschaft}</Text>
-                          ) : null}
-                          {item.art ? (
-                            <Text style={{ fontSize: 10, color: RETRO.textMuted }}>
-                              {item.art}
-                            </Text>
-                          ) : null}
-                        </View>
-                      {(() => {
-                        const chg = matchChanges.get(item.id);
-                        if (!chg) return null;
-                        const parts: string[] = [];
-                        if (chg.missing) parts.push('Nicht mehr im fussball.de-Spielplan — evtl. abgesetzt/verlegt');
-                        if (chg.newDate) parts.push(`Verlegt auf ${formatDateGerman(chg.newDate, null)}${chg.newTime ? `, ${chg.newTime}` : ''}`);
-                        if (!chg.newDate && chg.newTime) parts.push(`Neue Anstoßzeit: ${chg.newTime}`);
-                        if (chg.newVenue) parts.push(`Neuer Spielort: ${chg.newVenue}`);
-                        return (
-                          <View style={{
-                            backgroundColor: '#fef3c7', borderWidth: 1, borderColor: '#f59e0b',
-                            paddingHorizontal: 8, paddingVertical: 4, marginTop: 5,
-                            flexDirection: 'row', alignItems: 'center', gap: 6,
-                          }}>
-                            <Text style={{ flex: 1, fontSize: 11, color: '#92400e' }}>⚠️ {parts.join(' · ')}</Text>
-                            {!chg.missing && (
-                              <TouchableOpacity
-                                onPress={() => handleApplyMatchChange(item.id)}
-                                style={{ backgroundColor: '#f59e0b', paddingHorizontal: 8, paddingVertical: 3 }}
-                              >
-                                <Text style={{ fontSize: 11, fontWeight: '700', color: '#451a03' }}>Übernehmen</Text>
-                              </TouchableOpacity>
-                            )}
-                          </View>
-                        );
-                      })()}
-                      </View>
-                    </TouchableOpacity>
-                  );
-                }}
+                renderItem={renderGameRow}
                 ListEmptyComponent={
                   <View style={styles.emptyState}>
                     <Text style={[styles.emptyText, { color: RETRO.textMuted }]}>
@@ -2989,50 +3095,29 @@ export function MatchListScreen({ navigation, route }: any) {
           )}
         </View>
       ) : (
-        /* Mobile: Card-Layout */
-        <>
-          <FlatList
-            data={filteredMatches}
-            keyExtractor={(item) => item.id}
-            renderItem={renderMatchCard}
-            style={styles.cardList}
-            contentContainerStyle={styles.cardListContent}
-            ListEmptyComponent={
-              <View style={styles.emptyState}>
-                <Text style={styles.emptyIcon}>📅</Text>
-                <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-                  {viewTab === 'archiv' ? 'Keine archivierten Spiele' : 'Keine anstehenden Spiele'}
-                </Text>
-                {!showArchive && (
-                  <TouchableOpacity
-                    style={[styles.emptyButton, { backgroundColor: colors.primary }]}
-                    onPress={() => setAddMatchModalVisible(true)}
-                  >
-                    <Text style={[styles.emptyButtonText, { color: colors.primaryText }]}>Spiel anlegen</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            }
-          />
-
-          {/* Floating Export Button (wenn Spiele ausgewählt) */}
-          {selectedMatches.length > 0 && (
-            <TouchableOpacity
-              style={styles.floatingExportBtn}
-              onPress={exportSelectedToCalendar}
-            >
-              <Text style={styles.floatingExportBtnText}>{selectedMatches.length} exportieren</Text>
-            </TouchableOpacity>
+        /* Mobile: gleiche Retro-Zeilen wie am Desktop; Liste ODER Karte (Segmente oben) */
+        <View style={{ flex: 1 }}>
+          {mobileView === 'liste' || showArchive ? (
+            <View style={[HARD_SHADOW, { flex: 1, backgroundColor: RETRO.panel }]}>
+              <FlatList
+                data={filteredMatches}
+                keyExtractor={(item) => item.id}
+                renderItem={renderGameRow}
+                ListEmptyComponent={
+                  <View style={styles.emptyState}>
+                    <Text style={[styles.emptyText, { color: RETRO.textMuted }]}>
+                      {viewTab === 'archiv' ? 'Keine archivierten Spiele' : 'Keine Spiele gefunden'}
+                    </Text>
+                  </View>
+                }
+              />
+            </View>
+          ) : (
+            <View style={[HARD_SHADOW_LG, { flex: 1, overflow: 'hidden' }]}>
+              <GamesMapView features={mapFeatures} hoverKey={hoveredMapKey} />
+            </View>
           )}
-
-          {/* Floating Add Button */}
-          <TouchableOpacity
-            style={[styles.floatingAddBtn, { backgroundColor: colors.surface, borderColor: colors.border }]}
-            onPress={() => setAddMatchModalVisible(true)}
-          >
-            <Text style={[styles.floatingAddBtnText, { color: colors.text }]}>+</Text>
-          </TouchableOpacity>
-        </>
+        </View>
       )}
 
       {/* Match Detail Modal */}

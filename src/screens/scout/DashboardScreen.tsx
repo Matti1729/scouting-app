@@ -14,6 +14,7 @@ import {
   Platform,
   Linking,
   ActivityIndicator,
+  useWindowDimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
@@ -65,6 +66,8 @@ function nameLastFirst(fullName: string): string {
 export function DashboardScreen() {
   const navigation = useNavigation<NavigationProp>();
   const { signOut } = useAuth();
+  const { width } = useWindowDimensions();
+  const isMobile = width < 768;
 
   const [upcomingMatches, setUpcomingMatches] = useState(0);
   const [stipendiumCount, setStipendiumCount] = useState(0);
@@ -476,10 +479,10 @@ export function DashboardScreen() {
           {statCard('SPORTSTIPENDIUM', String(stipendiumCount), 'Kandidaten im Prozess', 'ÖFFNEN', () => navigation.navigate('Sportstipendium'))}
         </View>
 
-        {/* Untere Reihe: Heute + zuletzt hinzugefügte Watchlist-Spieler */}
-        <View style={styles.bottomRow}>
+        {/* Untere Reihe: Heute + Zielspieler (mobil: Zielspieler ZUERST) */}
+        <View style={[styles.bottomRow, isMobile && { flexDirection: 'column-reverse', flexWrap: 'nowrap' as const }]}>
           {/* Heutige Spiele */}
-          <View style={[styles.panelCard, styles.panelHeute, HARD_SHADOW]}>
+          <View style={[styles.panelCard, styles.panelHeute, HARD_SHADOW, isMobile && ({ flexBasis: 'auto' } as any)]}>
             {chip(`HEUTE${todayGames.length > 0 ? ` (${todayGames.length})` : ''}`, true)}
             {todayGames.length === 0 ? (
               <Text style={styles.emptyText}>Heute keine Spiele</Text>
@@ -511,28 +514,35 @@ export function DashboardScreen() {
                     </Text>
                   </View>
                   <View style={{ flex: 1, paddingVertical: 8, paddingHorizontal: 12, justifyContent: 'center' }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    {/* Zeile 1: Altersklasse + Art (dezente Trennlinie), darunter Heim + Gast */}
+                    <View style={{
+                      flexDirection: 'row', alignItems: 'center', gap: 4,
+                      
+                    }}>
                       {g.isOwn && <View style={styles.attendMarker} />}
-                      <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
-                        {g.home}
-                      </Text>
-                      <TeamLogo name={g.home} map={clubLogoMap} />
-                      <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700' }}>-</Text>
-                      <TeamLogo name={g.away} map={clubLogoMap} />
-                      <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
-                        {g.away}
-                      </Text>
-                    </View>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 }}>
                       {g.liga ? (
                         <Text style={{ fontSize: 10, color: RETRO.textMuted }}>{g.liga}</Text>
                       ) : null}
                       {g.art ? (
-                        <Text style={{ fontSize: 10, color: RETRO.textMuted }}>
-                          {g.art}
-                        </Text>
+                        <Text style={{ fontSize: 10, color: RETRO.textMuted }}>{g.art}</Text>
                       ) : null}
                     </View>
+                    {/* Kurzer Trennstrich */}
+                    <View style={{ width: 28, height: 1, backgroundColor: 'rgba(198, 194, 186, 0.9)', marginTop: 3 }} />
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
+                      <TeamLogo name={g.home} map={clubLogoMap} />
+                      <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
+                        {g.home}
+                      </Text>
+                    </View>
+                    {g.away ? (
+                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                        <TeamLogo name={g.away} map={clubLogoMap} />
+                        <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
+                          {g.away}
+                        </Text>
+                      </View>
+                    ) : null}
                   </View>
                 </TouchableOpacity>
               ))
@@ -540,7 +550,7 @@ export function DashboardScreen() {
           </View>
 
           {/* Zuletzt zur Watchlist hinzugefügt */}
-          <View style={[styles.panelCard, styles.panelWatchlist, HARD_SHADOW]}>
+          <View style={[styles.panelCard, styles.panelWatchlist, HARD_SHADOW, isMobile && ({ flexBasis: 'auto' } as any)]}>
             {chip('ZIELSPIELER', true)}
             <View style={styles.tableHead}>
               <Text style={[styles.tableHeadText, { flex: 1 }]}>SPIELER</Text>
@@ -838,7 +848,9 @@ export function DashboardScreen() {
           <Pressable style={styles.detailOverlay} onPress={() => setGameDetail(null)}>
             <Pressable style={[styles.detailModal, HARD_SHADOW_LG]}>
               <View style={[styles.detailNameBar, HARD_SHADOW]}>
-                <Text style={styles.detailNameText} numberOfLines={2}>{gameDetail.begegnung}</Text>
+                <Text style={styles.detailNameText} numberOfLines={2}>
+                  {gameDetail.away ? `${gameDetail.home} - ${gameDetail.away}` : gameDetail.home}
+                </Text>
                 {gameDetail.fussballDeUrl ? (
                   <TouchableOpacity
                     onPress={() => openFussballDe(gameDetail.fussballDeUrl as string)}

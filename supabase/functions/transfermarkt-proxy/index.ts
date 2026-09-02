@@ -59,6 +59,13 @@ serve(async (req) => {
     if (clubSearch) {
       const url = `https://www.transfermarkt.de/schnellsuche/ergebnis/schnellsuche?query=${encodeURIComponent(clubSearch)}`
       const res = await fetchWithRetry(url)
+      if (!res.ok) {
+        // TM drosselt/blockt gerade -> Client darf es später erneut versuchen
+        return new Response(
+          JSON.stringify({ success: true, club: null, retryable: true }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' }, status: 200 }
+        )
+      }
       const html = await res.text()
       // Erster Vereins-Treffer: <a title="TSGV Waldstetten" href="/tsgv-waldstetten/startseite/verein/25538">
       const m = html.match(/title="([^"]*)"\s+href="\/[^"]*\/startseite\/verein\/(\d+)"/)

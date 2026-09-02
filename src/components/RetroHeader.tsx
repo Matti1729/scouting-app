@@ -22,11 +22,14 @@ export function RetroHeader({
   subtitle,
   onBack,
   right,
+  hideDate,
 }: {
   title: string;
   subtitle?: string;
   onBack?: () => void;
   right?: React.ReactNode;
+  /** Datum-Box ausblenden (mobil, wenig Platz) */
+  hideDate?: boolean;
 }) {
   const { signOut } = useAuth();
   const [initials, setInitials] = useState('');
@@ -50,9 +53,11 @@ export function RetroHeader({
         {subtitle ? <Text style={styles.subtitle}>{subtitle}</Text> : null}
       </View>
       {right}
-      <View style={[styles.box, HARD_SHADOW]}>
-        <Text style={styles.boxText}>{todayHeader()}</Text>
-      </View>
+      {!hideDate && (
+        <View style={[styles.box, HARD_SHADOW]}>
+          <Text style={styles.boxText}>{todayHeader()}</Text>
+        </View>
+      )}
       <TouchableOpacity style={[styles.box, HARD_SHADOW]} onPress={signOut} activeOpacity={0.7}>
         <Text style={styles.boxText}>{initials || '⎋'}</Text>
       </TouchableOpacity>

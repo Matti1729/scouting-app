@@ -349,8 +349,9 @@ export function EvalHeader({
         )}
       </View>
 
-      {/* VERTRAG (zIndex: Beraterverlauf-Dropdown liegt über dem Inhalt darunter) */}
-      <View style={[styles.card, HARD_SHADOW, { zIndex: 30 }]}>
+      {/* VERTRAG + POTENTIAL immer nebeneinander (wie im Spielerprofil, auch mobil) */}
+      <View style={styles.vertragPotentialGroup}>
+      <View style={[styles.card, HARD_SHADOW, { zIndex: 30, minWidth: 180, flex: 1 }]}>
         {chip('VERTRAG')}
         {row('Vertrag bis', formatIsoDate(contractUntil) || '—')}
         {row('Marktwert', marketValue || '—')}
@@ -459,6 +460,7 @@ export function EvalHeader({
           </TouchableOpacity>
         </View>
       </View>
+      </View>
     </View>
 
     {/* Zeile 2: Einsätze + Berichte (wie im Spielerprofil) */}
@@ -554,15 +556,23 @@ const styles = StyleSheet.create({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 16,
-    marginBottom: 6,
+    gap: 14,
+    marginBottom: 0,
+    zIndex: 30,
+  },
+  // Vertrag + Potential als Paar (bricht als Ganzes um, mobil nebeneinander)
+  vertragPotentialGroup: {
+    flex: 1.6,
+    minWidth: 330,
+    flexDirection: 'row',
+    gap: 14,
     zIndex: 30,
   },
   gridLower: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 16,
-    marginTop: 10,
+    gap: 14,
+    marginTop: 14,
     marginBottom: 6,
     zIndex: 1,
   },
@@ -681,7 +691,7 @@ const styles = StyleSheet.create({
   },
   card: {
     flex: 1,
-    minWidth: 260,
+    minWidth: 240,
     backgroundColor: '#ffffff',
     borderRadius: 2,
     paddingHorizontal: 12,
@@ -741,24 +751,25 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   cardRow: {
+    // exakt wie im Spielerprofil (PlayerDetailModal)
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
-    paddingVertical: 7,
+    paddingVertical: 5,
     borderBottomWidth: 1,
-    borderBottomColor: '#e5e1d8',
-    minHeight: 34,
+    borderBottomColor: '#e2ded6',
   },
   cardRowLabel: {
     fontSize: 13,
-    color: RETRO.text,
+    color: '#4a4a55',
   },
   cardRowValue: {
     fontSize: 13,
     fontWeight: '700',
     color: RETRO.text,
     flexShrink: 1,
+    textAlign: 'right',
   },
   clubValue: {
     flexDirection: 'row',

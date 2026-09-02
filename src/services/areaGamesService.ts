@@ -123,9 +123,9 @@ export function stripAge(name: string): string {
   return (name || '')
     // \b vor dem U: "VfB Zwenkau 02" darf NICHT als "U 02"-Label gelesen werden
     .replace(/\s*\bU[\s-]?(\d{2})\b/gi, (_full, num) => (parseInt(num, 10) >= 20 ? ' II' : ''))
-    // NLZ-Zusätze und Klammer-Anhänge ("LZ", "NLZ", "(BuLig/NLZ-Runde)") raus
+    // Abteilungs-/NLZ-Zusätze und Klammer-Anhänge raus ("LZ", "NLZ", "Fußball")
     .replace(/\s*\([^)]*\)/g, '')
-    .replace(/\b(N?LZ)\b/g, '')
+    .replace(/\b(N?LZ|Fußball|Fussball)\b/g, '')
     .replace(/\(\s*\)/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim();
@@ -136,8 +136,18 @@ export function stripAge(name: string): string {
 export function clubBase(name: string): string {
   return (name || '')
     .toLowerCase()
+    // Akzente vereinheitlichen ("René" = "Rene"); deutsche Umlaute bleiben
+    .replace(/[áàâã]/g, 'a')
+    .replace(/[éèêë]/g, 'e')
+    .replace(/[íìî]/g, 'i')
+    .replace(/[óòôõ]/g, 'o')
+    .replace(/[úùû]/g, 'u')
+    .replace(/ç/g, 'c')
+    .replace(/\brasenballsport\b/g, 'rb')
     .replace(/\s*\([^)]*\)/g, '')
     .replace(/\bu[\s-]?\d{1,2}\b/g, '')
+    // Abteilungs-/Team-Zusätze von fussball.de: "Fußball", "B-Junioren", "B1"
+    .replace(/\b(fußball|fussball|[a-d][\s-]?junior(en|innen)|junior(en|innen)|[a-d]\d)\b/g, '')
     .replace(/\b(ii|iii|iv|2|3|1\.hr\.?|lz|nlz)\b/g, '')
     .replace(/\b\d{2,4}\b/g, '')
     .replace(/[().]/g, ' ')
@@ -149,7 +159,8 @@ export function clubBase(name: string): string {
  *  — Fallback, wenn fussball.de und Transfermarkt den Verein unterschiedlich führen */
 function clubCore(base: string): string {
   return base
-    .replace(/\b(1|fc|sv|tsv|vfb|vfl|sc|tsg|spvgg|fsv|sg|bv|msv|ksv|dsc|djk|fv)\b/g, ' ')
+    // Rechtsform-/Kürzel-Tokens raus; "f c" entsteht aus "F.C." nach Punkt-Strip
+    .replace(/\b(1|f|c|e|v|fc|sv|tsv|vfb|vfl|vfr|sc|tsg|tus|spvgg|spvg|spfr|sportfreunde|sf|fsv|sg|vsg|sgv|bsg|bsc|esv|bv|msv|ksv|dsc|djk|fv)\b/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -216,7 +227,7 @@ export function clubLogoUriFor(map: Map<string, string>, teamName: string): stri
 // On-Demand-Wappen: Vereine außerhalb unserer Ligen (Amateure usw.) einmalig
 // über die TM-Schnellsuche auflösen; Ergebnis dauerhaft im localStorage cachen.
 // ---------------------------------------------------------------------------
-const CLUB_RESOLVE_CACHE_KEY = 'tm_club_resolve_v2';
+const CLUB_RESOLVE_CACHE_KEY = 'tm_club_resolve_v6';
 let resolveCache: Record<string, string> | null = null; // clubBase -> tm_club_id | 'none'
 const pendingResolve = new Map<string, Promise<string | null>>();
 let resolveChain: Promise<unknown> = Promise.resolve();
@@ -249,17 +260,51 @@ export function resolveClubLogoUri(teamName: string): Promise<string | null> {
     const c = loadResolveCache();
     if (c[b]) return c[b] === 'none' ? null : clubWappenUrl(c[b]);
     try {
-      const { data } = await supabase.functions.invoke('transfermarkt-proxy', {
-        body: { clubSearch: stripAge(teamName) },
-      });
-      const club = (data as any)?.club;
-      // Plausibilität: gefundener Vereinsname muss zur Anfrage passen
-      const rb = clubBase(club?.club_name || '');
-      const ok = !!club && !!rb && (rb === b || rb.includes(b) || b.includes(rb) || clubCore(rb) === clubCore(b));
-      c[b] = ok ? String(club.tm_club_id) : 'none';
-      saveResolveCache();
-      // TM nicht fluten: kleine Pause zwischen Suchen
-      await new Promise((r) => setTimeout(r, 400));
+      // Plausibilität: gefundener Vereinsname muss zur Anfrage passen.
+      // Auch ok: Kern-Tokens der einen Seite sind Teilmenge der anderen
+      // ("SGV Freiberg" <-> "SGV Heilbronn-Freiberg")
+      const plausible = (name: string | null | undefined): boolean => {
+        const rb = clubBase(name || '');
+        if (!rb) return false;
+        if (rb === b || rb.includes(b) || b.includes(rb) || clubCore(rb) === clubCore(b)) return true;
+        const ta = clubCore(b).split(/[\s-]+/).filter(Boolean);
+        const tb = clubCore(rb).split(/[\s-]+/).filter(Boolean);
+        if (!ta.length || !tb.length) return false;
+        const [short, long] = ta.length <= tb.length ? [ta, new Set(tb)] : [tb, new Set(ta)];
+        return short.every((t) => long.has(t));
+      };
+      let throttled = false;
+      const search = async (q: string): Promise<any> => {
+        const { data } = await supabase.functions.invoke('transfermarkt-proxy', {
+          body: { clubSearch: q },
+        });
+        if ((data as any)?.retryable) throttled = true;
+        return (data as any)?.club || null;
+      };
+      // Suchkandidaten: bereinigter Name -> Vereinskern -> ohne letzten
+      // Namensteil (Stadt-Suffixe wie "VSG Altglienicke Berlin")
+      const candidates: string[] = [b];
+      const core = clubCore(b);
+      if (core && core.length >= 5 && core !== b) candidates.push(core);
+      const parts = b.split(' ');
+      if (parts.length >= 3) candidates.push(parts.slice(0, -1).join(' '));
+      let club: any = null;
+      for (const q of candidates) {
+        const found = await search(q);
+        if (found && plausible(found.club_name)) { club = found; break; }
+        await new Promise((r) => setTimeout(r, 900));
+      }
+      const ok = !!club && plausible(club.club_name);
+      if (ok) {
+        c[b] = String(club.tm_club_id);
+        saveResolveCache();
+      } else if (!throttled) {
+        // Nur als "nicht gefunden" merken, wenn TM wirklich geantwortet hat
+        c[b] = 'none';
+        saveResolveCache();
+      }
+      // TM nicht fluten: Pause zwischen Vereinen
+      await new Promise((r) => setTimeout(r, 900));
       return ok ? clubWappenUrl(String(club.tm_club_id)) : null;
     } catch {
       return null;
