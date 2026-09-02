@@ -65,6 +65,8 @@ export interface Player {
   fussball_de_url?: string;
   isGoalkeeper?: boolean;
   isCaptain?: boolean;
+  /** Verein (z. B. aus DFB-Kader) */
+  club?: string;
 }
 
 export interface PlayerRowProps {
@@ -191,6 +193,11 @@ export const PlayerRow = memo<PlayerRowProps>(({
               {ageDisplay && (
                 <Text style={[styles.playerJahrgang, { color: colors.textSecondary }]}>
                   ({ageDisplay})
+                </Text>
+              )}
+              {player.club && (
+                <Text style={[styles.playerJahrgang, { color: colors.textSecondary }]} numberOfLines={1}>
+                  {player.club}
                 </Text>
               )}
               {player.agent_name && (

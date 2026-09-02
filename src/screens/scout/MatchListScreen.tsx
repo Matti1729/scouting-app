@@ -85,13 +85,6 @@ import {
   DbLineup,
 } from '../../services/matchService';
 import {
-  getRelevantTermine,
-  convertToMatchFormat,
-  getDFBTermineCount,
-  getHallenTermineCount,
-  getLastUpdateDisplay,
-} from '../../services/dfbTermine';
-import {
   checkMatchChanges,
   applyMatchChange,
   MatchChangeInfo,
@@ -145,6 +138,8 @@ interface Match {
   fussballDeUrl?: string;
   ergebnis?: string;
   isArchived?: boolean;
+  // 'dfb' = automatisch von dfb.de gesynct (Termine U15–U21 + Kader)
+  source?: string | null;
   // Spiele "in der Umgebung" (aus der KMH-Datenbank, read-only)
   isAreaGame?: boolean;
   lat?: number | null;
@@ -169,6 +164,7 @@ interface Player {
   fussball_de_url?: string;
   isGoalkeeper?: boolean;  // Torwart-Flag aus Scraper
   isCaptain?: boolean;  // Kapitän-Flag
+  club?: string;  // Verein (DFB-Kader)
 }
 
 // Leere Aufstellungen - werden erst durch Import oder manuelle Eingabe gefüllt
@@ -315,6 +311,7 @@ const dbMatchToMatch = (dbMatch: DbMatch): Match => ({
   fussballDeUrl: dbMatch.fussball_de_url || undefined,
   ergebnis: dbMatch.result || undefined,
   isArchived: dbMatch.is_archived,
+  source: dbMatch.source || null,
 });
 
 // Wochentag als Zwei-Buchstaben-Kürzel ("Mi") für die Titelleiste
@@ -371,6 +368,7 @@ const dbLineupToPlayer = (dbLineup: DbLineup): Player => ({
   fussball_de_url: dbLineup.fussball_de_url || undefined,
   isGoalkeeper: dbLineup.is_goalkeeper ?? false,
   isCaptain: dbLineup.is_captain ?? false,
+  club: dbLineup.club || undefined,
 });
 
 const MATCH_COLUMNS: ColumnDef[] = [
@@ -513,9 +511,6 @@ export function MatchListScreen({ navigation, route }: any) {
     setSortDirection(viewTab === 'archiv' ? 'desc' : 'asc');
   }, [viewTab]);
 
-  // DFB-Sync State
-  const [dfbSyncLoading, setDfbSyncLoading] = useState(false);
-  const [showDfbSyncModal, setShowDfbSyncModal] = useState(false);
   // Mobil: Umschalter Liste/Karte + eingeklapptes Filter-Panel
   const [mobileView, setMobileView] = useState<'liste' | 'karte'>('liste');
   const [mobileFilterOpen, setMobileFilterOpen] = useState(false);
@@ -1128,60 +1123,6 @@ export function MatchListScreen({ navigation, route }: any) {
       if (rA !== rB) return rA - rB;
       return (a.spiel || '').localeCompare(b.spiel || '', 'de');
     });
-  };
-
-  // DFB-Termine synchronisieren
-  const handleDFBSync = async () => {
-    setDfbSyncLoading(true);
-    try {
-      const relevantTermine = getRelevantTermine();
-      let added = 0;
-      let deleted = 0;
-
-      // Zuerst alle existierenden DFB-Typ Matches löschen (Nationalmannschaft & Hallenturnier)
-      const dfbMatches = matches.filter(m =>
-        m.art === 'Nationalmannschaft' || m.art === 'Hallenturnier'
-      );
-
-      for (const match of dfbMatches) {
-        const result = await deleteMatch(match.id);
-        if (result.success) {
-          deleted++;
-        }
-      }
-
-      // Dann alle neuen Termine hinzufügen
-      for (const termin of relevantTermine) {
-        const matchData = convertToMatchFormat(termin);
-
-        const result = await createMatch({
-          home_team: matchData.home_team,
-          away_team: matchData.away_team,
-          match_date: matchData.match_date,
-          match_date_end: matchData.match_date_end || undefined,
-          match_time: matchData.match_time || undefined,
-          age_group: matchData.age_group,
-          match_type: matchData.match_type,
-          location: matchData.location || undefined,
-        });
-
-        if (result.success) {
-          added++;
-        }
-      }
-
-      await fetchMatches();
-      setShowDfbSyncModal(false);
-      Alert.alert(
-        'DFB-Sync abgeschlossen',
-        `${deleted} alte Einträge gelöscht, ${added} Termine neu geladen`
-      );
-    } catch (error) {
-      console.error('DFB-Sync Fehler:', error);
-      Alert.alert('Fehler', 'Fehler beim Synchronisieren der DFB-Termine');
-    } finally {
-      setDfbSyncLoading(false);
-    }
   };
 
   const toggleMatchSelection = (matchId: string) => {
@@ -2486,7 +2427,7 @@ export function MatchListScreen({ navigation, route }: any) {
                           flexDirection: 'row', alignItems: 'center', gap: 4,
                           
                         }}>
-                          {(!item.isAreaGame || isAreaGameAdded(item)) && (
+                          {((!item.isAreaGame && item.source !== 'dfb') || isAreaGameAdded(item)) && (
                             <View style={{ width: 8, height: 8, borderRadius: 1, backgroundColor: '#e8930c' }} />
                           )}
                           {item.mannschaft ? (
@@ -2501,10 +2442,12 @@ export function MatchListScreen({ navigation, route }: any) {
                         {(() => {
                           const [home, ...rest] = (item.spiel || '').split(' - ');
                           const away = rest.join(' - ');
+                          // DFB-Event ohne Gegner (Lehrgang, Turnier, Camp): kein Wappen, Ort als 2. Zeile
+                          const isDfbEvent = !away && item.source === 'dfb';
                           return (
                             <>
                               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                                <TeamLogo name={home} map={clubLogoMap} />
+                                {isDfbEvent ? null : <TeamLogo name={home} map={clubLogoMap} />}
                                 <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
                                   {home}
                                 </Text>
@@ -2516,6 +2459,11 @@ export function MatchListScreen({ navigation, route }: any) {
                                     {away}
                                   </Text>
                                 </View>
+                              ) : null}
+                              {isDfbEvent && item.ort ? (
+                                <Text style={{ color: RETRO.textMuted, fontSize: 13, marginTop: 2, flexShrink: 1 }} numberOfLines={1}>
+                                  {item.ort}
+                                </Text>
                               ) : null}
                             </>
                           );
@@ -2605,15 +2553,6 @@ export function MatchListScreen({ navigation, route }: any) {
                 </Text>
               </TouchableOpacity>
             ))}
-            <View style={{ flex: 1 }} />
-            <TouchableOpacity
-              style={[HARD_SHADOW, { backgroundColor: RETRO.white, borderRadius: 2, minHeight: 25, paddingHorizontal: 8, flexDirection: 'row', alignItems: 'center', gap: 4, justifyContent: 'center' }]}
-              onPress={() => setShowDfbSyncModal(true)}
-              activeOpacity={0.7}
-            >
-              <Text style={{ fontSize: 11, fontWeight: '700', fontFamily: MONO, color: RETRO.text }}>DFB</Text>
-              <Ionicons name="refresh" size={12} color={RETRO.text} />
-            </TouchableOpacity>
           </View>
           {/* Suche + Filter + Event anlegen */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingTop: 10 }}>
@@ -2791,13 +2730,6 @@ export function MatchListScreen({ navigation, route }: any) {
                   </Text>
                 </TouchableOpacity>
               ))}
-              <TouchableOpacity
-                style={[HARD_SHADOW, { backgroundColor: '#ffffff', borderRadius: 2, paddingVertical: 6, paddingHorizontal: 12 }]}
-                onPress={() => setShowDfbSyncModal(true)}
-                activeOpacity={0.7}
-              >
-                <Text style={{ fontSize: 12, fontWeight: '700', fontFamily: MONO, color: RETRO.text }}>DFB-Termine ↻</Text>
-              </TouchableOpacity>
             </View>
           }
         />
@@ -2964,7 +2896,7 @@ export function MatchListScreen({ navigation, route }: any) {
                 <View style={{ borderTopWidth: 1, borderTopColor: RETRO.rowBorder, marginTop: 14, paddingTop: 12 }}>
                   {added ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                      {!isPastGame && (
+                      {!isPastGame && areaDetail.source !== 'dfb' && (
                       <TouchableOpacity
                         style={[HARD_SHADOW, {
                           backgroundColor: '#e8930c', paddingVertical: 5, paddingHorizontal: 10,
@@ -3010,8 +2942,8 @@ export function MatchListScreen({ navigation, route }: any) {
                           </View>
                         </Modal>
                       )}
-                      {/* Aufstellung nur im "Meine Spiele"-Tab anbieten */}
-                      {ownMatch && showArchive && (
+                      {/* Aufstellung nur im "Meine Spiele"-Tab anbieten; DFB-Termine: Kader immer */}
+                      {ownMatch && (showArchive || ownMatch.source === 'dfb') && (
                         <TouchableOpacity
                           style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
                           onPress={() => {
@@ -3025,7 +2957,7 @@ export function MatchListScreen({ navigation, route }: any) {
                             });
                           }}
                         >
-                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Aufstellung & Scouting</Text>
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{ownMatch.source === 'dfb' ? 'Kader & Scouting' : 'Aufstellung & Scouting'}</Text>
                         </TouchableOpacity>
                       )}
                     </View>
@@ -3710,47 +3642,6 @@ export function MatchListScreen({ navigation, route }: any) {
                 <Text style={[styles.createButtonText, { color: colors.primaryText }]}>
                   {isEditingMatch ? 'Speichern' : 'Spiel anlegen'}
                 </Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-
-      {/* DFB-Sync Modal */}
-      <Modal
-        visible={showDfbSyncModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowDfbSyncModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={[styles.confirmModal, { backgroundColor: colors.surface, borderColor: colors.border, maxWidth: 500 }]}>
-            <Text style={[styles.confirmTitle, { color: colors.text }]}>🇩🇪 DFB-Termine laden</Text>
-            <Text style={[styles.confirmText, { color: colors.textSecondary, marginBottom: 16 }]}>
-              Lädt {getDFBTermineCount()} DFB-Nationalmannschaftstermine und {getHallenTermineCount()} Hallenturniere.
-            </Text>
-            <Text style={[{ color: colors.textSecondary, fontSize: 13, marginBottom: 16, textAlign: 'center' }]}>
-              Daten: Lehrgänge, EM-Quali, Länderspiele, Sichtungen, Hallenturniere{'\n'}
-              Jahrgänge: U13 - U21{'\n'}
-              Stand: {getLastUpdateDisplay()}
-            </Text>
-            <View style={styles.confirmButtons}>
-              <TouchableOpacity
-                style={[styles.confirmButton, { borderColor: colors.border }]}
-                onPress={() => setShowDfbSyncModal(false)}
-              >
-                <Text style={[styles.confirmButtonText, { color: colors.text }]}>Abbrechen</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.confirmButton, { backgroundColor: colors.primary }]}
-                onPress={handleDFBSync}
-                disabled={dfbSyncLoading}
-              >
-                {dfbSyncLoading ? (
-                  <ActivityIndicator size="small" color={colors.primaryText} />
-                ) : (
-                  <Text style={[styles.confirmButtonText, { color: colors.primaryText }]}>Termine laden</Text>
-                )}
               </TouchableOpacity>
             </View>
           </View>

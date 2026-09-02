@@ -225,9 +225,10 @@ export function DashboardScreen() {
       const [ownRes, areaRes, leaguesRes] = await Promise.all([
         supabase
           .from('scouting_matches')
-          .select('id, home_team, away_team, match_time, age_group, match_type, location, fussball_de_url')
+          .select('id, home_team, away_team, match_time, age_group, match_type, location, fussball_de_url, source')
           .eq('is_archived', false)
-          .eq('match_date', today)
+          // heute beginnend ODER mehrtägig und heute laufend (DFB-Lehrgänge)
+          .or(`match_date.eq.${today},and(match_date.lte.${today},match_date_end.gte.${today})`)
           .limit(30),
         supabase
           .from('area_games')
@@ -244,9 +245,9 @@ export function DashboardScreen() {
         key: `own-${m.id}`,
         matchId: String(m.id),
         zeit: m.match_time ? String(m.match_time).slice(0, 5) : null,
-        begegnung: `${m.home_team} - ${m.away_team}`,
+        begegnung: m.away_team ? `${m.home_team} - ${m.away_team}` : m.home_team,
         home: stripAge(m.home_team),
-        away: stripAge(m.away_team),
+        away: m.away_team ? stripAge(m.away_team) : '',
         liga: m.age_group || '—',
         art: m.match_type || 'Punktspiel',
         ort: m.location || null,
@@ -530,7 +531,7 @@ export function DashboardScreen() {
                     {/* Kurzer Trennstrich */}
                     <View style={{ width: 28, height: 1, backgroundColor: 'rgba(198, 194, 186, 0.9)', marginTop: 3 }} />
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                      <TeamLogo name={g.home} map={clubLogoMap} />
+                      {g.away ? <TeamLogo name={g.home} map={clubLogoMap} /> : null}
                       <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
                         {g.home}
                       </Text>
@@ -542,6 +543,9 @@ export function DashboardScreen() {
                           {g.away}
                         </Text>
                       </View>
+                    ) : null}
+                    {!g.away && g.ort ? (
+                      <Text style={{ color: RETRO.textMuted, fontSize: 13, marginTop: 2 }} numberOfLines={1}>{g.ort}</Text>
                     ) : null}
                   </View>
                 </TouchableOpacity>

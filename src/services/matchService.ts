@@ -21,6 +21,9 @@ export interface DbMatch {
   result: string | null;
   fussball_de_url: string | null;
   is_archived: boolean;
+  // 'dfb' = automatisch von dfb.de gesynct (Edge Function dfb-sync)
+  source?: string | null;
+  source_key?: string | null;
 }
 
 export interface DbLineup {
@@ -42,6 +45,9 @@ export interface DbLineup {
   birth_date: string | null;
   is_goalkeeper: boolean;
   is_captain: boolean;
+  // Verein (DFB-Kader) + Herkunft ('dfb')
+  club?: string | null;
+  source?: string | null;
 }
 
 // Input-Typen (ohne auto-generierte Felder)
