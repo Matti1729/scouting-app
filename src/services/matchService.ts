@@ -24,6 +24,9 @@ export interface DbMatch {
   // 'dfb' = automatisch von dfb.de gesynct (Edge Function dfb-sync)
   source?: string | null;
   source_key?: string | null;
+  // Koordinaten (DFB-Termine, von dfb-sync geokodiert)
+  lat?: number | null;
+  lng?: number | null;
 }
 
 export interface DbLineup {

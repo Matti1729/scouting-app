@@ -315,6 +315,11 @@ const dbMatchToMatch = (dbMatch: DbMatch): Match => ({
   isArchived: dbMatch.is_archived,
   source: dbMatch.source || null,
   dfbUrl: dbMatch.source === 'dfb' ? dfbTerminePageUrl(dbMatch.age_group) : null,
+  // DFB-Termine: Spielort auf der Karte (dunkelgrüner Marker)
+  lat: dbMatch.lat ?? null,
+  lng: dbMatch.lng ?? null,
+  venueAddress: dbMatch.location || null,
+  markerColor: dbMatch.source === 'dfb' ? '#14532d' : undefined,
 });
 
 // dfb.de-Seite des Jahrgangs (U15–U21 Männer), z. B. .../u-16/spiele-und-termine

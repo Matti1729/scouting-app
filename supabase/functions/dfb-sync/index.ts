@@ -144,6 +144,58 @@ async function syncLineup(
   return { inserted: inserts.length, updated, deleted: toDelete.length }
 }
 
+// ---------------------------------------------------------------------------
+// Geokodierung der Spielorte (Karte). Bekannte DFB-Sportschulen fest, sonst
+// Nominatim (1 Anfrage/s, UA Pflicht). Reine Ländernamen → kein Marker.
+// ---------------------------------------------------------------------------
+const KNOWN_VENUES: Array<[RegExp, { lat: number; lng: number }]> = [
+  [/dfb-?campus/i, { lat: 50.0830, lng: 8.6514 }],                    // Frankfurt
+  [/wedau|^duisburg$/i, { lat: 51.4033, lng: 6.7786 }],               // Sportschule Wedau
+  [/sch[oö]neck/i, { lat: 48.9980, lng: 8.4898 }],                    // Sportschule Schöneck, Karlsruhe
+  [/^leipzig$|sportschule leipzig|egidius/i, { lat: 51.3690, lng: 12.4290 }], // Sportschule Egidius Braun
+  [/oberhaching/i, { lat: 48.0368, lng: 11.5907 }],
+  [/kaiserau/i, { lat: 51.5760, lng: 7.6137 }],                       // Kamen
+  [/gr[uü]nberg/i, { lat: 50.5867, lng: 8.9750 }],
+  [/malente/i, { lat: 54.1607, lng: 10.5611 }],                       // Uwe Seeler Fußball Park
+  [/herzogenaurach/i, { lat: 49.5738, lng: 10.8926 }],
+  [/emirhan|belek/i, { lat: 36.8633, lng: 31.0578 }],                 // Antalya/Belek
+  [/sch[uü]co ?arena/i, { lat: 52.0320, lng: 8.5168 }],               // Bielefeld
+]
+const COUNTRY_ONLY = /^(deutschland|türkei|tuerkei|spanien|portugal|lettland|malta|italien|tschechien|österreich|polen|griechenland|frankreich|england|niederlande|belgien|schweiz|dänemark|schweden|norwegen|kroatien|serbien|ungarn|slowakei|slowenien|ukraine|georgien|israel|aserbaidschan|litauen|nordirland|finnland|wales|tunesien|usa|japan)$/i
+
+const geoCache = new Map<string, { lat: number; lng: number } | null>()
+let lastNominatim = 0
+async function nominatim(q: string): Promise<{ lat: number; lng: number } | null> {
+  const wait = 1100 - (Date.now() - lastNominatim)
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait))
+  lastNominatim = Date.now()
+  try {
+    const r = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&accept-language=de`,
+      { headers: { 'User-Agent': 'kmh-scouting-app/1.0 (matti@warubi-sports.com)' } },
+    )
+    if (!r.ok) return null
+    const j = await r.json()
+    if (!Array.isArray(j) || !j.length) return null
+    const lat = parseFloat(j[0].lat), lng = parseFloat(j[0].lon)
+    return isFinite(lat) && isFinite(lng) ? { lat, lng } : null
+  } catch {
+    return null
+  }
+}
+
+async function geocodeLocation(location: string): Promise<{ lat: number; lng: number } | null> {
+  const q = location.trim()
+  if (!q || COUNTRY_ONLY.test(q)) return null
+  for (const [re, pos] of KNOWN_VENUES) if (re.test(q)) return pos
+  if (geoCache.has(q)) return geoCache.get(q)!
+  let pos = await nominatim(q)
+  // Fallback: nur der letzte Teil ("Daugava Stadion, Riga" → "Riga")
+  if (!pos && q.includes(',')) pos = await nominatim(q.split(',').pop()!.trim())
+  geoCache.set(q, pos)
+  return pos
+}
+
 function terminRow(t: DfbTermin) {
   return {
     home_team: t.homeTeam,
@@ -175,6 +227,7 @@ serve(async (req) => {
     ages: ages.map((a) => `U${a}`),
     termine: 0, inserted: 0, updated: 0, unchanged: 0, deleted: 0, legacyDeleted: 0,
     kaderAssigned: 0, kaderUnchanged: 0, lineups: { inserted: 0, updated: 0, deleted: 0 },
+    geocoded: 0, geocodeFailed: 0,
     errors: [] as string[],
     preview: [] as any[],
   }
@@ -182,7 +235,7 @@ serve(async (req) => {
   // Bestehende DFB-Termine (alle, auch vergangene → Kader-Hash & Update)
   const { data: existingRows, error: exErr } = await sb
     .from('scouting_matches')
-    .select('id, source_key, match_date, kader_hash, home_team, away_team, match_date_end, match_time, location, age_group')
+    .select('id, source_key, match_date, kader_hash, home_team, away_team, match_date_end, match_time, location, age_group, lat, lng, geo_query')
     .eq('source', 'dfb')
   if (exErr && !dry) return json({ error: exErr.message }, 500)
   if (exErr) stats.errors.push(`DB (dry, ignoriert): ${exErr.message}`)
@@ -242,6 +295,20 @@ serve(async (req) => {
           if (error) throw error
           matchId = data.id
           stats.inserted++
+        }
+
+        // Koordinaten für die Karte (nur wenn Ort neu/geändert oder noch keine vorhanden)
+        if (matchId && t.location && (!ex || ex.geo_query !== t.location || ex.lat == null)) {
+          try {
+            const pos = await geocodeLocation(t.location)
+            const { error } = await sb.from('scouting_matches')
+              .update({ lat: pos?.lat ?? null, lng: pos?.lng ?? null, geo_query: t.location }).eq('id', matchId)
+            if (error) throw error
+            if (pos) stats.geocoded++
+            else stats.geocodeFailed++
+          } catch (e) {
+            stats.errors.push(`U${age} Geocode "${t.location}": ${(e as Error).message}`)
+          }
         }
 
         if (src && matchId) {
