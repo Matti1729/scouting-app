@@ -16,6 +16,7 @@ import {
   Platform,
   TextInput,
   ScrollView,
+  useWindowDimensions,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import {
@@ -204,6 +205,10 @@ export function PlayerDetailModal({
   /** Nach Änderung des Scouting-Status (Watchlist/Top-Ziel/Uninteressant) — optional */
   onStatusChanged?: (status: ScoutStatus) => void;
 }) {
+  // Mobil: Karten dürfen nicht breiter als der Bildschirm sein (sonst ragt z. B. das
+  // Berichte-Plus über den Rand), Vertrag + Potential bleiben aber ein Paar
+  const { width: windowWidth } = useWindowDimensions();
+  const isMobile = windowWidth < 768;
   const [tmDetails, setTmDetails] = useState<PlayerTmDetails | null>(null);
   const [tmLoading, setTmLoading] = useState(false);
   // Scouting-Berichte zu diesem Spieler
@@ -636,7 +641,9 @@ export function PlayerDetailModal({
                     true
                   )}
                 </View>
-                <View style={[styles.card, HARD_SHADOW, { zIndex: 30 }]}>
+                {/* VERTRAG + POTENTIAL immer nebeneinander (auch mobil), wie im Bewertungs-Screen */}
+                <View style={[styles.vertragPotentialGroup, isMobile && { minWidth: 0, flexBasis: '100%' }]}>
+                <View style={[styles.card, HARD_SHADOW, { zIndex: 30, flex: 1, minWidth: 0 }]}>
                   {cardChip('VERTRAG')}
                   {cardRow('Vertrag bis', contract || '—')}
                   {cardRow('Marktwert', p.market_value || '—')}
@@ -752,11 +759,12 @@ export function PlayerDetailModal({
                     </View>
                   )}
                 </View>
+                </View>
               </View>
 
               {/* Zeile 2: Einsätze · Berichte */}
               <View style={styles.cardGrid}>
-                <View style={[styles.card, styles.cardEinsaetze, HARD_SHADOW]}>
+                <View style={[styles.card, styles.cardEinsaetze, HARD_SHADOW, isMobile && { minWidth: 0, flexBasis: '100%' }]}>
                   {cardChip('EINSÄTZE')}
                   {cardRow(
                     `Saison ${tmDetails ? seasonLabel(tmDetails.seasonYear) : 'aktuell'}`,
@@ -772,7 +780,7 @@ export function PlayerDetailModal({
                     true
                   )}
                 </View>
-                <View style={[styles.card, styles.cardBerichte, HARD_SHADOW]}>
+                <View style={[styles.card, styles.cardBerichte, HARD_SHADOW, isMobile && { minWidth: 0, flexBasis: '100%' }]}>
                   {cardChip(`BERICHTE${matchEvals.length > 0 ? ` (${matchEvals.length})` : ''}`)}
                   {onCreateReport && (
                     <TouchableOpacity
@@ -1249,6 +1257,19 @@ const styles = StyleSheet.create({
     flexShrink: 1,
     flexBasis: 134,
     minWidth: 320,
+  },
+  // Vertrag + Potential als Paar (bricht als Ganzes um; Vertrag so breit wie die
+  // anderen Karten: 240 + 14 Lücke + 110 Potential)
+  vertragPotentialGroup: {
+    // Basis = Lücke + Potential-Breite, Rest wächst wie die anderen Karten →
+    // Vertrag-Karte exakt so breit wie ALLGEMEINES/VEREIN
+    flexGrow: 1,
+    flexShrink: 1,
+    flexBasis: 124,
+    minWidth: 364,
+    flexDirection: 'row',
+    gap: 14,
+    zIndex: 30,
   },
   // Schmale Potential-Karte (ganz rechts in Zeile 1)
   cardPotential: {
