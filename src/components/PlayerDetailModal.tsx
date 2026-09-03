@@ -671,7 +671,7 @@ export function PlayerDetailModal({
                       true
                     )}
                     {verlaufOpen && (
-                      <View style={[styles.verlaufDropdown, HARD_SHADOW_LG]}>
+                      <View style={[styles.verlaufDropdown, HARD_SHADOW_LG, isMobile && { right: undefined, width: Math.min(windowWidth - 72, 360) }]}>
                         <View style={styles.verlaufHeader}>
                           <Text style={styles.verlaufHeaderText}>BERATERVERLAUF</Text>
                         </View>
@@ -832,7 +832,7 @@ export function PlayerDetailModal({
 
               {/* Zeile 3: Einschätzung (generiert) + Notizen */}
               <View style={styles.cardGrid}>
-                <View style={[styles.card, styles.cardWide, HARD_SHADOW]}>
+                <View style={[styles.card, styles.cardWide, HARD_SHADOW, isMobile && { minWidth: 0, flexBasis: '100%' }]}>
                   {cardChip('EINSCHÄTZUNG')}
                   {summaryLoading ? (
                     <ActivityIndicator size="small" color={RETRO.headerBg} style={{ alignSelf: 'flex-start', margin: 6 }} />
@@ -856,7 +856,7 @@ export function PlayerDetailModal({
                     </Text>
                   </TouchableOpacity>
                 </View>
-                <View style={[styles.card, HARD_SHADOW]}>
+                <View style={[styles.card, HARD_SHADOW, isMobile && { minWidth: 0, flexBasis: '100%' }]}>
                   {cardChip('NOTIZEN')}
                   <TextInput
                     style={styles.notesInput}
@@ -873,12 +873,17 @@ export function PlayerDetailModal({
               {/* Fußzeile: links Scouting-Status (exklusiv), rechts Aktionen des Aufrufers */}
               <View style={styles.detailFooter}>
                 {/* Links: Uninteressant + Aufrufer-Aktionen (z.B. + Sportstipendium) */}
+                {/* Mobil: Uninteressant wandert in die Reihe mit Glocke/Watchlist/Zielspieler,
+                    Aufrufer-Aktionen bekommen eine eigene Zeile darunter */}
+                {!isMobile && (
                 <View style={styles.statusGroup}>
                   {renderStatusBtn({ key: 'uninteressant', idle: 'Uninteressant', active: 'aussortiert', bg: '#dc2626', fg: '#ffffff' })}
                   {actions ? <View style={styles.detailActions}>{actions}</View> : null}
                 </View>
+                )}
                 {/* Rechts: Glocke + Watchlist + Zielspieler (Status-Key bleibt top_ziel) */}
-                <View style={styles.statusGroup}>
+                <View style={[styles.statusGroup, isMobile && { width: '100%', justifyContent: 'space-between', flexWrap: 'nowrap', gap: 6 }]}>
+                  {isMobile && renderStatusBtn({ key: 'uninteressant', idle: 'Uninteressant', active: 'aussortiert', bg: '#dc2626', fg: '#ffffff' })}
                   <TouchableOpacity
                     style={[styles.statusBtn, HARD_SHADOW, alertOn && { backgroundColor: '#dc2626' }]}
                     disabled={alertSaving}
@@ -894,6 +899,7 @@ export function PlayerDetailModal({
                   {renderStatusBtn({ key: 'watchlist', idle: 'Watchlist', active: 'Watchlist', bg: '#22c55e', fg: '#ffffff' })}
                   {renderStatusBtn({ key: 'top_ziel', idle: 'Zielspieler', active: 'Zielspieler', bg: '#22c55e', fg: '#ffffff' })}
                 </View>
+                {isMobile && actions ? <View style={[styles.detailActions, { width: '100%', justifyContent: 'flex-start' }]}>{actions}</View> : null}
               </View>
 
               {/* Nachfrage vor dem Ausschalten der Glocke */}
@@ -1408,8 +1414,8 @@ const styles = StyleSheet.create({
   },
   verlaufHeader: {
     backgroundColor: '#14141e',
-    paddingVertical: 6,
-    paddingHorizontal: 10,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
   },
   verlaufHeaderText: {
     fontSize: 10,
@@ -1419,8 +1425,8 @@ const styles = StyleSheet.create({
     color: RETRO.yellow,
   },
   verlaufRow: {
-    paddingHorizontal: 10,
-    paddingVertical: 7,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
     borderBottomWidth: 1,
     borderBottomColor: '#e5e1d8',
     gap: 2,
@@ -1434,7 +1440,7 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   verlaufAgent: {
-    fontSize: 13,
+    fontSize: 14,
     fontWeight: '700',
     color: RETRO.text,
     flexShrink: 1,
@@ -1445,7 +1451,7 @@ const styles = StyleSheet.create({
     borderRadius: 2,
   },
   verlaufMeta: {
-    fontSize: 10,
+    fontSize: 11,
     fontFamily: MONO,
     color: '#4a4a55',
   },
