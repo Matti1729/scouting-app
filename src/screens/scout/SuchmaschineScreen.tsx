@@ -31,10 +31,13 @@ import {
   normalizeSearch,
   agentDisplayName,
   baseClubName,
+  POSITION_FULL,
 } from '../../services/stipendiumService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
 import { RatingBar } from '../../components/evaluation/RatingBar';
 import { RetroHeader } from '../../components/RetroHeader';
+import { TeamLogo } from '../../components/ClubLogo';
+import { loadClubLogoMap } from '../../services/areaGamesService';
 import { loadLeagues, loadWatchlist, addToWatchlist, loadAllEvaluations, loadAlertSubscriptionIds } from '../../services/beraterService';
 import { MONO, RETRO_CHIP, RETRO_CHIP_TEXT } from '../../theme/retro';
 import { ColumnDef } from '../../types/tableColumns';
@@ -1072,6 +1075,9 @@ export function SuchmaschineScreen() {
 
   // Scouting-Ratings (für den Potential-Filter): Bewertung vor Watchlist-Rating
   const [ratingsMap, setRatingsMap] = useState<Map<string, number>>(new Map());
+  // Wappen für die mobilen Karten (wie Watchlist/Dashboard)
+  const [clubLogoMap, setClubLogoMap] = useState<Map<string, string>>(new Map());
+  useEffect(() => { loadClubLogoMap().then(setClubLogoMap).catch(() => {}); }, []);
   // Bewertungsstatus je Spieler (nicht_interessant/top_ziel) fürs Ausgrauen
   const [statusMap, setStatusMap] = useState<Map<string, string>>(new Map());
   // Beraterwechsel-Filter (Tracker-Integration): letzte N Tage, 0 = aus
@@ -1468,61 +1474,86 @@ export function SuchmaschineScreen() {
   // Renderer: Suchergebnis-Zeile
   // ==========================================================================
 
+  // Mobile Trefferkarte — gleicher Aufbau wie die Watchlist-Karte:
+  // Name (Jahrgang) | Badge + Potential · Position · Wappen + Verein | Berater-Chip
   const renderSearchResult = useCallback(
     ({ item }: { item: StipendiumSearchPlayer }) => {
       const added = !!(item.tm_player_id && addedTmIds.has(item.tm_player_id));
-      const contract = formatContract(item.contract_until);
-      const details = [
-        item.age !== null ? `${item.age} J.` : null,
-        item.position,
-        item.is_vereinslos ? `vereinslos (zuletzt ${item.club_name || '?'})` : item.club_name,
-        item.league_name,
-        item.market_value,
-        contract ? `Vertrag bis ${contract}` : null,
-      ]
-        .filter(Boolean)
-        .join(' · ');
+      const { first, last } = splitName(item.player_name);
+      const pos = item.position ? (POSITION_FULL[item.position] || item.position) : null;
+      const rating = ratingsMap.get(item.id) ?? null;
+      const status = statusMap.get(item.id);
+      const agent = agentDisplayName(item.current_agent_name, item.current_agent_company);
+      const noAgent = !agent;
+      const onWatchlist = watchlistIds.has(item.id);
+      const clubName = item.club_name || '';
 
       return (
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={() => openPlayerDetail(item)}
           style={[
-            styles.entryCard,
-            { backgroundColor: RETRO.white, borderColor: RETRO.rowBorder },
+            mc.card,
             HARD_SHADOW,
-            added && {
-              backgroundColor: STIPENDIUM_YELLOW + '55',
-              borderColor: RETRO.yellow,
-            },
-            statusMap.get(item.id) === 'nicht_interessant' && { opacity: 0.4 },
+            added && { backgroundColor: STIPENDIUM_YELLOW + '55' },
+            status === 'nicht_interessant' && { opacity: 0.4 },
           ]}
         >
-          <View style={styles.entryInfo}>
-            <View style={styles.entryNameRow}>
-              <Text style={[styles.entryName, { color: RETRO.text }]} numberOfLines={1}>
-                {item.player_name}
-              </Text>
-              {item.tm_profile_url && (
-                <TouchableOpacity onPress={() => openProfile(item.tm_profile_url)} hitSlop={8}>
-                  <Ionicons name="open-outline" size={15} color={RETRO.textMuted} />
-                </TouchableOpacity>
+          <View style={mc.header}>
+            <View style={mc.nameRow}>
+              <Text style={mc.name} numberOfLines={1}>{first ? `${last}, ${first}` : last}</Text>
+              {item.age != null ? <Text style={mc.meta}>{`(${item.age} J.)`}</Text> : null}
+              {onWatchlist && <Ionicons name="bookmark" size={12} color={RETRO.textMuted} />}
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {rating != null && rating >= 8 ? (
+                <View style={mc.zielBadge}><Text style={mc.zielBadgeText}>TOP-ZIEL</Text></View>
+              ) : status === 'top_ziel' ? (
+                <View style={mc.zielBadge}><Text style={mc.zielBadgeText}>ZIELSPIELER</Text></View>
+              ) : null}
+              {rating != null && rating > 0 && (
+                <View style={[mc.potBadge, { backgroundColor: potentialColorMc(rating) }]}>
+                  <Text style={mc.potBadgeText}>{rating}</Text>
+                </View>
               )}
             </View>
-            <Text style={[styles.entryDetails, { color: RETRO.textMuted }]} numberOfLines={1}>
-              {details}
-            </Text>
+          </View>
+          {pos ? <Text style={mc.position} numberOfLines={1}>{pos}</Text> : null}
+          <View style={mc.row2}>
+            <View style={mc.clubRow}>
+              {!!clubName && !item.is_vereinslos && <TeamLogo name={clubName} map={clubLogoMap} size={16} />}
+              <Text style={[mc.club, item.is_vereinslos && { fontStyle: 'italic' }]} numberOfLines={1}>
+                {item.is_vereinslos ? `zuletzt: ${clubName}` : (clubName || '—')}
+              </Text>
+            </View>
+            {/* Berater rechts neben dem Verein; bei Wechsel: alt (ausgegraut) → aktuell in derselben Zeile */}
+            <View style={mc.agentGroup}>
+              {item.last_change ? (
+                <>
+                  <View style={[mc.agentChip, mc.agentChipOld]}>
+                    <Text style={[mc.agentText, mc.agentTextOld]} numberOfLines={1}>
+                      {item.last_change.from || 'ohne Berater'}
+                    </Text>
+                  </View>
+                  <Ionicons name="arrow-forward" size={12} color={RETRO.textMuted} />
+                </>
+              ) : null}
+              <View style={[mc.agentChip, HARD_SHADOW, noAgent && mc.agentChipFree]}>
+                <Text style={[mc.agentText, noAgent && { color: '#15803d' }]} numberOfLines={1}>
+                  {agent || 'kein Beratereintrag'}
+                </Text>
+              </View>
+            </View>
           </View>
           {added && (
-            <View style={[styles.addedBadge, { backgroundColor: RETRO.yellow }, HARD_SHADOW]}>
-              <Text style={styles.addedBadgeIcon}>🎓</Text>
-              <Text style={[styles.addedBadgeText, { color: RETRO.yellowText }]}>Sportstipendium</Text>
+            <View style={[mc.stipChip, HARD_SHADOW]}>
+              <Text style={mc.stipChipText}>Sportstipendium</Text>
             </View>
           )}
         </TouchableOpacity>
       );
     },
-    [addedTmIds, addingId, colors, statusMap]
+    [addedTmIds, statusMap, ratingsMap, watchlistIds, clubLogoMap]
   );
 
   // ==========================================================================
@@ -2714,6 +2745,141 @@ const nc = StyleSheet.create({
     fontSize: 12,
     fontWeight: '700',
     fontFamily: MONO,
+    color: RETRO.text,
+  },
+});
+
+/** Potential-Farbe (wie Watchlist/Dashboard) */
+function potentialColorMc(v: number): string {
+  if (v === 10) return '#F0C040';
+  if (v >= 7) return '#22c55e';
+  if (v >= 4) return '#e8930c';
+  return '#dc2626';
+}
+
+// Mobile Trefferkarte (Maße/Farben identisch zur Watchlist-Karte)
+const mc = StyleSheet.create({
+  card: {
+    backgroundColor: RETRO.white,
+    borderRadius: 2,
+    padding: 14,
+    marginBottom: 10,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 6,
+    flex: 1,
+    marginRight: 8,
+  },
+  name: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: RETRO.text,
+    flexShrink: 1,
+  },
+  meta: {
+    fontSize: 11,
+    fontFamily: MONO,
+    fontWeight: '600',
+    color: RETRO.textMuted,
+    flexShrink: 0,
+  },
+  position: {
+    fontSize: 12,
+    color: RETRO.textMuted,
+    marginTop: -2,
+    marginBottom: 6,
+  },
+  row2: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  clubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  club: {
+    fontSize: 13,
+    color: RETRO.text,
+    flexShrink: 1,
+  },
+  agentGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: 6,
+    flexShrink: 1,
+    maxWidth: '62%',
+  },
+  agentChip: {
+    backgroundColor: RETRO.white,
+    borderRadius: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    flexShrink: 1,
+  },
+  agentChipFree: {
+    backgroundColor: '#e3f1e6',
+  },
+  agentChipOld: {
+    backgroundColor: 'rgba(200, 196, 188, 0.6)', // ausgegraut, ohne Schatten
+  },
+  agentTextOld: {
+    color: RETRO.textMuted,
+  },
+  agentText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: RETRO.text,
+  },
+  zielBadge: {
+    backgroundColor: '#F0C040',
+    borderRadius: 2,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  zielBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 1,
+    fontFamily: MONO,
+    color: RETRO.text,
+  },
+  potBadge: {
+    minWidth: 24,
+    height: 24,
+    borderRadius: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 4,
+  },
+  potBadgeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#ffffff',
+  },
+  stipChip: {
+    alignSelf: 'flex-start',
+    backgroundColor: RETRO.yellow,
+    borderRadius: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    marginTop: 8,
+  },
+  stipChipText: {
+    fontSize: 11,
+    fontWeight: '700',
     color: RETRO.text,
   },
 });

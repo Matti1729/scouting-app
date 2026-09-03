@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,16 +9,20 @@ import {
   useWindowDimensions,
   Linking,
   Modal,
+  Pressable,
   ScrollView,
   ActivityIndicator,
   Image,
   TextInput,
+  Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
 import { RETRO, RETRO_THEME, HARD_SHADOW, HARD_SHADOW_LG, MONO } from '../../theme/retro';
 import { RetroHeader } from '../../components/RetroHeader';
+import { TeamLogo } from '../../components/ClubLogo';
+import { loadClubLogoMap } from '../../services/areaGamesService';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
@@ -48,7 +52,7 @@ import {
   AmbiguousMerge,
   mergeScoutedInto,
 } from '../../services/beraterService';
-import { savePlayerNotesText, fetchSearchPlayer, StipendiumSearchPlayer, positionCode, ageFromBirthDate, agentDisplayName } from '../../services/stipendiumService';
+import { savePlayerNotesText, fetchSearchPlayer, StipendiumSearchPlayer, positionCode, ageFromBirthDate, agentDisplayName, POSITION_FULL } from '../../services/stipendiumService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
 import { RatingBar } from '../../components/evaluation/RatingBar';
 import { fetchAgentInfo } from '../../services/transfermarktService';
@@ -168,6 +172,15 @@ export function WatchlistScreen() {
   // Tabs: Watchlist | Zielspieler (aktiv ansprechen) | Alle Berichte
   const [viewTab, setViewTab] = useState<'watchlist' | 'ziel' | 'beobachtet'>('watchlist');
   const [observed, setObserved] = useState<ObservedPlayer[]>([]);
+  // Wappen für die mobilen Karten (wie Dashboard/Spiele)
+  const [clubLogoMap, setClubLogoMap] = useState<Map<string, string>>(new Map());
+  useEffect(() => { loadClubLogoMap().then(setClubLogoMap).catch(() => {}); }, []);
+  // Letzter Bericht je Spieler (für Watchlist-/Zielspieler-Karten)
+  const observedById = useMemo(() => {
+    const m = new Map<string, ObservedPlayer>();
+    for (const o of observed) m.set(o.player.id, o);
+    return m;
+  }, [observed]);
   // Unklare TM-Zuordnungen (mehrere Kandidaten) — der Nutzer ordnet von Hand zu
   const [ambiguous, setAmbiguous] = useState<AmbiguousMerge[]>([]);
   const [ambiguousHidden, setAmbiguousHidden] = useState<Set<string>>(new Set());
@@ -216,12 +229,12 @@ export function WatchlistScreen() {
     return `${lastName}, ${firstName}`;
   };
 
-  const getAgentLabel = (player: BeraterPlayer): { text: string; color: string } => {
+  const getAgentLabel = (player: BeraterPlayer): { text: string; color: string; noAgent: boolean } => {
     // gleiche Regel wie überall: Agentur vor Personenname; "Familienangehörige"
     // wird angezeigt, zählt nur im ohne-Berater-Filter als beraterlos
     const display = agentDisplayName(player.current_agent_name, player.current_agent_company);
-    if (!display) return { text: 'kein Beratereintrag', color: colors.success };
-    return { text: display, color: colors.textSecondary };
+    if (!display) return { text: 'kein Beratereintrag', color: colors.success, noAgent: true };
+    return { text: display, color: colors.textSecondary, noAgent: false };
   };
 
   const calculateAge = (birthDate: string | null): string | null => {
@@ -325,7 +338,57 @@ export function WatchlistScreen() {
     () => sortedWatchlist.filter((w) => evaluations.get(w.player_id || '')?.status === 'top_ziel'),
     [sortedWatchlist, evaluations]
   );
-  const activeList = viewTab === 'ziel' ? zielList : sortedWatchlist;
+  const activeListAll = viewTab === 'ziel' ? zielList : sortedWatchlist;
+  // Mobile Suchleiste (Name, Verein)
+  const [mobileSearch, setMobileSearch] = useState('');
+  const matchesSearch = (p: BeraterPlayer | undefined) => {
+    const q = mobileSearch.trim().toLowerCase();
+    if (!q || !p) return true;
+    return (p.player_name || '').toLowerCase().includes(q) || (p.club_name || '').toLowerCase().includes(q);
+  };
+  // Mobile Sortierung (Button neben der Suche): Name, Berater, Potential, Mannschaft
+  type MobileSort = 'name' | 'berater' | 'potential' | 'club';
+  const MOBILE_SORTS: { key: MobileSort; label: string }[] = [
+    { key: 'name', label: 'Name' },
+    { key: 'berater', label: 'Berater' },
+    { key: 'potential', label: 'Potential' },
+    { key: 'club', label: 'Mannschaft' },
+  ];
+  const [mobileSort, setMobileSort] = useState<MobileSort | null>(null);
+  const [mobileSortOpen, setMobileSortOpen] = useState(false);
+  const mobileSortCompare = (pa: BeraterPlayer, pb: BeraterPlayer, ra: number | null, rb: number | null): number => {
+    switch (mobileSort) {
+      case 'name':
+        return formatNameLastFirst(pa.player_name).localeCompare(formatNameLastFirst(pb.player_name), 'de');
+      case 'berater': {
+        // ohne Berater zuerst (das ist die interessante Gruppe), dann alphabetisch
+        const aa = agentDisplayName(pa.current_agent_name, pa.current_agent_company) || '';
+        const ab = agentDisplayName(pb.current_agent_name, pb.current_agent_company) || '';
+        if (!aa !== !ab) return aa ? 1 : -1;
+        return aa.localeCompare(ab, 'de');
+      }
+      case 'potential':
+        return (rb ?? -1) - (ra ?? -1); // hoch → niedrig, ohne Eintrag unten
+      case 'club':
+        return (pa.club_name || '').localeCompare(pb.club_name || '', 'de');
+      default:
+        return 0;
+    }
+  };
+  const activeList = useMemo(() => {
+    let list = activeListAll;
+    if (!isMobile) return list;
+    if (mobileSearch.trim()) list = list.filter((w) => matchesSearch(w.player));
+    if (mobileSort) {
+      list = [...list].sort((a, b) => {
+        if (!a.player || !b.player) return 0;
+        const ra = evaluations.get(a.player.id)?.rating ?? a.rating ?? null;
+        const rb = evaluations.get(b.player.id)?.rating ?? b.rating ?? null;
+        return mobileSortCompare(a.player, b.player, ra, rb);
+      });
+    }
+    return list;
+  }, [activeListAll, mobileSearch, isMobile, mobileSort, evaluations]);
 
   const sortIndicator = (key: SortKey) => sortKey === key ? (sortAsc ? ' \u25B2' : ' \u25BC') : '';
 
@@ -364,6 +427,18 @@ export function WatchlistScreen() {
       }
     });
   }, [observed, obsSortKey, obsSortAsc]);
+  const mobileObserved = useMemo(() => {
+    let list = sortedObserved;
+    if (mobileSearch.trim()) list = list.filter((o) => matchesSearch(o.player));
+    if (mobileSort) {
+      list = [...list].sort((a, b) => mobileSortCompare(
+        a.player, b.player,
+        evaluations.get(a.player.id)?.rating ?? a.lastRating,
+        evaluations.get(b.player.id)?.rating ?? b.lastRating,
+      ));
+    }
+    return list;
+  }, [sortedObserved, mobileSearch, mobileSort, evaluations]);
 
   // Modal handlers
   // Öffnet das geteilte Spielerprofil (PlayerDetailModal) — wie im Dashboard
@@ -496,71 +571,74 @@ export function WatchlistScreen() {
   };
 
   // Mobile card
-  const renderMobileCard = ({ item }: { item: WatchlistEntry }) => {
-    if (!item.player) return null;
-    const player = item.player;
+  /**
+   * Gemeinsame mobile Spielerkarte (Watchlist, Zielspieler, Berichte):
+   * Zeile 1 Name · Jahrgang · Position · Badge | Potential + Marktwert
+   * Zeile 2 Wappen + Verein
+   * Zeile 3 Vertrag bis | Berater-Chip
+   * Zeile 4 letzter Bericht (statt "Hinzugefügt am")
+   */
+  const renderPlayerCard = (player: BeraterPlayer, extra?: { lastMatchDate?: string | null; reportCount?: number; lastRating?: number | null }) => {
     const agentLabel = getAgentLabel(player);
-    const age = calculateAge(player.birth_date);
-    const addedDate = formatDateDE(item.added_at);
-    const evalColor = getEvalColor(player.id, true); // Watchlist items are always on watchlist
     const ev = evaluations.get(player.id);
-    const rating = ev?.rating ?? item.rating ?? null;
-    const hasNotes = !!(ev?.notes || item.notes);
+    const rating = ev?.rating ?? extra?.lastRating ?? null;
+    const age = calculateAge(player.birth_date);
+    const pos = positionCode(player.position);
+    const clubName = player.club_name || '';
 
     return (
       <TouchableOpacity
-        style={[
-          styles.mobileCard,
-          { backgroundColor: colors.surface },
-          HARD_SHADOW,
-        ]}
+        style={[styles.mobileCard, { backgroundColor: colors.surface }, HARD_SHADOW]}
         onPress={() => openPlayerDetail(player)}
         activeOpacity={0.7}
       >
+        {/* Zeile 1 */}
         <View style={styles.mobileCardHeader}>
           <View style={styles.mobileCardNameRow}>
             <Text style={[styles.mobileCardName, { color: colors.text }]} numberOfLines={1}>
               {formatNameLastFirst(player.player_name)}
             </Text>
+            {age ? <Text style={styles.mobileCardMeta} numberOfLines={1}>{`(${age})`}</Text> : null}
+          </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             {/* Nur EIN Badge: Top-Ziel (Potential 8+) schlägt Zielspieler */}
             {rating != null && rating >= 8 ? (
-              <View style={styles.topZielBadge}>
-                <Text style={styles.topZielBadgeText}>TOP-ZIEL</Text>
-              </View>
+              <View style={styles.topZielBadge}><Text style={styles.topZielBadgeText}>TOP-ZIEL</Text></View>
             ) : viewTab !== 'ziel' && ev?.status === 'top_ziel' ? (
-              <View style={styles.topZielBadge}>
-                <Text style={styles.topZielBadgeText}>ZIELSPIELER</Text>
-              </View>
+              <View style={styles.topZielBadge}><Text style={styles.topZielBadgeText}>ZIELSPIELER</Text></View>
             ) : null}
-            {age ? <Text style={[styles.mobileCardAge, { color: colors.textSecondary }]}>{age}</Text> : null}
-            {rating != null && (
-              <View style={[styles.ratingBadge, { backgroundColor: rating >= 7 ? colors.success + '25' : rating >= 4 ? '#f5a623' + '25' : colors.error + '25' }]}>
-                <Text style={[styles.ratingBadgeText, { color: rating >= 7 ? colors.success : rating >= 4 ? '#f5a623' : colors.error }]}>{rating}</Text>
+            {rating != null && rating > 0 && (
+              <View style={[styles.potBadge, { backgroundColor: potentialColor(rating) }]}>
+                <Text style={styles.potBadgeText}>{rating}</Text>
               </View>
             )}
-            {hasNotes && <Ionicons name="chatbubble-outline" size={12} color={colors.textSecondary} style={{ marginLeft: 4 }} />}
           </View>
-          {player.market_value ? (
-            <Text style={[styles.mobileCardMV, { color: colors.text }]}>{player.market_value}</Text>
-          ) : null}
         </View>
+        {/* Position ausgeschrieben unter dem Namen */}
+        {pos ? (
+          <Text style={styles.mobileCardPosition} numberOfLines={1}>{POSITION_FULL[pos] || pos}</Text>
+        ) : null}
+        {/* Zeile 2: Wappen + Verein | Berater */}
         <View style={styles.mobileCardRow2}>
-          <Text style={[styles.mobileCardClubInline, { color: colors.textSecondary, fontStyle: player.is_vereinslos ? 'italic' : 'normal' }]} numberOfLines={1}>
-            {player.is_vereinslos ? `zuletzt: ${player.club_name || ''}` : (player.club_name || '')}
-          </Text>
-          <View style={[styles.mobileCardAgentBadge, { backgroundColor: agentLabel.color + '10', borderColor: agentLabel.color + '30' }]}>
-            <Text style={[styles.mobileCardAgentText, { color: agentLabel.color }]} numberOfLines={1}>
+          <View style={styles.mobileCardClubRow}>
+            {!!clubName && !player.is_vereinslos && <TeamLogo name={clubName} map={clubLogoMap} size={16} />}
+            <Text style={[styles.mobileCardClubInline, { color: colors.text, fontStyle: player.is_vereinslos ? 'italic' : 'normal' }]} numberOfLines={1}>
+              {player.is_vereinslos ? `zuletzt: ${clubName}` : (clubName || '—')}
+            </Text>
+          </View>
+          <View style={[styles.mobileCardAgentBadge, HARD_SHADOW, agentLabel.noAgent && styles.mobileCardAgentBadgeFree]}>
+            <Text style={[styles.mobileCardAgentText, agentLabel.noAgent && { color: '#15803d' }]} numberOfLines={1}>
               {agentLabel.text}
             </Text>
           </View>
         </View>
-        {addedDate && (
-          <Text style={[styles.mobileCardAdded, { color: colors.textSecondary }]}>
-            Hinzugefügt am {addedDate}
-          </Text>
-        )}
       </TouchableOpacity>
     );
+  };
+
+  const renderMobileCard = ({ item }: { item: WatchlistEntry }) => {
+    if (!item.player) return null;
+    return renderPlayerCard(item.player);
   };
 
   // Desktop row
@@ -842,6 +920,79 @@ export function WatchlistScreen() {
         }
       />
 
+      {/* Mobile Suchleiste (Name, Verein) — Optik wie in der Spiele-Übersicht */}
+      {isMobile && (
+        // Eigene Fläche mit Abstand nach unten: gescrollte Karten werden sauber unter der Leiste abgeschnitten
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 12, backgroundColor: colors.background, zIndex: 2, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder }}>
+          <View style={[HARD_SHADOW, { flex: 1, height: 25, backgroundColor: RETRO.inputBg, borderRadius: 2, justifyContent: 'center', paddingHorizontal: 10 }]}>
+            <TextInput
+              style={{ fontSize: 13, color: RETRO.text, height: '100%', ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : {}) }}
+              value={mobileSearch}
+              onChangeText={setMobileSearch}
+              placeholder="Name, Verein ..."
+              placeholderTextColor={RETRO.textMuted}
+            />
+          </View>
+          {/* Sortier-Button im Standard-Buttonmaß; aktiv = blaue Fläche wie der Filter in der Spiele-Übersicht */}
+          <TouchableOpacity
+            style={[HARD_SHADOW, { backgroundColor: mobileSort ? RETRO.faceSelected : RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 25, alignItems: 'center', justifyContent: 'center' }]}
+            onPress={() => setMobileSortOpen(true)}
+            activeOpacity={0.7}
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}>
+              <Ionicons name="swap-vertical" size={14} color={RETRO.text} />
+              {mobileSort ? (
+                <Text style={{ fontSize: 11, fontWeight: '700', color: RETRO.text }}>
+                  {MOBILE_SORTS.find((o) => o.key === mobileSort)?.label}
+                </Text>
+              ) : null}
+            </View>
+          </TouchableOpacity>
+        </View>
+      )}
+      {mobileSortOpen && (
+        <Modal visible transparent animationType="fade" onRequestClose={() => setMobileSortOpen(false)}>
+          <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center', padding: 20 }} onPress={() => setMobileSortOpen(false)}>
+            <Pressable style={[HARD_SHADOW_LG, { backgroundColor: '#e9e5dd', borderRadius: 2, width: 380, maxWidth: '100%', paddingBottom: 14 }]}>
+              <View style={[HARD_SHADOW, { backgroundColor: RETRO.yellow, paddingVertical: 9, paddingHorizontal: 14, margin: 10, marginBottom: 4, flexDirection: 'row', alignItems: 'center' }]}>
+                <Text style={{ fontSize: 16, fontWeight: '700', color: RETRO.text, flex: 1 }}>Sortierung</Text>
+                <TouchableOpacity onPress={() => setMobileSortOpen(false)} hitSlop={8}>
+                  <Ionicons name="close" size={18} color={RETRO.text} />
+                </TouchableOpacity>
+              </View>
+              <View style={{ paddingHorizontal: 14, paddingTop: 8, gap: 6 }}>
+                {[MOBILE_SORTS.slice(0, 2), MOBILE_SORTS.slice(2)].map((row, ri) => (
+                  <View key={ri} style={{ flexDirection: 'row', gap: 6 }}>
+                    {row.map((o) => {
+                      const sel = mobileSort === o.key;
+                      return (
+                        <TouchableOpacity
+                          key={o.key}
+                          style={[HARD_SHADOW, { flex: 1, backgroundColor: sel ? RETRO.text : RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 6, minHeight: 25, alignItems: 'center', justifyContent: 'center' }]}
+                          onPress={() => { setMobileSort(o.key); setMobileSortOpen(false); }}
+                          activeOpacity={0.7}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: sel ? '700' : '600', color: sel ? RETRO.yellow : RETRO.text }}>{o.label}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                ))}
+              </View>
+              <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, paddingHorizontal: 14, paddingTop: 16 }}>
+                <TouchableOpacity
+                  style={[HARD_SHADOW, { backgroundColor: RETRO.white, borderRadius: 0, paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                  onPress={() => { setMobileSort(null); setMobileSortOpen(false); }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Zurücksetzen</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Pressable>
+        </Modal>
+      )}
+
       {/* List */}
       {viewTab === 'beobachtet' && !isMobile ? (
         /* "Alle Berichte" als Tabelle — gleiche Optik wie die Watchlist */
@@ -889,7 +1040,7 @@ export function WatchlistScreen() {
         </>
       ) : viewTab === 'beobachtet' ? (
         <FlatList
-          data={sortedObserved}
+          data={mobileObserved}
           ListHeaderComponent={renderAmbiguousCard()}
           keyExtractor={(item) => item.player.id}
           contentContainerStyle={observed.length === 0 && !loading ? styles.emptyContainer : { padding: 12 }}
@@ -904,36 +1055,7 @@ export function WatchlistScreen() {
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} />
           }
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              onPress={() => openPlayerDetail(item.player)}
-              style={[{
-                flexDirection: 'row', alignItems: 'center', gap: 10,
-                backgroundColor: colors.surface,
-                borderRadius: 2, paddingVertical: 10, paddingHorizontal: 14, marginBottom: 10,
-              }, HARD_SHADOW]}
-              activeOpacity={0.7}
-            >
-              <View style={{ flex: 1 }}>
-                {/* Schriftgrößen wie in den Tabellen (Suchmaschine): Zellen 13 */}
-                <Text style={{ fontSize: 13, fontWeight: '600', color: colors.text }} numberOfLines={1}>
-                  {formatNameLastFirst(item.player.player_name)}
-                </Text>
-                <Text style={{ fontSize: 13, color: colors.textSecondary, marginTop: 2 }} numberOfLines={1}>
-                  {[item.player.club_name, item.player.birth_date, item.player.position].filter(Boolean).join(' · ') || '—'}
-                </Text>
-              </View>
-              {item.lastRating != null && item.lastRating > 0 && (
-                <Text style={{ fontSize: 13, fontWeight: '700', color: colors.primary }}>{item.lastRating}/10</Text>
-              )}
-              <Text style={{ fontSize: 11, fontFamily: MONO, color: colors.textSecondary, minWidth: 70, textAlign: 'right' }}>
-                {/* Datum kann ISO oder DD.MM.YYYY sein — einheitlich deutsch anzeigen */}
-                {item.lastMatchDate && /^\d{4}-\d{2}-\d{2}/.test(item.lastMatchDate)
-                  ? item.lastMatchDate.slice(0, 10).split('-').reverse().join('.')
-                  : item.lastMatchDate || ''}
-              </Text>
-            </TouchableOpacity>
-          )}
+          renderItem={({ item }) => renderPlayerCard(item.player, { lastMatchDate: item.lastMatchDate, reportCount: item.reportCount, lastRating: item.lastRating })}
         />
       ) : isMobile ? (
         <FlatList
@@ -1075,7 +1197,7 @@ const styles = StyleSheet.create({
 
   // Mobile list
   mobileListContent: {
-    padding: 12,
+    padding: 12, // Trennlinie unter der Suchleiste ist die sichtbare Schnittkante
   },
 
   // Desktop list card
@@ -1114,7 +1236,7 @@ const styles = StyleSheet.create({
   },
   mobileCardNameRow: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'baseline', // Jahrgang steht auf der Grundlinie des Namens
     gap: 6,
     flex: 1,
     marginRight: 8,
@@ -1126,6 +1248,32 @@ const styles = StyleSheet.create({
   },
   mobileCardAge: {
     fontSize: 13,
+  },
+  mobileCardMeta: {
+    fontSize: 11,
+    fontFamily: MONO,
+    fontWeight: '600',
+    color: RETRO.textMuted,
+    flexShrink: 0,
+  },
+  mobileCardPosition: {
+    fontSize: 12,
+    color: RETRO.textMuted,
+    marginTop: -2,
+    marginBottom: 6,
+  },
+  mobileCardClubRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flex: 1,
+  },
+  mobileCardContract: {
+    fontSize: 11,
+    fontFamily: MONO,
+    fontWeight: '600',
+    color: RETRO.textMuted,
+    flexShrink: 0,
   },
   mobileCardMV: {
     fontSize: 13,
@@ -1142,16 +1290,22 @@ const styles = StyleSheet.create({
     flex: 1,
     flexShrink: 1,
   },
+  // Berater-Chip im Retro-Stil: eckig, weiße Fläche, harter Schatten (kein runder Rahmen)
   mobileCardAgentBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-    borderWidth: 1,
-    flexShrink: 0,
+    backgroundColor: RETRO.white,
+    borderRadius: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    flexShrink: 1,
+    maxWidth: '55%',
+  },
+  mobileCardAgentBadgeFree: {
+    backgroundColor: '#e3f1e6',
   },
   mobileCardAgentText: {
-    fontSize: 13,
-    fontWeight: '500',
+    fontSize: 11,
+    fontWeight: '600',
+    color: RETRO.text,
   },
   mobileCardAdded: {
     fontSize: 11,

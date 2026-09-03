@@ -32,6 +32,7 @@ import {
   agentDisplayName,
   teamLabel,
   agRank,
+  POSITION_FULL,
 } from '../services/stipendiumService';
 import {
   loadMatchEvaluationsForPlayer,
@@ -152,23 +153,6 @@ function formatContract(iso: string | null): string | null {
   return `${parts[2]}.${parts[1]}.${parts[0]}`;
 }
 
-// Positions-Kürzel ausgeschrieben (Kürzel aus stipendiumService.positionCode)
-const POSITION_FULL: Record<string, string> = {
-  TW: 'Torwart',
-  IV: 'Innenverteidiger',
-  LV: 'Linker Verteidiger',
-  RV: 'Rechter Verteidiger',
-  AB: 'Abwehr',
-  DM: 'Defensives Mittelfeld',
-  ZM: 'Zentrales Mittelfeld',
-  OM: 'Offensives Mittelfeld',
-  LM: 'Linkes Mittelfeld',
-  RM: 'Rechtes Mittelfeld',
-  MF: 'Mittelfeld',
-  LA: 'Linksaußen',
-  RA: 'Rechtsaußen',
-  ST: 'Stürmer',
-};
 
 // "Familienangehörige" wird als Eintrag angezeigt, gilt aber farblich als
 // beraterlos (grün) — wie "kein Beratereintrag"

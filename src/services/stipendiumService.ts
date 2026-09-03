@@ -315,6 +315,24 @@ export interface StipendiumSearchPlayer {
 }
 
 /** Alter aus "DD.MM.YYYY" berechnen */
+/** Positions-Kürzel ausgeschrieben (Kürzel aus positionCode) */
+export const POSITION_FULL: Record<string, string> = {
+  TW: 'Torwart',
+  IV: 'Innenverteidiger',
+  LV: 'Linker Verteidiger',
+  RV: 'Rechter Verteidiger',
+  AB: 'Abwehr',
+  DM: 'Defensives Mittelfeld',
+  ZM: 'Zentrales Mittelfeld',
+  OM: 'Offensives Mittelfeld',
+  LM: 'Linkes Mittelfeld',
+  RM: 'Rechtes Mittelfeld',
+  MF: 'Mittelfeld',
+  LA: 'Linksaußen',
+  RA: 'Rechtsaußen',
+  ST: 'Stürmer',
+};
+
 export function ageFromBirthDate(birthDate: string | null): number | null {
   if (!birthDate) return null;
   const parts = birthDate.split('.');
