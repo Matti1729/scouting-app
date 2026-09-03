@@ -491,7 +491,8 @@ export function DashboardScreen() {
             'Beraterwechsel in den letzten 7 Tagen',
             'SUCHE ÖFFNEN',
             () => navigation.navigate('Suchmaschine'),
-            beraterStats ? `${beraterStats.playersWithoutAgent} Spieler ohne Berater` : undefined
+            // Mobil ohne Zusatzzeile, damit alle vier Kacheln gleich hoch sind
+            beraterStats && !isMobile ? `${beraterStats.playersWithoutAgent} Spieler ohne Berater` : undefined
           )}
           {statCard('SPORTSTIPENDIUM', String(stipendiumCount), 'Kandidaten im Prozess', 'ÖFFNEN', () => navigation.navigate('Sportstipendium'))}
         </View>
@@ -499,7 +500,8 @@ export function DashboardScreen() {
         {/* Untere Reihe: Heute + Zielspieler (mobil: Zielspieler ZUERST) */}
         <View style={[styles.bottomRow, isMobile && { flexDirection: 'column-reverse', flexWrap: 'nowrap' as const }]}>
           {/* Heutige Spiele */}
-          <View style={[styles.panelCard, styles.panelHeute, HARD_SHADOW, isMobile && ({ flexBasis: 'auto' } as any)]}>
+          {/* Mobil: keine Mindestbreite (420 ragte über den Bildschirm hinaus) */}
+          <View style={[styles.panelCard, styles.panelHeute, HARD_SHADOW, isMobile && ({ flexBasis: 'auto', minWidth: 0 } as any)]}>
             {chip(`HEUTE${todayGames.length > 0 ? ` (${todayGames.length})` : ''}`, true)}
             {todayGames.length === 0 ? (
               <Text style={styles.emptyText}>Heute keine Spiele</Text>
@@ -578,7 +580,7 @@ export function DashboardScreen() {
           </View>
 
           {/* Zuletzt zur Watchlist hinzugefügt */}
-          <View style={[styles.panelCard, styles.panelWatchlist, HARD_SHADOW, isMobile && ({ flexBasis: 'auto' } as any)]}>
+          <View style={[styles.panelCard, styles.panelWatchlist, HARD_SHADOW, isMobile && ({ flexBasis: 'auto', minWidth: 0 } as any)]}>
             {chip('ZIELSPIELER', true)}
             <View style={styles.tableHead}>
               <Text style={[styles.tableHeadText, { flex: 1 }]}>SPIELER</Text>
