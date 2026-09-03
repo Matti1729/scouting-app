@@ -565,7 +565,8 @@ export function PlayerDetailModal({
                       return n.first ? `${n.last}, ${n.first}` : n.last;
                     })()}
                   </Text>
-                  <Text style={styles.profileTag}>SPIELERPROFIL</Text>
+                  {/* Mobil: Tag weglassen, damit der Spielername nicht abgeschnitten wird */}
+                  {!isMobile && <Text style={styles.profileTag}>SPIELERPROFIL</Text>}
                 </View>
                 <TouchableOpacity onPress={handleClose} hitSlop={8}>
                   <Ionicons name="close" size={20} color={RETRO.text} />
