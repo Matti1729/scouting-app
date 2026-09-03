@@ -432,7 +432,8 @@ export function DashboardScreen() {
     onPress: () => void,
     extra?: string
   ) => (
-    <TouchableOpacity key={title} style={[styles.statCard, HARD_SHADOW]} onPress={onPress} activeOpacity={0.7}>
+    // Mobil: 2 Kacheln je Reihe (quadratisches 2×2-Raster) statt 4 untereinander
+    <TouchableOpacity key={title} style={[styles.statCard, HARD_SHADOW, isMobile && { minWidth: 0, flexBasis: '45%', flexGrow: 1 }]} onPress={onPress} activeOpacity={0.7}>
       {chip(title)}
       <Text style={styles.statNumber}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
@@ -449,7 +450,8 @@ export function DashboardScreen() {
       <View style={[styles.headerBar, HARD_SHADOW_LG]}>
         <View style={styles.headerTitleWrap}>
           <Text style={styles.headerTitle}>Scouting Dashboard</Text>
-          <Text style={styles.headerSubtitle}>Spieler & Spiele im Blick</Text>
+          {/* Mobil: Untertitel weglassen (bricht sonst in 4 Zeilen um) */}
+          {!isMobile && <Text style={styles.headerSubtitle}>Spieler & Spiele im Blick</Text>}
         </View>
         {/* Glocke wie im Spielerprofil: leer = keine Meldungen, rot = neue */}
         <TouchableOpacity
