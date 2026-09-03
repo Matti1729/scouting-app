@@ -79,6 +79,7 @@ export function DashboardScreen() {
   const { signOut } = useAuth();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
+  const [headerRightW, setHeaderRightW] = useState(0); // Breite Glocke+Initialen, damit der Titel mittig bleibt
 
   const [upcomingMatches, setUpcomingMatches] = useState(0);
   const [stipendiumCount, setStipendiumCount] = useState(0);
@@ -448,11 +449,13 @@ export function DashboardScreen() {
     <SafeAreaView style={styles.container}>
       {/* Gelber Titelbalken */}
       <View style={[styles.headerBar, HARD_SHADOW_LG]}>
-        <View style={styles.headerTitleWrap}>
-          <Text style={styles.headerTitle}>Scouting Dashboard</Text>
-          {/* Mobil: Untertitel weglassen (bricht sonst in 4 Zeilen um) */}
+        {/* Titel mittig über dem ganzen Balken (wie RetroHeader); mobil ohne Untertitel */}
+        <View style={[styles.headerTitleWrap, isMobile ? { paddingLeft: 20, paddingRight: headerRightW + 20 } : { paddingHorizontal: headerRightW + 20 }]} pointerEvents="none">
+          <Text style={styles.headerTitle} numberOfLines={1}>Scouting Dashboard</Text>
           {!isMobile && <Text style={styles.headerSubtitle}>Spieler & Spiele im Blick</Text>}
         </View>
+        <View style={{ flex: 1 }} />
+        <View style={styles.headerRightGroup} onLayout={(e) => setHeaderRightW(e.nativeEvent.layout.width)}>
         {/* Glocke wie im Spielerprofil: leer = keine Meldungen, rot = neue */}
         <TouchableOpacity
           ref={bellRef as any}
@@ -471,12 +474,10 @@ export function DashboardScreen() {
             </View>
           )}
         </TouchableOpacity>
-        <View style={[styles.headerBox, HARD_SHADOW]}>
-          <Text style={styles.headerBoxText}>{todayHeader()}</Text>
-        </View>
         <TouchableOpacity style={[styles.headerBox, HARD_SHADOW]} onPress={signOut} activeOpacity={0.7}>
           <Text style={styles.headerBoxText}>{initials || '⎋'}</Text>
         </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView style={styles.content} contentContainerStyle={styles.contentContainer}>
@@ -969,15 +970,26 @@ const styles = StyleSheet.create({
   },
   // Titel + MONO-Untertitel auf gemeinsamer Grundlinie
   headerTitleWrap: {
-    flex: 1,
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    bottom: 0,
     flexDirection: 'row',
     alignItems: 'baseline',
+    justifyContent: 'center',
     gap: 12,
+    paddingTop: 12,
   },
   headerTitle: {
     fontSize: 20,
     fontWeight: '800',
     color: RETRO.text,
+  },
+  headerRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
   headerSubtitle: {
     fontSize: 11,

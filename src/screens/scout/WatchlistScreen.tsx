@@ -802,7 +802,14 @@ export function WatchlistScreen() {
               : 'Markierte Spieler im Blick'
         }
         onBack={() => navigation.goBack()}
-        right={
+        tabs={[
+          { key: 'ziel', label: `Zielspieler (${zielList.length})` },
+          { key: 'watchlist', label: `Watchlist (${watchlist.length})` },
+          { key: 'beobachtet', label: `Berichte (${observed.length})` },
+        ]}
+        activeTab={viewTab}
+        onTabChange={(k) => setViewTab(k as typeof viewTab)}
+        right={isMobile ? undefined :
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <TouchableOpacity
               onPress={() => setViewTab('ziel')}

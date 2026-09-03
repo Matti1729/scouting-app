@@ -2569,41 +2569,16 @@ export function MatchListScreen({ navigation, route }: any) {
       {isMobile ? (
         <>
           <RetroHeader
-            title="Spiele-Übersicht"
+            title="Übersicht Spiele"
             onBack={() => navigation.navigate('Dashboard')}
+            tabs={[
+              { key: 'anstehend', label: `Anstehend (${anstehendCount})` },
+              { key: 'meine', label: `Meine (${meineCount})` },
+              { key: 'archiv', label: `Archiv (${archivedCount})` },
+            ]}
+            activeTab={viewTab}
+            onTabChange={(k) => setViewTab(k as typeof viewTab)}
           />
-          {/* Tabs auf gelbem Grund (Fortsetzung des Titelbalkens) */}
-          <View style={{
-            flexDirection: 'row', alignItems: 'center', gap: 6,
-            paddingHorizontal: 10, paddingBottom: 10, paddingTop: 2,
-            backgroundColor: RETRO.yellow,
-          }}>
-            {(
-              [
-                { key: 'anstehend' as const, label: `Anstehend (${anstehendCount})` },
-                { key: 'meine' as const, label: `Meine (${meineCount})` },
-                { key: 'archiv' as const, label: `Archiv (${archivedCount})` },
-              ]
-            ).map((t) => (
-              <TouchableOpacity
-                key={t.key}
-                style={[
-                  HARD_SHADOW,
-                  { backgroundColor: RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 8, minHeight: 25, alignItems: 'center' as const, justifyContent: 'center' as const },
-                  viewTab === t.key && { backgroundColor: RETRO.text },
-                ]}
-                onPress={() => setViewTab(t.key)}
-                activeOpacity={0.7}
-              >
-                <Text style={{
-                  fontSize: 11, fontWeight: '700', fontFamily: MONO,
-                  color: viewTab === t.key ? RETRO.yellow : RETRO.text,
-                }}>
-                  {t.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
           {/* Suche + Filter + Event anlegen */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingTop: 10 }}>
             <View style={[HARD_SHADOW, { flex: 1, height: 25, backgroundColor: RETRO.inputBg, borderRadius: 2, justifyContent: 'center', paddingHorizontal: 10 }]}>
@@ -2615,8 +2590,32 @@ export function MatchListScreen({ navigation, route }: any) {
                 placeholderTextColor={RETRO.textMuted}
               />
             </View>
+            {/* Datum: eigener Button, natives Date-Picker-Input liegt unsichtbar darüber */}
+            <View style={[HARD_SHADOW, { backgroundColor: dateFilter ? RETRO.faceSelected : RETRO.white, borderRadius: 2, minHeight: 25, flexDirection: 'row', alignItems: 'center' }]}>
+              <View style={{ paddingVertical: 5, paddingHorizontal: 10, alignItems: 'center', justifyContent: 'center', minHeight: 25 }}>
+                {dateFilter ? (
+                  <Text style={{ fontSize: 11, fontWeight: '700', color: RETRO.text }}>
+                    {dateFilter.split('-').reverse().join('.')}
+                  </Text>
+                ) : (
+                  <Ionicons name="calendar-outline" size={14} color={RETRO.text} />
+                )}
+                {Platform.OS === 'web' && React.createElement('input' as any, {
+                  type: 'date',
+                  value: dateFilter,
+                  onChange: (e: any) => setDateFilter(e.target.value),
+                  'aria-label': 'Datum filtern',
+                  style: { position: 'absolute', inset: 0, width: '100%', height: '100%', opacity: 0, cursor: 'pointer', colorScheme: 'light' },
+                })}
+              </View>
+              {!!dateFilter && (
+                <TouchableOpacity onPress={() => setDateFilter('')} hitSlop={6} style={{ paddingRight: 8, paddingLeft: 2, minHeight: 25, justifyContent: 'center' }}>
+                  <Ionicons name="close" size={13} color={RETRO.text} />
+                </TouchableOpacity>
+              )}
+            </View>
             {(() => {
-              const filterCount = jahrgangFilter.length + artFilter.length + (dateFilter ? 1 : 0);
+              const filterCount = jahrgangFilter.length + artFilter.length;
               return (
                 <TouchableOpacity
                   style={[HARD_SHADOW, { backgroundColor: RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 25, alignItems: 'center', justifyContent: 'center' }, filterCount > 0 && { backgroundColor: RETRO.faceSelected }]}
@@ -2670,79 +2669,76 @@ export function MatchListScreen({ navigation, route }: any) {
               </TouchableOpacity>
             )}
           </View>
-          {/* Filter-Panel (Datum / Jahrgang / Art) */}
-          {mobileFilterOpen && (
-            <Modal visible transparent animationType="fade" onRequestClose={() => setMobileFilterOpen(false)}>
-              <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', padding: 20 }} onPress={() => setMobileFilterOpen(false)}>
-                <Pressable style={[HARD_SHADOW_LG, { backgroundColor: '#e9e5dd', borderRadius: 2, paddingBottom: 12 }]}>
-                  <View style={[HARD_SHADOW, { backgroundColor: RETRO.yellow, paddingVertical: 8, paddingHorizontal: 12, margin: 10, marginBottom: 8, flexDirection: 'row', alignItems: 'center' }]}>
-                    <Text style={{ fontSize: 16, fontWeight: '700', color: RETRO.text, flex: 1 }}>Filter</Text>
-                    <TouchableOpacity onPress={() => setMobileFilterOpen(false)} hitSlop={8}>
-                      <Ionicons name="close" size={20} color={RETRO.text} />
-                    </TouchableOpacity>
-                  </View>
-                  {Platform.OS === 'web' && (
-                    <View style={{ paddingHorizontal: 12, marginBottom: 8 }}>
-                      {React.createElement('input' as any, {
-                        type: 'date',
-                        value: dateFilter,
-                        onChange: (e: any) => setDateFilter(e.target.value),
-                        style: { background: RETRO.inputBg, color: RETRO.text, border: 'none', borderRadius: 0, padding: '0 8px', height: 25, fontSize: 12, colorScheme: 'light', width: '100%', boxShadow: '2px 2px 3px rgba(20, 20, 45, 0.45)' },
-                      })}
+          {/* Filter-Modal (Jahrgang / Art) – Aufbau wie die Bestätigungs-Modale (gelber Balken, Standard-Buttons) */}
+          {mobileFilterOpen && (() => {
+            const chunk = <T,>(arr: T[], n: number): T[][] => arr.reduce<T[][]>((rows, x, i) => { (rows[Math.floor(i / n)] ||= []).push(x); return rows; }, []);
+            const renderTile = (key: string, label: string, sel: boolean, onPress: () => void) => (
+              <TouchableOpacity
+                key={key}
+                style={[HARD_SHADOW, { flex: 1, backgroundColor: sel ? RETRO.text : RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 6, minHeight: 25, alignItems: 'center', justifyContent: 'center' }]}
+                onPress={onPress}
+                activeOpacity={0.7}
+              >
+                <Text style={{ fontSize: 11, fontWeight: sel ? '700' : '600', color: sel ? RETRO.yellow : RETRO.text }} numberOfLines={1}>{label}</Text>
+              </TouchableOpacity>
+            );
+            const jahrRows = chunk(jahrgangOptions, 5);
+            const artRows = chunk(SPIELART_OPTIONS, 2);
+            return (
+              <Modal visible transparent animationType="fade" onRequestClose={() => setMobileFilterOpen(false)}>
+                <Pressable style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.35)', alignItems: 'center', justifyContent: 'center', padding: 20 }} onPress={() => setMobileFilterOpen(false)}>
+                  <Pressable style={[HARD_SHADOW_LG, { backgroundColor: '#e9e5dd', borderRadius: 2, width: 380, maxWidth: '100%', paddingBottom: 14 }]}>
+                    <View style={[HARD_SHADOW, { backgroundColor: RETRO.yellow, paddingVertical: 9, paddingHorizontal: 14, margin: 10, marginBottom: 4, flexDirection: 'row', alignItems: 'center' }]}>
+                      <Text style={{ fontSize: 16, fontWeight: '700', color: RETRO.text, flex: 1 }}>Filter</Text>
+                      <TouchableOpacity onPress={() => setMobileFilterOpen(false)} hitSlop={8}>
+                        <Ionicons name="close" size={18} color={RETRO.text} />
+                      </TouchableOpacity>
                     </View>
-                  )}
-                  <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, letterSpacing: 1, color: RETRO.textMuted, paddingHorizontal: 12, marginTop: 4 }}>JAHRGANG</Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 12, paddingTop: 6 }}>
-                    {jahrgangOptions.map((j) => (
+                    <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, letterSpacing: 1, color: RETRO.textMuted, paddingHorizontal: 14, marginTop: 8 }}>JAHRGANG</Text>
+                    <View style={{ paddingHorizontal: 14, paddingTop: 6, gap: 6 }}>
+                      {jahrRows.map((row, ri) => (
+                        <View key={ri} style={{ flexDirection: 'row', gap: 6 }}>
+                          {row.map((j) => renderTile(j, j, jahrgangFilter.includes(j), () => setJahrgangFilter((prev) => prev.includes(j) ? prev.filter((x) => x !== j) : [...prev, j])))}
+                          {row.length < 5 && Array.from({ length: 5 - row.length }).map((_, i) => <View key={`f${i}`} style={{ flex: 1 }} />)}
+                        </View>
+                      ))}
+                    </View>
+                    <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, letterSpacing: 1, color: RETRO.textMuted, paddingHorizontal: 14, marginTop: 14 }}>ART</Text>
+                    <View style={{ paddingHorizontal: 14, paddingTop: 6, gap: 6 }}>
+                      {artRows.map((row, ri) => (
+                        <View key={ri} style={{ flexDirection: 'row', gap: 6 }}>
+                          {row.map((o) => renderTile(o.value, o.label, artFilter.includes(o.value), () => setArtFilter((prev) => prev.includes(o.value) ? prev.filter((x) => x !== o.value) : [...prev, o.value])))}
+                          {row.length < 2 && <View style={{ flex: 1 }} />}
+                        </View>
+                      ))}
+                    </View>
+                    <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, paddingHorizontal: 14, paddingTop: 16 }}>
                       <TouchableOpacity
-                        key={j}
-                        style={[HARD_SHADOW, { backgroundColor: jahrgangFilter.includes(j) ? RETRO.faceSelected : RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 24 }]}
-                        onPress={() => setJahrgangFilter((prev) => prev.includes(j) ? prev.filter((x) => x !== j) : [...prev, j])}
+                        style={[HARD_SHADOW, { backgroundColor: RETRO.white, borderRadius: 0, paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                        onPress={() => { setJahrgangFilter([]); setArtFilter([]); }}
                         activeOpacity={0.7}
                       >
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{j}</Text>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Zurücksetzen</Text>
                       </TouchableOpacity>
-                    ))}
-                  </View>
-                  <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, letterSpacing: 1, color: RETRO.textMuted, paddingHorizontal: 12, marginTop: 12 }}>ART</Text>
-                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingHorizontal: 12, paddingTop: 6 }}>
-                    {SPIELART_OPTIONS.map((o) => (
                       <TouchableOpacity
-                        key={o.value}
-                        style={[HARD_SHADOW, { backgroundColor: artFilter.includes(o.value) ? RETRO.faceSelected : RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 24 }]}
-                        onPress={() => setArtFilter((prev) => prev.includes(o.value) ? prev.filter((x) => x !== o.value) : [...prev, o.value])}
+                        style={[HARD_SHADOW, { backgroundColor: '#1a5f2a', borderRadius: 0, paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                        onPress={() => setMobileFilterOpen(false)}
                         activeOpacity={0.7}
                       >
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{o.label}</Text>
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: '#ffffff' }}>Anwenden</Text>
                       </TouchableOpacity>
-                    ))}
-                  </View>
-                  <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, paddingHorizontal: 12, paddingTop: 14 }}>
-                    <TouchableOpacity
-                      style={[HARD_SHADOW, { backgroundColor: RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 24 }]}
-                      onPress={() => { setJahrgangFilter([]); setArtFilter([]); setDateFilter(''); }}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Zurücksetzen</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[HARD_SHADOW, { backgroundColor: '#1a5f2a', borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 24 }]}
-                      onPress={() => setMobileFilterOpen(false)}
-                      activeOpacity={0.7}
-                    >
-                      <Text style={{ fontSize: 11, fontWeight: '600', color: '#ffffff' }}>Fertig</Text>
-                    </TouchableOpacity>
-                  </View>
+                    </View>
+                  </Pressable>
                 </Pressable>
-              </Pressable>
-            </Modal>
-          )}
+              </Modal>
+            );
+          })()}
         </>
       ) : (
         <>
         {/* Desktop: gelber Titelbalken (wie Dashboard) */}
         <RetroHeader
-          title="Spiele-Übersicht"
+          title="Übersicht Spiele"
           subtitle="Spiele, Lehrgänge & Turniere"
           onBack={() => navigation.navigate('Dashboard')}
           right={
