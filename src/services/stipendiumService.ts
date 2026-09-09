@@ -580,6 +580,11 @@ export interface PlayerClubInfo {
   club_name: string | null;
   club_tm_id: string | null;
   is_vereinslos: boolean;
+  // für die Board-Karten (gleicher Aufbau wie Watchlist/Suchmaschine)
+  position: string | null;
+  birth_date: string | null;
+  current_agent_name: string | null;
+  current_agent_company: string | null;
 }
 
 /** Aktuelle Vereinsinfo (inkl. Wappen-ID) für mehrere Spieler — für die Board-Karten */
@@ -587,7 +592,7 @@ export async function fetchPlayersClubInfo(tmPlayerIds: string[]): Promise<Recor
   if (tmPlayerIds.length === 0) return {};
   const { data, error } = await supabase
     .from('berater_players')
-    .select('tm_player_id, is_vereinslos, berater_clubs (club_name, tm_club_id)')
+    .select('tm_player_id, is_vereinslos, position, birth_date, current_agent_name, current_agent_company, berater_clubs (club_name, tm_club_id)')
     .eq('is_active', true)
     .in('tm_player_id', tmPlayerIds);
   if (error || !data) return {};
@@ -598,6 +603,10 @@ export async function fetchPlayersClubInfo(tmPlayerIds: string[]): Promise<Recor
       club_name: row.berater_clubs?.club_name || null,
       club_tm_id: row.berater_clubs?.tm_club_id || null,
       is_vereinslos: !!row.is_vereinslos,
+      position: row.position || null,
+      birth_date: row.birth_date || null,
+      current_agent_name: row.current_agent_name || null,
+      current_agent_company: row.current_agent_company || null,
     };
   }
   return map;

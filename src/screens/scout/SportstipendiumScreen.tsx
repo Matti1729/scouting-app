@@ -32,6 +32,10 @@ import {
   fetchPlayersClubInfo,
   syncGoKandidat,
   checkGoKandidatImPortal,
+  ageFromBirthDate,
+  positionCode,
+  agentDisplayName,
+  POSITION_FULL,
 } from '../../services/stipendiumService';
 import { PlayerDetailModal, splitName } from '../../components/PlayerDetailModal';
 import { RetroHeader } from '../../components/RetroHeader';
@@ -335,7 +339,7 @@ export function SportstipendiumScreen() {
         return (
           <View style={styles.cardClubRow}>
             <Text style={styles.cardClubMuted} numberOfLines={1}>
-              vereinslos{info.club_name ? ` (letzter Verein: ${info.club_name})` : ''}
+              {`zuletzt: ${info.club_name || '—'}`}
             </Text>
           </View>
         );
@@ -349,7 +353,7 @@ export function SportstipendiumScreen() {
               resizeMode="contain"
             />
           )}
-          <Text style={styles.cardClub} numberOfLines={1}>{info.club_name || '—'}</Text>
+          <Text style={styles.cardClubName} numberOfLines={1}>{info.club_name || '—'}</Text>
         </View>
       );
     }
@@ -366,6 +370,15 @@ export function SportstipendiumScreen() {
     // Verschieben/Archivieren/Löschen). Nach Löschung im Portal automatisch frei.
     const locked = entry.status === 'go' && !goUnlocked.has(entry.id);
 
+    const info = entry.tm_player_id ? clubInfo[entry.tm_player_id] : undefined;
+    const age = ageFromBirthDate(info?.birth_date || entry.birth_date);
+    const posCode = positionCode(info?.position || entry.position);
+    const pos = posCode ? (POSITION_FULL[posCode] || posCode) : null;
+    const agent = info ? agentDisplayName(info.current_agent_name, info.current_agent_company) : null;
+    const noAgent = !agent;
+
+    // Karte im gleichen Aufbau wie Watchlist/Suchmaschine:
+    // Name (Alter) + Aktionen · Position · Wappen + Verein | Berater-Chip
     const cardInner = (
       <TouchableOpacity
         style={[styles.card, locked && styles.cardLocked, HARD_SHADOW]}
@@ -377,6 +390,8 @@ export function SportstipendiumScreen() {
           <Text style={styles.cardName} numberOfLines={1}>
             {displayName(entry.player_name)}
           </Text>
+          {age != null ? <Text style={styles.cardAge}>{`(${age} J.)`}</Text> : null}
+          <View style={{ flex: 1 }} />
           {entry.tm_profile_url && (
             <TouchableOpacity onPress={() => openProfile(entry.tm_profile_url)} hitSlop={8}>
               <Ionicons name="open-outline" size={14} color={RETRO.textMuted} />
@@ -397,7 +412,17 @@ export function SportstipendiumScreen() {
             <Ionicons name="trash-outline" size={13} color={locked ? RETRO.textMuted : '#b02020'} />
           </TouchableOpacity>
         </View>
-        {renderClubLine(entry)}
+        {pos ? <Text style={styles.cardPosition} numberOfLines={1}>{pos}</Text> : null}
+        <View style={styles.cardRow2}>
+          <View style={{ flex: 1 }}>{renderClubLine(entry)}</View>
+          {info ? (
+            <View style={[styles.agentChip, HARD_SHADOW, noAgent && styles.agentChipFree]}>
+              <Text style={[styles.agentText, noAgent && { color: '#15803d' }]} numberOfLines={1}>
+                {agent || 'kein Beratereintrag'}
+              </Text>
+            </View>
+          ) : null}
+        </View>
       </TouchableOpacity>
     );
 
@@ -810,11 +835,10 @@ const styles = StyleSheet.create({
   },
   // Weiße Karte mit gelbem Akzent (Anstoss-Spielerinfo) — volle Breite wie der Balken
   card: {
-    borderWidth: 1,
-    padding: 10,
+    padding: 14,
     marginBottom: 10,
+    borderRadius: 2,
     backgroundColor: RETRO.white,
-    borderColor: RETRO.rowBorder,
     borderLeftWidth: 3,
     borderLeftColor: RETRO.yellow,
   },
@@ -838,7 +862,46 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     flexShrink: 1,
-    flex: 1,
+    color: RETRO.text,
+  },
+  cardAge: {
+    fontSize: 11,
+    fontFamily: MONO,
+    fontWeight: '600',
+    color: RETRO.textMuted,
+  },
+  cardPosition: {
+    fontSize: 12,
+    color: RETRO.textMuted,
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  cardRow2: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  cardClubName: {
+    fontSize: 13,
+    color: RETRO.text,
+    flexShrink: 1,
+  },
+  // Berater-Chip wie in Watchlist/Suchmaschine: eckig, weiße Fläche, harter Schatten
+  agentChip: {
+    backgroundColor: RETRO.white,
+    borderRadius: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    flexShrink: 1,
+    maxWidth: '55%',
+  },
+  agentChipFree: {
+    backgroundColor: '#e3f1e6',
+  },
+  agentText: {
+    fontSize: 11,
+    fontWeight: '600',
     color: RETRO.text,
   },
   cardDetails: {
@@ -851,7 +914,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    marginTop: 4,
   },
   cardClubLogo: {
     width: 16,
