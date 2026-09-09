@@ -862,7 +862,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                       </TouchableOpacity>
                     ))}
                     <VoiceNoteButton
-                      style={styles.noteQuickButton}
+                      style={[styles.noteQuickButton, { flex: 0 }]}
                       textStyle={styles.evalButtonText}
                       onText={(text) => setNotes(prev => `${prev ? prev.replace(/\s+$/, '') + '\n' : ''}${text}`)}
                     />
@@ -1020,7 +1020,6 @@ const styles = StyleSheet.create({
   },
   noteQuickRow: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 8,
     flexShrink: 0,
   },
@@ -1028,6 +1027,7 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     paddingHorizontal: 10,
     alignItems: 'center',
+    flex: 1,
   },
   evalButtons: {
     flexDirection: 'row',

@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { View, Text, TouchableOpacity, Image, Linking, StyleSheet, Platform, ActivityIndicator, TextInput, Modal, ScrollView } from 'react-native';
+import { View, Text, TouchableOpacity, Image, Linking, StyleSheet, Platform, ActivityIndicator, TextInput, Modal, ScrollView, useWindowDimensions } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
 import { MONO, HARD_SHADOW, HARD_SHADOW_LG, RETRO_CHIP, RETRO_CHIP_TEXT, RETRO } from '../../theme/retro';
 import { Position } from '../../types';
@@ -166,6 +166,8 @@ export function EvalHeader({
   nameEditable,
   onNameChange,
 }: EvalHeaderProps) {
+  const { width: winWidth } = useWindowDimensions();
+  const isMobile = winWidth < 768;
   const { colors } = useTheme();
 
   // Editierbarer Name für k.A.-Spieler — zwei Felder, weil manchmal nur der
@@ -350,8 +352,8 @@ export function EvalHeader({
       </View>
 
       {/* VERTRAG + POTENTIAL immer nebeneinander (wie im Spielerprofil, auch mobil) */}
-      <View style={styles.vertragPotentialGroup}>
-      <View style={[styles.card, HARD_SHADOW, { zIndex: 30, minWidth: 180, flex: 1 }]}>
+      <View style={[styles.vertragPotentialGroup, isMobile && { minWidth: 0, flexBasis: '100%' }]}>
+      <View style={[styles.card, HARD_SHADOW, { zIndex: 30, minWidth: isMobile ? 0 : 180, flex: 1 }]}>
         {chip('VERTRAG')}
         {row('Vertrag bis', formatIsoDate(contractUntil) || '—')}
         {row('Marktwert', marketValue || '—')}
@@ -437,7 +439,7 @@ export function EvalHeader({
       </View>
 
       {/* POTENTIAL: vollflächig in der Bewertungsfarbe, Zahl + Slider */}
-      <View style={[styles.card, styles.cardPotential, HARD_SHADOW, { backgroundColor: potentialColor(overallRating) }]}>
+      <View style={[styles.card, styles.cardPotential, HARD_SHADOW, isMobile && { minWidth: 120, maxWidth: 150, flexShrink: 1 }, { backgroundColor: potentialColor(overallRating) }]}>
         {chip('POTENTIAL')}
         {/* − Score + in einer Reihe, Zahl mittig wie im Spielerprofil */}
         <View style={styles.ratingRow}>
@@ -481,7 +483,7 @@ export function EvalHeader({
           true
         )}
       </View>
-      <View style={[styles.card, styles.cardBerichte, HARD_SHADOW]}>
+      <View style={[styles.card, styles.cardBerichte, HARD_SHADOW, isMobile && { minWidth: 0, flexBasis: '100%' }]}>
         {chip(`BERICHTE${reportList.length > 0 ? ` (${reportList.length})` : ''}`)}
         {reportList.length === 0 ? (
           <Text style={styles.reportEmpty}>Noch keine Berichte</Text>
