@@ -31,6 +31,7 @@ import { createEmptySpeedAthleticismData } from '../../components/SpeedAthletici
 import { EvalHeader } from '../../components/evaluation/EvalHeader';
 import { KoerperCard } from '../../components/evaluation/KoerperCard';
 import { AthletikCard } from '../../components/evaluation/AthletikCard';
+import { VoiceNoteButton } from '../../components/evaluation/VoiceNoteButton';
 import {
   savePlayerEvaluation as saveBeraterEval,
   setScoutStatus,
@@ -828,7 +829,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
 
               {/* Rechte Spalte: Scouting Report + Einordnung */}
               <View style={styles.rightCol}>
-                <View style={[styles.reportCard, { flex: 1, backgroundColor: colors.surface, borderColor: colors.border }]}>
+                <View style={[styles.reportCard, !isMobile && { flex: 1 }, { backgroundColor: colors.surface, borderColor: colors.border }]}>
                   <View style={RETRO_CHIP}>
                     <Text style={RETRO_CHIP_TEXT}>SCOUTING REPORT</Text>
                   </View>
@@ -860,6 +861,11 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                         <Text style={[styles.evalButtonText, { color: RETRO.text }]}>+ {kind}</Text>
                       </TouchableOpacity>
                     ))}
+                    <VoiceNoteButton
+                      style={styles.noteQuickButton}
+                      textStyle={styles.evalButtonText}
+                      onText={(text) => setNotes(prev => `${prev ? prev.replace(/\s+$/, '') + '\n' : ''}${text}`)}
+                    />
                   </View>
                 </View>
 
@@ -1014,7 +1020,9 @@ const styles = StyleSheet.create({
   },
   noteQuickRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
+    flexShrink: 0,
   },
   noteQuickButton: {
     paddingVertical: 5,
