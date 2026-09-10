@@ -852,13 +852,18 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                     textAlignVertical="top"
                   />
                   <View style={styles.noteQuickRow}>
-                    {(['Stärke', 'Schwäche', 'Notiz'] as const).map((kind) => (
+                    {([
+                      { kind: 'Stärke', label: '+', color: '#1a5f2a' },
+                      { kind: 'Schwäche', label: '−', color: '#c0392b' },
+                      { kind: 'Notiz', label: '+ Notiz', color: RETRO.text },
+                    ] as const).map(({ kind, label, color }) => (
                       <TouchableOpacity
                         key={kind}
-                        style={[RETRO_BTN, HARD_SHADOW, styles.noteQuickButton]}
+                        accessibilityLabel={`${kind} hinzufügen`}
+                        style={[RETRO_BTN, HARD_SHADOW, styles.noteQuickButton, kind !== 'Notiz' && styles.noteSignButton]}
                         onPress={() => setNotes(prev => `${prev ? prev.replace(/\s+$/, '') + '\n' : ''}${kind}: `)}
                       >
-                        <Text style={[styles.evalButtonText, { color: RETRO.text }]}>+ {kind}</Text>
+                        <Text style={[styles.evalButtonText, kind !== 'Notiz' && styles.noteSignText, { color }]}>{label}</Text>
                       </TouchableOpacity>
                     ))}
                     <VoiceNoteButton
@@ -1028,6 +1033,16 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     alignItems: 'center',
     flex: 1,
+  },
+  noteSignButton: {
+    flex: 0,
+    minWidth: 40,
+    paddingHorizontal: 12,
+  },
+  noteSignText: {
+    fontSize: 16,
+    fontWeight: '800',
+    lineHeight: 18,
   },
   evalButtons: {
     flexDirection: 'row',
