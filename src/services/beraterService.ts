@@ -1260,7 +1260,8 @@ export async function loadBeraterStatusForLineup(
   // Berater-Spieler-Daten indexieren: tm_url → { beraterPlayerId, status }
   type StatusEntry = { beraterPlayerId: string; status: 'interessant' | 'nicht_interessant' | 'watchlist' };
   const byTmUrl = new Map<string, StatusEntry>();
-  const byLastName = new Map<string, StatusEntry>();
+  // Nachname -> Kandidaten (mit normalisiertem Vollnamen für den Vornamen-Abgleich)
+  const byLastName = new Map<string, Array<StatusEntry & { norm: string }>>();
   const byFullName = new Map<string, StatusEntry>();
 
   const indexPlayer = (bp: any, entry: StatusEntry, overwrite: boolean) => {
@@ -1277,9 +1278,12 @@ export async function loadBeraterStatusForLineup(
       // Nachname extrahieren (player_name kann "Vorname Nachname" sein)
       const parts = normalized.split(/\s+/);
       const lastName = parts[parts.length - 1];
-      if (overwrite || !byLastName.has(lastName)) {
-        byLastName.set(lastName, entry);
-      }
+      const list = byLastName.get(lastName) || [];
+      const norm = normalizePlayerName(bp.player_name);
+      const existing = list.findIndex((c) => c.beraterPlayerId === entry.beraterPlayerId);
+      if (existing >= 0) { if (overwrite) list[existing] = { ...entry, norm }; }
+      else list.push({ ...entry, norm });
+      byLastName.set(lastName, list);
     }
   };
 
@@ -1319,11 +1323,19 @@ export async function loadBeraterStatusForLineup(
         continue;
       }
     }
-    // 3. Fallback: Nachname
+    // 3. Fallback: Nachname, aber nur wenn der Vorname dazu passt. Ein reiner
+    //    Nachnamen-Treffer hat Lukas Salif Bangoura (BVB) mit Aboubacar Bangoura
+    //    (Schalke) verwechselt (2026-09-13). Ohne Vornamen in der Aufstellung
+    //    nur bei genau einem Kandidaten zuordnen.
     if (player.name) {
-      const match = byLastName.get(player.name.toLowerCase());
-      if (match) {
-        result.set(player.id, match);
+      const candidates = byLastName.get(player.name.toLowerCase()) || [];
+      if (candidates.length === 0) continue;
+      if (player.vorname) {
+        const myNorm = normalizePlayerName(`${player.vorname} ${player.name}`);
+        const compatible = candidates.filter((c) => namesCompatible(myNorm, c.norm));
+        if (compatible.length === 1) result.set(player.id, compatible[0]);
+      } else if (candidates.length === 1) {
+        result.set(player.id, candidates[0]);
       }
     }
   }
