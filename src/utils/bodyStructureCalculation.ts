@@ -177,7 +177,6 @@ export function createEmptyBodyStructureData(): BodyStructureData {
     proportion: null,
     frame: null,
     musculature: null,
-    finalHeight: null,
   };
 }
 
@@ -203,7 +202,6 @@ export function normalizeBodyStructure(raw: any): BodyStructureData {
     proportion: raw.proportion ?? null,
     frame,
     musculature: raw.musculature ?? null,
-    finalHeight: raw.finalHeight ?? null,
   };
 }
 

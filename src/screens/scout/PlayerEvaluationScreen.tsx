@@ -847,8 +847,6 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                 onFrameChange={(v) => setBodyStructure(prev => ({ ...prev, frame: v }))}
                 musculature={bodyStructure.musculature}
                 onMusculatureChange={(v) => setBodyStructure(prev => ({ ...prev, musculature: v }))}
-                finalHeight={bodyStructure.finalHeight}
-                onFinalHeightChange={(v) => setBodyStructure(prev => ({ ...prev, finalHeight: v }))}
               />
               <AthletikCard
                 antritt={speedAthleticism.antritt}

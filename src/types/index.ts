@@ -221,7 +221,6 @@ export type RelativeHeight = 'unterdurchschnittlich' | 'durchschnittlich' | 'ueb
 export type Proportion = 'langbeinig' | 'ausgeglichen' | 'kompakt';
 export type Frame = 'schmal' | 'mittel' | 'breit';
 export type Musculature = 'wenig_aufbau' | 'altersgerecht' | 'kraeftig';
-export type FinalHeight = 'eher_klein' | 'normal' | 'gross';
 /** @deprecated nur noch für Altdaten */
 export type Pelvis = 'schmal' | 'mittel' | 'breit';
 /** @deprecated nur noch für Altdaten */
@@ -236,7 +235,6 @@ export interface BodyStructureData {
   proportion: Proportion | null;
   frame: Frame | null;                  // Rahmen (ehem. Becken + Schulterlinie)
   musculature: Musculature | null;
-  finalHeight: FinalHeight | null;      // Endgrößen-Einschätzung für die Position
   // Altfelder (werden nicht mehr abgefragt, bleiben lesbar)
   pelvis?: Pelvis | null;
   shoulderLine?: ShoulderLine | null;
@@ -264,11 +262,6 @@ export const BODY_STRUCTURE_LABELS = {
     schmal: 'schmal',
     mittel: 'mittel',
     breit: 'breit',
-  },
-  finalHeight: {
-    eher_klein: 'eher klein',
-    normal: 'normal',
-    gross: 'groß',
   },
   relativeHeight: {
     unterdurchschnittlich: 'unterdurchschn.',

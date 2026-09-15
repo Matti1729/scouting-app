@@ -8,7 +8,6 @@ import {
   Proportion,
   Frame,
   Musculature,
-  FinalHeight,
   BODY_STRUCTURE_LABELS,
 } from '../../types';
 import { ToggleButtonRow } from './ToggleButtonRow';
@@ -24,8 +23,6 @@ interface KoerperCardProps {
   onFrameChange: (value: Frame | null) => void;
   musculature: Musculature | null;
   onMusculatureChange: (value: Musculature | null) => void;
-  finalHeight: FinalHeight | null;
-  onFinalHeightChange: (value: FinalHeight | null) => void;
 }
 
 const REIFEGRAD_OPTIONS: { value: Maturity; label: string }[] = [
@@ -34,11 +31,6 @@ const REIFEGRAD_OPTIONS: { value: Maturity; label: string }[] = [
   { value: 'fruehentwickler', label: BODY_STRUCTURE_LABELS.maturity.fruehentwickler },
 ];
 
-const ENDGROESSE_OPTIONS: { value: FinalHeight; label: string }[] = [
-  { value: 'eher_klein', label: BODY_STRUCTURE_LABELS.finalHeight.eher_klein },
-  { value: 'normal', label: BODY_STRUCTURE_LABELS.finalHeight.normal },
-  { value: 'gross', label: BODY_STRUCTURE_LABELS.finalHeight.gross },
-];
 
 const GROESSE_OPTIONS: { value: RelativeHeight; label: string }[] = [
   { value: 'unterdurchschnittlich', label: BODY_STRUCTURE_LABELS.relativeHeight.unterdurchschnittlich },
@@ -75,8 +67,6 @@ export function KoerperCard({
   onFrameChange,
   musculature,
   onMusculatureChange,
-  finalHeight,
-  onFinalHeightChange,
 }: KoerperCardProps) {
   const { colors } = useTheme();
 
@@ -109,11 +99,6 @@ export function KoerperCard({
       <View style={styles.section}>
         <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Muskulatur</Text>
         <ToggleButtonRow options={MUSKULATUR_OPTIONS} value={musculature} onChange={onMusculatureChange} />
-      </View>
-
-      <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Endgröße für Position</Text>
-        <ToggleButtonRow options={ENDGROESSE_OPTIONS} value={finalHeight} onChange={onFinalHeightChange} />
       </View>
 
     </View>
