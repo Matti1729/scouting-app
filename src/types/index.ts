@@ -320,26 +320,31 @@ export const ADULT_BODY_TYPE_LABELS: Record<AdultBodyType, string> = {
 // Bewertungsstufen für Antritt, Beschleunigung, Endspeed
 export type SpeedRating = 'top' | 'gut' | 'durchschnitt' | 'schwach';
 
-// Bewegungsökonomie (Laufstil)
-export type MovementEconomy = 'leichtfuessig' | 'neutral' | 'schwerfaellig';
-
 // Intensität (Motor)
 export type Intensity = 'hoch' | 'mittel' | 'niedrig';
 
-// Beweglichkeit
-export type Flexibility = 'sehr_beweglich' | 'beweglich' | 'durchschnittlich' | 'steif';
-
-// Koordination
+// Bewegungsqualität (ehem. Koordination + Beweglichkeit; Schlüssel "koordination" bleibt für Altdaten)
 export type Coordination = 'sauber' | 'normal' | 'wacklig';
 
-// Gesamtdaten für Schnelligkeit & Athletik
+// Robustheit: körperliche Zweikampfstabilität, Kontakt aushalten, Ball abschirmen
+export type Robustness = 'faellt_um' | 'haelt_stand' | 'setzt_sich_durch';
+
+/** @deprecated nur noch für Altdaten */
+export type MovementEconomy = 'leichtfuessig' | 'neutral' | 'schwerfaellig';
+/** @deprecated nur noch für Altdaten */
+export type Flexibility = 'sehr_beweglich' | 'beweglich' | 'durchschnittlich' | 'steif';
+
+// Gesamtdaten für Schnelligkeit & Athletik (Ziel: Profi-Tempo und Belastung
+// körperlich mitgehen; überarbeitet 2026-09-15)
 export interface SpeedAthleticismData {
-  antritt: SpeedRating | null;           // 0-20m (Antritt + Beschleunigung)
-  endspeed: SpeedRating | null;          // 20m+
-  bewegungsoekonomie: MovementEconomy | null;
+  antritt: SpeedRating | null;           // 0-20m (Antritt + Beschleunigung), 4-stufig
+  endspeed: SpeedRating | null;          // 20m+, 4-stufig
+  koordination: Coordination | null;     // Bewegungsqualität
+  robustheit: Robustness | null;
   intensitaet: Intensity | null;
-  beweglichkeit: Flexibility | null;
-  koordination: Coordination | null;
+  // Altfelder (werden nicht mehr abgefragt, bleiben lesbar)
+  beweglichkeit?: Flexibility | null;
+  bewegungsoekonomie?: MovementEconomy | null;
 }
 
 // Labels
@@ -373,4 +378,10 @@ export const COORDINATION_LABELS: Record<Coordination, string> = {
   sauber: 'sauber',
   normal: 'normal',
   wacklig: 'wacklig',
+};
+
+export const ROBUSTNESS_LABELS: Record<Robustness, string> = {
+  faellt_um: 'fällt um',
+  haelt_stand: 'hält stand',
+  setzt_sich_durch: 'setzt sich durch',
 };

@@ -29,7 +29,7 @@ import { agentDisplayName, fetchPlayerTmDetails, extractTmPlayerId, PlayerTmDeta
 import { updatePlayer as updateLineupPlayer } from '../../services/matchService';
 import { CompactMatchTeams } from '../../components/ClubLogo';
 import { createEmptyBodyStructureData, normalizeBodyStructure } from '../../utils/bodyStructureCalculation';
-import { createEmptySpeedAthleticismData } from '../../components/SpeedAthleticismSelector';
+import { createEmptySpeedAthleticismData, normalizeSpeedAthleticism } from '../../utils/speedAthleticism';
 import { EvalHeader } from '../../components/evaluation/EvalHeader';
 import { KoerperCard } from '../../components/evaluation/KoerperCard';
 import { AthletikCard } from '../../components/evaluation/AthletikCard';
@@ -342,7 +342,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
           setExistingId(data.id);
           if (data.positions) setPositions(data.positions.split(', ').filter(Boolean) as Position[]);
           if (data.body_structure) setBodyStructure(normalizeBodyStructure(data.body_structure));
-          if (data.speed_athleticism) setSpeedAthleticism(data.speed_athleticism);
+          if (data.speed_athleticism) setSpeedAthleticism(normalizeSpeedAthleticism(data.speed_athleticism));
           if (data.overall_rating != null) setOverallRating(data.overall_rating);
           if (data.notes) setNotes(data.notes);
           // Felder erhalten die nicht mehr im UI sind
@@ -853,10 +853,10 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                 onAntrittChange={(v) => setSpeedAthleticism(prev => ({ ...prev, antritt: v }))}
                 endspeed={speedAthleticism.endspeed}
                 onEndspeedChange={(v) => setSpeedAthleticism(prev => ({ ...prev, endspeed: v }))}
-                beweglichkeit={speedAthleticism.beweglichkeit}
-                onBeweglichkeitChange={(v) => setSpeedAthleticism(prev => ({ ...prev, beweglichkeit: v }))}
                 koordination={speedAthleticism.koordination}
                 onKoordinationChange={(v) => setSpeedAthleticism(prev => ({ ...prev, koordination: v }))}
+                robustheit={speedAthleticism.robustheit}
+                onRobustheitChange={(v) => setSpeedAthleticism(prev => ({ ...prev, robustheit: v }))}
                 intensitaet={speedAthleticism.intensitaet}
                 onIntensitaetChange={(v) => setSpeedAthleticism(prev => ({ ...prev, intensitaet: v }))}
               />

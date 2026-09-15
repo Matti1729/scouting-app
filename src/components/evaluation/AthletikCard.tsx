@@ -4,12 +4,12 @@ import { useTheme } from '../../contexts/ThemeContext';
 import { MONO, HARD_SHADOW, RETRO_CHIP, RETRO_CHIP_TEXT } from '../../theme/retro';
 import {
   SpeedRating,
-  Flexibility,
   Coordination,
+  Robustness,
   Intensity,
   SPEED_RATING_LABELS,
-  FLEXIBILITY_LABELS,
   COORDINATION_LABELS,
+  ROBUSTNESS_LABELS,
   INTENSITY_LABELS,
 } from '../../types';
 import { ToggleButtonRow } from './ToggleButtonRow';
@@ -19,10 +19,10 @@ interface AthletikCardProps {
   onAntrittChange: (value: SpeedRating | null) => void;
   endspeed: SpeedRating | null;
   onEndspeedChange: (value: SpeedRating | null) => void;
-  beweglichkeit: Flexibility | null;
-  onBeweglichkeitChange: (value: Flexibility | null) => void;
   koordination: Coordination | null;
   onKoordinationChange: (value: Coordination | null) => void;
+  robustheit: Robustness | null;
+  onRobustheitChange: (value: Robustness | null) => void;
   intensitaet: Intensity | null;
   onIntensitaetChange: (value: Intensity | null) => void;
 }
@@ -34,11 +34,10 @@ const SPEED_OPTIONS: { value: SpeedRating; label: string }[] = [
   { value: 'schwach', label: SPEED_RATING_LABELS.schwach },
 ];
 
-const BEWEGLICHKEIT_OPTIONS: { value: Flexibility; label: string }[] = [
-  { value: 'sehr_beweglich', label: FLEXIBILITY_LABELS.sehr_beweglich },
-  { value: 'beweglich', label: FLEXIBILITY_LABELS.beweglich },
-  { value: 'durchschnittlich', label: FLEXIBILITY_LABELS.durchschnittlich },
-  { value: 'steif', label: FLEXIBILITY_LABELS.steif },
+const ROBUSTHEIT_OPTIONS: { value: Robustness; label: string }[] = [
+  { value: 'faellt_um', label: ROBUSTNESS_LABELS.faellt_um },
+  { value: 'haelt_stand', label: ROBUSTNESS_LABELS.haelt_stand },
+  { value: 'setzt_sich_durch', label: ROBUSTNESS_LABELS.setzt_sich_durch },
 ];
 
 const KOORDINATION_OPTIONS: { value: Coordination; label: string }[] = [
@@ -58,10 +57,10 @@ export function AthletikCard({
   onAntrittChange,
   endspeed,
   onEndspeedChange,
-  beweglichkeit,
-  onBeweglichkeitChange,
   koordination,
   onKoordinationChange,
+  robustheit,
+  onRobustheitChange,
   intensitaet,
   onIntensitaetChange,
 }: AthletikCardProps) {
@@ -84,13 +83,13 @@ export function AthletikCard({
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Beweglichkeit</Text>
-        <ToggleButtonRow options={BEWEGLICHKEIT_OPTIONS} value={beweglichkeit} onChange={onBeweglichkeitChange} />
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Bewegungsqualität</Text>
+        <ToggleButtonRow options={KOORDINATION_OPTIONS} value={koordination} onChange={onKoordinationChange} />
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Koordination</Text>
-        <ToggleButtonRow options={KOORDINATION_OPTIONS} value={koordination} onChange={onKoordinationChange} />
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Robustheit</Text>
+        <ToggleButtonRow options={ROBUSTHEIT_OPTIONS} value={robustheit} onChange={onRobustheitChange} />
       </View>
 
       <View style={styles.section}>
