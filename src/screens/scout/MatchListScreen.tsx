@@ -3133,7 +3133,9 @@ export function MatchListScreen({ navigation, route }: any) {
                 <View style={[styles.modalHeader, isMobile && styles.modalHeaderMobile,
                   { borderBottomColor: colors.border },
                   // View-Mode: kompakter Kopf ohne Trennlinie → mehr Platz für die Aufstellungen
-                  !isEditMode && { borderBottomWidth: 0, paddingBottom: 4, paddingTop: 12 }]}>
+                  !isEditMode && { borderBottomWidth: 0, paddingBottom: 4, paddingTop: 12 },
+                  // Mobil identisch zur Titelleiste im Bewertungsdialog (8 px Rand, 8 px Innenabstand)
+                  !isEditMode && isMobile && { padding: 8, paddingBottom: 4 }]}>
                   {isEditMode ? (
                     <>
                       {/* Edit Mode: Original layout */}
@@ -3201,8 +3203,8 @@ export function MatchListScreen({ navigation, route }: any) {
                       {/* Gelbe Titelleiste: links Badge+Art · Mitte Titel · rechts Wochentag/Datum/Zeit · Icon · ✕ */}
                       <View style={[HARD_SHADOW, {
                         backgroundColor: RETRO.yellow,
-                        paddingVertical: 8, paddingHorizontal: 12, marginBottom: 8,
-                        flexDirection: 'row', alignItems: 'center', gap: 10,
+                        paddingVertical: 8, paddingHorizontal: isMobile ? 8 : 12, marginBottom: isMobile ? 0 : 8,
+                        flexDirection: 'row', alignItems: 'center', gap: isMobile ? 6 : 10,
                       }]}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                           {/* kompaktes, eckiges Badge wie in der Spiele-Liste */}
@@ -3251,7 +3253,7 @@ export function MatchListScreen({ navigation, route }: any) {
                           ) : null}
                         </View>
                         <Text style={{ fontSize: isMobile ? 12 : 13, fontWeight: '600', color: RETRO.text, flexShrink: 0 }} numberOfLines={1}>
-                          {weekdayShort(selectedMatch.datum) ? `${weekdayShort(selectedMatch.datum)}, ` : ''}{formatDateGerman(selectedMatch.datum, selectedMatch.datumEnde)}{selectedMatch.zeit && !isMobile ? ` · ${selectedMatch.zeit}` : ''}
+                          {!isMobile && weekdayShort(selectedMatch.datum) ? `${weekdayShort(selectedMatch.datum)}, ` : ''}{formatDateGerman(selectedMatch.datum, selectedMatch.datumEnde)}{selectedMatch.zeit && !isMobile ? ` · ${selectedMatch.zeit}` : ''}
                         </Text>
                         <TouchableOpacity
                           onPress={() => { setIsEditMode(false); setActionMenuVisible(false); setModalVisible(false); }}
