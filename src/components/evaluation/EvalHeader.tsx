@@ -9,11 +9,13 @@ import { loadPlayerHistory, BeraterChange, MatchEvaluation } from '../../service
 import { agentDisplayName, tmFlagUrl, flagForNationalTeam, PlayerNationalTeam, PlayerTmDetails, PlayerTmSeasonStats } from '../../services/stipendiumService';
 import { supabase } from '../../config/supabase';
 
-// Spieldatum einheitlich als DD.MM.YYYY (in der DB liegen ISO- und deutsche Werte)
+// Spieldatum einheitlich als DD.MM.YY (in der DB liegen ISO- und deutsche Werte)
 const toGermanDate = (d?: string | null): string => {
   if (!d) return '';
   const iso = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (iso) return `${iso[3]}.${iso[2]}.${iso[1]}`;
+  if (iso) return `${iso[3]}.${iso[2]}.${iso[1].slice(2)}`;
+  const de = d.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+  if (de) return `${de[1].padStart(2, '0')}.${de[2].padStart(2, '0')}.${de[3].slice(2)}`;
   return d;
 };
 

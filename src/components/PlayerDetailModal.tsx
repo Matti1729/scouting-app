@@ -791,7 +791,7 @@ export function PlayerDetailModal({
                         onPress={() => onOpenEvaluation?.(ev)}
                         activeOpacity={0.7}
                       >
-                        <Text style={styles.reportDate} numberOfLines={1}>{(ev.match_date || '').replace(/^(\d{4})-(\d{2})-(\d{2}).*$/, '$3.$2.$1') || '—'}</Text>
+                        <Text style={styles.reportDate} numberOfLines={1}>{(ev.match_date || '').replace(/^\d{2}(\d{2})-(\d{2})-(\d{2}).*$/, '$3.$2.$1') || '—'}</Text>
                         <Text style={styles.reportMatch} numberOfLines={1}>
                           {ev.match_name || 'Spiel unbekannt'}
                           {[ev.age_group, ev.match_type].filter(Boolean).length > 0 && (
