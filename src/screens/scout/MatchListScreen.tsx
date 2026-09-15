@@ -2889,9 +2889,15 @@ export function MatchListScreen({ navigation, route }: any) {
                   flexDirection: 'row', alignItems: 'center', backgroundColor: RETRO.yellow,
                   paddingVertical: 6, paddingHorizontal: 10, marginBottom: 10, gap: 8,
                 }]}>
+                  {isMobile ? (
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <CompactMatchTeams matchName={areaDetail.spiel} size={24} textStyle={{ fontSize: 14, fontWeight: '700', color: RETRO.text }} sepStyle={{ fontSize: 14, fontWeight: '700', color: RETRO.text }} />
+                    </View>
+                  ) : (
                   <Text style={{ fontSize: 16, fontWeight: '700', color: RETRO.text, flex: 1 }} numberOfLines={2}>
                     {areaDetail.spiel}
                   </Text>
+                  )}
                   {areaDetail.fussballDeUrl ? (
                     <TouchableOpacity
                       onPress={() => {

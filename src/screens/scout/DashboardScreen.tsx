@@ -27,7 +27,7 @@ import { loadScanStatus, BeraterStats, loadWatchlist, WatchlistEntry, loadAllEva
 import { areaAge, areaArt, shortVenueName, stripAge, loadClubLogoMap, clubLogoUriFor } from '../../services/areaGamesService';
 import { createMatch, deleteMatch } from '../../services/matchService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
-import { TeamLogo } from '../../components/ClubLogo';
+import { TeamLogo, CompactMatchTeams } from '../../components/ClubLogo';
 import { fetchSearchPlayer, StipendiumSearchPlayer, positionCode, ageFromBirthDate, agentDisplayName } from '../../services/stipendiumService';
 import { BLUE_GRADIENT } from '../../theme/retro';
 import { supabase } from '../../config/supabase';
@@ -879,9 +879,15 @@ export function DashboardScreen() {
           <Pressable style={styles.detailOverlay} onPress={() => setGameDetail(null)}>
             <Pressable style={[styles.detailModal, HARD_SHADOW_LG]}>
               <View style={[styles.detailNameBar, HARD_SHADOW]}>
+                {isMobile && gameDetail.away ? (
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <CompactMatchTeams matchName={`${gameDetail.home} - ${gameDetail.away}`} size={24} textStyle={[styles.detailNameText, { flex: 0 }]} sepStyle={[styles.detailNameText, { flex: 0 }]} />
+                  </View>
+                ) : (
                 <Text style={styles.detailNameText} numberOfLines={2}>
                   {gameDetail.away ? `${gameDetail.home} - ${gameDetail.away}` : gameDetail.home}
                 </Text>
+                )}
                 {gameDetail.fussballDeUrl ? (
                   <TouchableOpacity
                     onPress={() => openFussballDe(gameDetail.fussballDeUrl as string)}
