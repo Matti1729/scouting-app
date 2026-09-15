@@ -3,27 +3,42 @@ import { View, Text, StyleSheet } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
 import { MONO, HARD_SHADOW, RETRO_CHIP, RETRO_CHIP_TEXT } from '../../theme/retro';
 import {
+  Maturity,
   RelativeHeight,
   Proportion,
-  Pelvis,
-  ShoulderLine,
+  Frame,
   Musculature,
+  FinalHeight,
   BODY_STRUCTURE_LABELS,
 } from '../../types';
 import { ToggleButtonRow } from './ToggleButtonRow';
 
 interface KoerperCardProps {
+  maturity: Maturity | null;
+  onMaturityChange: (value: Maturity | null) => void;
   relativeHeight: RelativeHeight | null;
   onRelativeHeightChange: (value: RelativeHeight | null) => void;
   proportion: Proportion | null;
   onProportionChange: (value: Proportion | null) => void;
-  pelvis: Pelvis | null;
-  onPelvisChange: (value: Pelvis | null) => void;
-  shoulderLine: ShoulderLine | null;
-  onShoulderLineChange: (value: ShoulderLine | null) => void;
+  frame: Frame | null;
+  onFrameChange: (value: Frame | null) => void;
   musculature: Musculature | null;
   onMusculatureChange: (value: Musculature | null) => void;
+  finalHeight: FinalHeight | null;
+  onFinalHeightChange: (value: FinalHeight | null) => void;
 }
+
+const REIFEGRAD_OPTIONS: { value: Maturity; label: string }[] = [
+  { value: 'spaetentwickler', label: BODY_STRUCTURE_LABELS.maturity.spaetentwickler },
+  { value: 'altersgerecht', label: BODY_STRUCTURE_LABELS.maturity.altersgerecht },
+  { value: 'fruehentwickler', label: BODY_STRUCTURE_LABELS.maturity.fruehentwickler },
+];
+
+const ENDGROESSE_OPTIONS: { value: FinalHeight; label: string }[] = [
+  { value: 'eher_klein', label: BODY_STRUCTURE_LABELS.finalHeight.eher_klein },
+  { value: 'normal', label: BODY_STRUCTURE_LABELS.finalHeight.normal },
+  { value: 'gross', label: BODY_STRUCTURE_LABELS.finalHeight.gross },
+];
 
 const GROESSE_OPTIONS: { value: RelativeHeight; label: string }[] = [
   { value: 'unterdurchschnittlich', label: BODY_STRUCTURE_LABELS.relativeHeight.unterdurchschnittlich },
@@ -37,16 +52,10 @@ const PROPORTION_OPTIONS: { value: Proportion; label: string }[] = [
   { value: 'kompakt', label: BODY_STRUCTURE_LABELS.proportion.kompakt },
 ];
 
-const BECKEN_OPTIONS: { value: Pelvis; label: string }[] = [
-  { value: 'schmal', label: BODY_STRUCTURE_LABELS.pelvis.schmal },
-  { value: 'mittel', label: BODY_STRUCTURE_LABELS.pelvis.mittel },
-  { value: 'breit', label: BODY_STRUCTURE_LABELS.pelvis.breit },
-];
-
-const SCHULTER_OPTIONS: { value: ShoulderLine; label: string }[] = [
-  { value: 'schmal', label: BODY_STRUCTURE_LABELS.shoulderLine.schmal },
-  { value: 'mittel', label: BODY_STRUCTURE_LABELS.shoulderLine.mittel },
-  { value: 'breit', label: BODY_STRUCTURE_LABELS.shoulderLine.breit },
+const RAHMEN_OPTIONS: { value: Frame; label: string }[] = [
+  { value: 'schmal', label: BODY_STRUCTURE_LABELS.frame.schmal },
+  { value: 'mittel', label: BODY_STRUCTURE_LABELS.frame.mittel },
+  { value: 'breit', label: BODY_STRUCTURE_LABELS.frame.breit },
 ];
 
 const MUSKULATUR_OPTIONS: { value: Musculature; label: string }[] = [
@@ -56,16 +65,18 @@ const MUSKULATUR_OPTIONS: { value: Musculature; label: string }[] = [
 ];
 
 export function KoerperCard({
+  maturity,
+  onMaturityChange,
   relativeHeight,
   onRelativeHeightChange,
   proportion,
   onProportionChange,
-  pelvis,
-  onPelvisChange,
-  shoulderLine,
-  onShoulderLineChange,
+  frame,
+  onFrameChange,
   musculature,
   onMusculatureChange,
+  finalHeight,
+  onFinalHeightChange,
 }: KoerperCardProps) {
   const { colors } = useTheme();
 
@@ -73,6 +84,11 @@ export function KoerperCard({
     <View style={[styles.card, HARD_SHADOW, { backgroundColor: colors.surface }]}>
       <View style={RETRO_CHIP}>
         <Text style={RETRO_CHIP_TEXT}>KÖRPER</Text>
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Reifegrad</Text>
+        <ToggleButtonRow options={REIFEGRAD_OPTIONS} value={maturity} onChange={onMaturityChange} />
       </View>
 
       <View style={styles.section}>
@@ -86,18 +102,18 @@ export function KoerperCard({
       </View>
 
       <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Becken</Text>
-        <ToggleButtonRow options={BECKEN_OPTIONS} value={pelvis} onChange={onPelvisChange} />
-      </View>
-
-      <View style={styles.section}>
-        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Schulterlinie</Text>
-        <ToggleButtonRow options={SCHULTER_OPTIONS} value={shoulderLine} onChange={onShoulderLineChange} />
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Rahmen</Text>
+        <ToggleButtonRow options={RAHMEN_OPTIONS} value={frame} onChange={onFrameChange} />
       </View>
 
       <View style={styles.section}>
         <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Muskulatur</Text>
         <ToggleButtonRow options={MUSKULATUR_OPTIONS} value={musculature} onChange={onMusculatureChange} />
+      </View>
+
+      <View style={styles.section}>
+        <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Endgröße für Position</Text>
+        <ToggleButtonRow options={ENDGROESSE_OPTIONS} value={finalHeight} onChange={onFinalHeightChange} />
       </View>
 
     </View>

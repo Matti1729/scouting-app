@@ -213,22 +213,34 @@ export interface ScoutProfile {
 // KÖRPERBAU (Body Structure)
 // ============================================
 
-// Körperbau-Merkmale
+// Körperbau-Merkmale (Ziel: Entwicklungsreserve schätzen + Profil zur Position,
+// nicht "wie stark ist er heute"). Überarbeitet 2026-09-15: Becken + Schulterlinie
+// -> Rahmen, Bewegungsbild raus (doppelt mit Koordination), neu Reifegrad + Endgröße.
+export type Maturity = 'spaetentwickler' | 'altersgerecht' | 'fruehentwickler';
 export type RelativeHeight = 'unterdurchschnittlich' | 'durchschnittlich' | 'ueberdurchschnittlich';
 export type Proportion = 'langbeinig' | 'ausgeglichen' | 'kompakt';
-export type Pelvis = 'schmal' | 'mittel' | 'breit';
-export type ShoulderLine = 'schmal' | 'mittel' | 'breit';
+export type Frame = 'schmal' | 'mittel' | 'breit';
 export type Musculature = 'wenig_aufbau' | 'altersgerecht' | 'kraeftig';
+export type FinalHeight = 'eher_klein' | 'normal' | 'gross';
+/** @deprecated nur noch für Altdaten */
+export type Pelvis = 'schmal' | 'mittel' | 'breit';
+/** @deprecated nur noch für Altdaten */
+export type ShoulderLine = 'schmal' | 'mittel' | 'breit';
+/** @deprecated nur noch für Altdaten */
 export type MovementPattern = 'leichtfuessig' | 'neutral' | 'schwerfaellig';
 
 // Gesamter Körperbau-State (Alter kommt aus Spielerdaten)
 export interface BodyStructureData {
+  maturity: Maturity | null;            // Reifegrad relativ zum Jahrgang
   relativeHeight: RelativeHeight | null;
   proportion: Proportion | null;
-  pelvis: Pelvis | null;
-  shoulderLine: ShoulderLine | null;
+  frame: Frame | null;                  // Rahmen (ehem. Becken + Schulterlinie)
   musculature: Musculature | null;
-  movementPattern: MovementPattern | null;
+  finalHeight: FinalHeight | null;      // Endgrößen-Einschätzung für die Position
+  // Altfelder (werden nicht mehr abgefragt, bleiben lesbar)
+  pelvis?: Pelvis | null;
+  shoulderLine?: ShoulderLine | null;
+  movementPattern?: MovementPattern | null;
 }
 
 // Prognose-Output
@@ -243,6 +255,21 @@ export interface BodyStructurePrognosis {
 
 // Labels für die Körperbau-Merkmale
 export const BODY_STRUCTURE_LABELS = {
+  maturity: {
+    spaetentwickler: 'Spätentwickler',
+    altersgerecht: 'altersgerecht',
+    fruehentwickler: 'Frühentwickler',
+  },
+  frame: {
+    schmal: 'schmal',
+    mittel: 'mittel',
+    breit: 'breit',
+  },
+  finalHeight: {
+    eher_klein: 'eher klein',
+    normal: 'normal',
+    gross: 'groß',
+  },
   relativeHeight: {
     unterdurchschnittlich: 'unterdurchschn.',
     durchschnittlich: 'durchschnittlich',

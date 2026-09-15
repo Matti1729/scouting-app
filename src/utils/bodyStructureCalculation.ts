@@ -36,28 +36,23 @@ const PROPORTION_POINTS: Record<string, PointWeights> = {
   kompakt: { u: 0, w: 2 },
 };
 
-const PELVIS_POINTS: Record<string, PointWeights> = {
+const FRAME_POINTS: Record<string, PointWeights> = {
   schmal: { u: 1, w: 0 },
   mittel: { u: 0, w: 0 },
   breit: { u: 0, w: 1 },
 };
 
-const SHOULDER_LINE_POINTS: Record<string, PointWeights> = {
-  schmal: { u: 1, w: 0 },
-  mittel: { u: 0, w: 0 },
-  breit: { u: 0, w: 1 },
+// Reifegrad ist der stärkste Einzelhinweis auf Entwicklungsreserve
+const MATURITY_POINTS: Record<string, PointWeights> = {
+  spaetentwickler: { u: 2, w: 0 },
+  altersgerecht: { u: 0, w: 0 },
+  fruehentwickler: { u: 0, w: 2 },
 };
 
 const MUSCULATURE_POINTS: Record<string, PointWeights> = {
   wenig_aufbau: { u: 2, w: 0 },
   altersgerecht: { u: 0, w: 0 },
   kraeftig: { u: 0, w: 2 },
-};
-
-const MOVEMENT_PATTERN_POINTS: Record<string, PointWeights> = {
-  leichtfuessig: { u: 1, w: 0 },
-  neutral: { u: 0, w: 0 },
-  schwerfaellig: { u: 0, w: 1 },
 };
 
 // Altersfaktor (Alter als Zahl, wird aus Spielerdaten berechnet)
@@ -75,12 +70,11 @@ function getAgeBonus(age: number): PointWeights {
  */
 export function isBodyStructureComplete(data: BodyStructureData): boolean {
   return (
+    data.maturity !== null &&
     data.relativeHeight !== null &&
     data.proportion !== null &&
-    data.pelvis !== null &&
-    data.shoulderLine !== null &&
-    data.musculature !== null &&
-    data.movementPattern !== null
+    data.frame !== null &&
+    data.musculature !== null
   );
 }
 
@@ -120,26 +114,20 @@ export function calculateBodyStructurePrognosis(
     totalW += points.w;
   }
 
-  if (data.pelvis) {
-    const points = PELVIS_POINTS[data.pelvis];
+  if (data.frame) {
+    const points = FRAME_POINTS[data.frame];
     totalU += points.u;
     totalW += points.w;
   }
 
-  if (data.shoulderLine) {
-    const points = SHOULDER_LINE_POINTS[data.shoulderLine];
+  if (data.maturity) {
+    const points = MATURITY_POINTS[data.maturity];
     totalU += points.u;
     totalW += points.w;
   }
 
   if (data.musculature) {
     const points = MUSCULATURE_POINTS[data.musculature];
-    totalU += points.u;
-    totalW += points.w;
-  }
-
-  if (data.movementPattern) {
-    const points = MOVEMENT_PATTERN_POINTS[data.movementPattern];
     totalU += points.u;
     totalW += points.w;
   }
@@ -161,13 +149,10 @@ export function calculateBodyStructurePrognosis(
   }
 
   // Upside berechnen
-  // HIGH: U ≥ 5 UND Bewegungsbild ≠ schwerfällig
-  // MEDIUM: U = 3-4
-  // LOW: U ≤ 2 ODER W ≥ 5
+  // HIGH: U ≥ 5 · MEDIUM: U = 3-4 · LOW: U ≤ 2 ODER W ≥ 5
   let upside: Upside;
-  const isSchwerfaellig = data.movementPattern === 'schwerfaellig';
 
-  if (totalU >= 5 && !isSchwerfaellig) {
+  if (totalU >= 5) {
     upside = 'HIGH';
   } else if (totalW >= 5 || totalU <= 2) {
     upside = 'LOW';
@@ -187,12 +172,38 @@ export function calculateBodyStructurePrognosis(
  */
 export function createEmptyBodyStructureData(): BodyStructureData {
   return {
+    maturity: null,
     relativeHeight: null,
     proportion: null,
-    pelvis: null,
-    shoulderLine: null,
+    frame: null,
     musculature: null,
-    movementPattern: null,
+    finalHeight: null,
+  };
+}
+
+/**
+ * Altdaten (Becken + Schulterlinie, Bewegungsbild) in das aktuelle Schema heben.
+ * Rahmen = Becken, wenn Becken und Schulterlinie übereinstimmen; sonst der
+ * gesetzte Wert; bei Widerspruch "mittel".
+ */
+export function normalizeBodyStructure(raw: any): BodyStructureData {
+  const empty = createEmptyBodyStructureData();
+  if (!raw || typeof raw !== 'object') return empty;
+  let frame = raw.frame ?? null;
+  if (frame == null) {
+    const p = raw.pelvis ?? null;
+    const sh = raw.shoulderLine ?? null;
+    if (p && sh) frame = p === sh ? p : 'mittel';
+    else frame = p || sh || null;
+  }
+  return {
+    ...empty,
+    maturity: raw.maturity ?? null,
+    relativeHeight: raw.relativeHeight ?? null,
+    proportion: raw.proportion ?? null,
+    frame,
+    musculature: raw.musculature ?? null,
+    finalHeight: raw.finalHeight ?? null,
   };
 }
 

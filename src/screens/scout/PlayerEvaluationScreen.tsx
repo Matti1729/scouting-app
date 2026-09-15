@@ -28,7 +28,7 @@ import {
 import { agentDisplayName, fetchPlayerTmDetails, extractTmPlayerId, PlayerTmDetails } from '../../services/stipendiumService';
 import { updatePlayer as updateLineupPlayer } from '../../services/matchService';
 import { CompactMatchTeams } from '../../components/ClubLogo';
-import { createEmptyBodyStructureData } from '../../utils/bodyStructureCalculation';
+import { createEmptyBodyStructureData, normalizeBodyStructure } from '../../utils/bodyStructureCalculation';
 import { createEmptySpeedAthleticismData } from '../../components/SpeedAthleticismSelector';
 import { EvalHeader } from '../../components/evaluation/EvalHeader';
 import { KoerperCard } from '../../components/evaluation/KoerperCard';
@@ -341,7 +341,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         if (data) {
           setExistingId(data.id);
           if (data.positions) setPositions(data.positions.split(', ').filter(Boolean) as Position[]);
-          if (data.body_structure) setBodyStructure(data.body_structure);
+          if (data.body_structure) setBodyStructure(normalizeBodyStructure(data.body_structure));
           if (data.speed_athleticism) setSpeedAthleticism(data.speed_athleticism);
           if (data.overall_rating != null) setOverallRating(data.overall_rating);
           if (data.notes) setNotes(data.notes);
@@ -837,16 +837,18 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
             {/* Körper + Athletik + rechte Spalte (Report/Einordnung) */}
             <View style={isMobile ? styles.cardsColumn : styles.cardsRow}>
               <KoerperCard
+                maturity={bodyStructure.maturity}
+                onMaturityChange={(v) => setBodyStructure(prev => ({ ...prev, maturity: v }))}
                 relativeHeight={bodyStructure.relativeHeight}
                 onRelativeHeightChange={(v) => setBodyStructure(prev => ({ ...prev, relativeHeight: v }))}
                 proportion={bodyStructure.proportion}
                 onProportionChange={(v) => setBodyStructure(prev => ({ ...prev, proportion: v }))}
-                pelvis={bodyStructure.pelvis}
-                onPelvisChange={(v) => setBodyStructure(prev => ({ ...prev, pelvis: v }))}
-                shoulderLine={bodyStructure.shoulderLine}
-                onShoulderLineChange={(v) => setBodyStructure(prev => ({ ...prev, shoulderLine: v }))}
+                frame={bodyStructure.frame}
+                onFrameChange={(v) => setBodyStructure(prev => ({ ...prev, frame: v }))}
                 musculature={bodyStructure.musculature}
                 onMusculatureChange={(v) => setBodyStructure(prev => ({ ...prev, musculature: v }))}
+                finalHeight={bodyStructure.finalHeight}
+                onFinalHeightChange={(v) => setBodyStructure(prev => ({ ...prev, finalHeight: v }))}
               />
               <AthletikCard
                 antritt={speedAthleticism.antritt}
