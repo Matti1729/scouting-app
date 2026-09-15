@@ -35,9 +35,9 @@ const SPEED_OPTIONS: { value: SpeedRating; label: string }[] = [
 ];
 
 const ROBUSTHEIT_OPTIONS: { value: Robustness; label: string }[] = [
-  { value: 'wacklig', label: ROBUSTNESS_LABELS.wacklig },
-  { value: 'stabil', label: ROBUSTNESS_LABELS.stabil },
   { value: 'durchsetzungsstark', label: ROBUSTNESS_LABELS.durchsetzungsstark },
+  { value: 'stabil', label: ROBUSTNESS_LABELS.stabil },
+  { value: 'wacklig', label: ROBUSTNESS_LABELS.wacklig },
 ];
 
 const KOORDINATION_OPTIONS: { value: Coordination; label: string }[] = [
