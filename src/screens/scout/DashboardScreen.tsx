@@ -880,15 +880,26 @@ export function DashboardScreen() {
             <Pressable style={[styles.detailModal, HARD_SHADOW_LG]}>
               <View style={[styles.detailNameBar, HARD_SHADOW]}>
                 {isMobile && gameDetail.away ? (
-                  <View style={{ flex: 1, minWidth: 0 }}>
-                    <CompactMatchTeams matchName={`${gameDetail.home} - ${gameDetail.away}`} size={24} textStyle={[styles.detailNameText, { flex: 0 }]} sepStyle={[styles.detailNameText, { flex: 0 }]} />
-                  </View>
+                  <>
+                    {/* Mobil: fussball.de-Icon links, Begegnung mittig, ✕ rechts */}
+                    {gameDetail.fussballDeUrl ? (
+                      <TouchableOpacity
+                        onPress={() => openFussballDe(gameDetail.fussballDeUrl as string)}
+                        hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      >
+                        <Image source={require('../../../assets/fussballde-logo.png')} style={styles.detailFussballIcon} />
+                      </TouchableOpacity>
+                    ) : <View style={{ width: 20 }} />}
+                    <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', justifyContent: 'center' }}>
+                      <CompactMatchTeams matchName={`${gameDetail.home} - ${gameDetail.away}`} size={24} textStyle={[styles.detailNameText, { flex: 0 }]} sepStyle={[styles.detailNameText, { flex: 0 }]} />
+                    </View>
+                  </>
                 ) : (
                 <Text style={styles.detailNameText} numberOfLines={2}>
                   {gameDetail.away ? `${gameDetail.home} - ${gameDetail.away}` : gameDetail.home}
                 </Text>
                 )}
-                {gameDetail.fussballDeUrl ? (
+                {gameDetail.fussballDeUrl && !(isMobile && gameDetail.away) ? (
                   <TouchableOpacity
                     onPress={() => openFussballDe(gameDetail.fussballDeUrl as string)}
                     hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}

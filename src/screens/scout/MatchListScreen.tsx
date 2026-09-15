@@ -2890,15 +2890,32 @@ export function MatchListScreen({ navigation, route }: any) {
                   paddingVertical: 6, paddingHorizontal: 10, marginBottom: 10, gap: 8,
                 }]}>
                   {isMobile ? (
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <CompactMatchTeams matchName={areaDetail.spiel} size={24} textStyle={{ fontSize: 14, fontWeight: '700', color: RETRO.text }} sepStyle={{ fontSize: 14, fontWeight: '700', color: RETRO.text }} />
-                    </View>
+                    <>
+                      {/* Mobil: fussball.de-Icon links, Begegnung mittig, ✕ rechts */}
+                      {areaDetail.fussballDeUrl ? (
+                        <TouchableOpacity
+                          onPress={() => {
+                            if (Platform.OS === 'web') window.open(areaDetail.fussballDeUrl as string, '_blank');
+                            else Linking.openURL(areaDetail.fussballDeUrl as string);
+                          }}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                        >
+                          <Image
+                            source={require('../../../assets/fussballde-logo.png')}
+                            style={{ width: 20, height: 20, borderWidth: 1, borderColor: RETRO.shadowDark }}
+                          />
+                        </TouchableOpacity>
+                      ) : <View style={{ width: 20 }} />}
+                      <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', justifyContent: 'center' }}>
+                        <CompactMatchTeams matchName={areaDetail.spiel} size={24} textStyle={{ fontSize: 14, fontWeight: '700', color: RETRO.text }} sepStyle={{ fontSize: 14, fontWeight: '700', color: RETRO.text }} />
+                      </View>
+                    </>
                   ) : (
                   <Text style={{ fontSize: 16, fontWeight: '700', color: RETRO.text, flex: 1 }} numberOfLines={2}>
                     {areaDetail.spiel}
                   </Text>
                   )}
-                  {areaDetail.fussballDeUrl ? (
+                  {areaDetail.fussballDeUrl && !isMobile ? (
                     <TouchableOpacity
                       onPress={() => {
                         if (Platform.OS === 'web') window.open(areaDetail.fussballDeUrl as string, '_blank');
