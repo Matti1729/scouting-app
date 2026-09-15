@@ -538,9 +538,9 @@ export function PlayerDetailModal({
   return (
     <Modal visible transparent animationType="fade" onRequestClose={handleClose}>
       <TouchableWithoutFeedback onPress={handleClose}>
-        <View style={styles.detailOverlay}>
+        <View style={[styles.detailOverlay, isMobile && { padding: 0 }]}>
           <TouchableWithoutFeedback>
-            <View style={[styles.detailModal, HARD_SHADOW_LG]}>
+            <View style={[styles.detailModal, isMobile && { width: '100%', maxWidth: '100%', height: '100%', maxHeight: '100%', borderWidth: 0, padding: 10 }, HARD_SHADOW_LG]}>
               {/* Namens-Balken (gelb): Name · SPIELERPROFIL (auf Namens-Grundlinie) · ✕ */}
               <View style={[styles.detailNameBar, HARD_SHADOW]}>
                 <View style={styles.detailNameWrap}>

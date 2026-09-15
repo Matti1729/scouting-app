@@ -456,7 +456,7 @@ export function EvalHeader({
         <View style={styles.ratingRow}>
           <TouchableOpacity
             style={[styles.stepBtn, HARD_SHADOW]}
-            onPress={() => onRatingChange(Math.max(1, overallRating - 1))}
+            onPress={() => onRatingChange(Math.max(0, overallRating - 1))}
             activeOpacity={0.7}
             hitSlop={4}
           >

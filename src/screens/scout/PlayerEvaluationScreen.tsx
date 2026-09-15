@@ -27,6 +27,7 @@ import {
 } from '../../types';
 import { agentDisplayName, fetchPlayerTmDetails, extractTmPlayerId, PlayerTmDetails } from '../../services/stipendiumService';
 import { updatePlayer as updateLineupPlayer } from '../../services/matchService';
+import { CompactMatchTeams } from '../../components/ClubLogo';
 import { createEmptyBodyStructureData } from '../../utils/bodyStructureCalculation';
 import { createEmptySpeedAthleticismData } from '../../components/SpeedAthleticismSelector';
 import { EvalHeader } from '../../components/evaluation/EvalHeader';
@@ -722,14 +723,15 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
 
   return (
     <ThemeOverride colors={RETRO_THEME}>
-    <View style={styles.modalOverlay}>
-      <View style={[styles.modalContainer, HARD_SHADOW_LG, { backgroundColor: colors.background, borderColor: RETRO.shadowDark }]}>
-        {/* Gelbe Titelleiste (Anstoss-Optik): links Badge+Art · Mitte Spiel+Icon · rechts Wochentag/Datum/Zeit · ✕ */}
+    <View style={[styles.modalOverlay, isMobile && styles.modalOverlayMobile]}>
+      <View style={[styles.modalContainer, isMobile && styles.modalContainerMobile, HARD_SHADOW_LG, { backgroundColor: colors.background, borderColor: RETRO.shadowDark }]}>
+        {/* Gelbe Titelleiste (Anstoss-Optik): links Badge+Art · Mitte Spiel+Icon · rechts Wochentag/Datum/Zeit · ✕
+            Mobil kompakt: Badge · Wappen–Wappen · Icon · Datum/Zeit · ✕ (keine Spielart, keine Vereinsnamen) */}
         <View style={[HARD_SHADOW, {
           backgroundColor: RETRO.yellow,
-          marginHorizontal: 12, marginTop: 12, marginBottom: 4,
-          paddingVertical: 8, paddingHorizontal: 12,
-          flexDirection: 'row', alignItems: 'center', gap: 10,
+          marginHorizontal: isMobile ? 8 : 12, marginTop: isMobile ? 8 : 12, marginBottom: 4,
+          paddingVertical: 8, paddingHorizontal: isMobile ? 8 : 12,
+          flexDirection: 'row', alignItems: 'center', gap: isMobile ? 6 : 10,
         }]}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             {ageGroup ? (
@@ -739,16 +741,20 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                 </Text>
               </View>
             ) : null}
-            {matchArt ? (
+            {matchArt && !isMobile ? (
               <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
                 {matchArt}
               </Text>
             ) : null}
           </View>
-          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            {isMobile && matchName ? (
+              <CompactMatchTeams matchName={matchName} size={22} textStyle={{ fontSize: 13, fontWeight: '800', color: RETRO.text }} sepStyle={{ fontSize: 13, fontWeight: '800', color: RETRO.text }} />
+            ) : (
             <Text style={{ fontSize: 16, fontWeight: '800', color: RETRO.text }} numberOfLines={1}>
               {matchName || [firstName, lastName].filter(Boolean).join(' ')}
             </Text>
+            )}
             {fussballDeUrl ? (
               <TouchableOpacity
                 onPress={() => Linking.openURL(fussballDeUrl)}
@@ -763,7 +769,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
             ) : null}
           </View>
           {matchDate ? (
-            <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
+            <Text style={{ fontSize: isMobile ? 12 : 13, fontWeight: '600', color: RETRO.text, flexShrink: 0 }} numberOfLines={1}>
               {formatMatchDateGerman(matchDate)}{matchZeit ? ` · ${matchZeit}` : ''}
             </Text>
           ) : null}
@@ -1108,6 +1114,17 @@ const styles = StyleSheet.create({
     borderRadius: 2,
     borderWidth: 1,
     overflow: 'hidden',
+  },
+  // Mobil: Modal über die volle Breite und Höhe (mehr Platz für die Karten)
+  modalOverlayMobile: {
+    padding: 0,
+  },
+  modalContainerMobile: {
+    width: '100%',
+    maxWidth: '100%',
+    height: '100%',
+    maxHeight: '100%',
+    borderWidth: 0,
   },
   // Hochstufen-Dialog nach dem Speichern
   promptOverlay: {
