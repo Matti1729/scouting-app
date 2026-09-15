@@ -584,19 +584,22 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       showAlert('Fehler', 'Nachname ist erforderlich.');
       return;
     }
-    // Ein Bericht wird erst ANGELEGT, wenn es echten Bewertungsinhalt gibt
-    // (Körper, Athletik, Scouting Report, Potential oder eine Einordnung) —
-    // nur Name/Position eingetragen reicht nicht.
+    // Ein Bericht wird erst ANGELEGT, wenn es Inhalt gibt: ein echter Name
+    // oder eine Bewertung (Körper, Athletik, Scouting Report, Potential, Einordnung).
+    // Ein echter Name (kein Platzhalter) zählt ebenfalls als Inhalt: beim
+    // Scouten soll man einen unbekannten Spieler auch nur benennen können.
+    const hasRealName = !isPlaceholderName(effectiveLastName) || !!firstName.trim();
     const hasSubstance =
       hasAnyValue(bodyStructure) ||
       hasAnyValue(speedAthleticism) ||
       !!notes.trim() ||
       overallRating > 0 ||
-      beraterEvalStatus !== null;
+      beraterEvalStatus !== null ||
+      hasRealName;
     if (!existingId && !hasSubstance) {
       showAlert(
         'Kein Bericht angelegt',
-        'Ein Bericht wird erst gespeichert, wenn etwas bewertet wurde (Körper, Athletik, Scouting Report, Potential oder Einordnung). Name und Position allein reichen nicht.'
+        'Ein Bericht wird erst gespeichert, wenn ein Name eingetragen oder etwas bewertet wurde (Körper, Athletik, Scouting Report, Potential oder Einordnung).'
       );
       return;
     }
