@@ -26,6 +26,7 @@ import {
   SpeedAthleticismData,
 } from '../../types';
 import { agentDisplayName, fetchPlayerTmDetails, extractTmPlayerId, PlayerTmDetails } from '../../services/stipendiumService';
+import { updatePlayer as updateLineupPlayer } from '../../services/matchService';
 import { createEmptyBodyStructureData } from '../../utils/bodyStructureCalculation';
 import { createEmptySpeedAthleticismData } from '../../components/SpeedAthleticismSelector';
 import { EvalHeader } from '../../components/evaluation/EvalHeader';
@@ -586,20 +587,43 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
     }
     // Ein Bericht wird erst ANGELEGT, wenn es Inhalt gibt: ein echter Name
     // oder eine Bewertung (Körper, Athletik, Scouting Report, Potential, Einordnung).
-    // Ein echter Name (kein Platzhalter) zählt ebenfalls als Inhalt: beim
-    // Scouten soll man einen unbekannten Spieler auch nur benennen können.
-    const hasRealName = !isPlaceholderName(effectiveLastName) || !!firstName.trim();
     const hasSubstance =
       hasAnyValue(bodyStructure) ||
       hasAnyValue(speedAthleticism) ||
       !!notes.trim() ||
       overallRating > 0 ||
-      beraterEvalStatus !== null ||
-      hasRealName;
+      beraterEvalStatus !== null;
+    // Name/Position eines Aufstellungsspielers immer in die Aufstellung
+    // zurückschreiben (auch ohne Bericht): beim Scouten soll man einen
+    // unbekannten Spieler benennen können, ohne ihn zu bewerten.
+    const hasRealName = !isPlaceholderName(effectiveLastName) || !!firstName.trim();
+    const syncLineupName = async () => {
+      if (!params.lineupPlayerId || !hasRealName) return;
+      const res = await updateLineupPlayer(params.lineupPlayerId, {
+        name: effectiveLastName,
+        vorname: firstName.trim() || undefined,
+        ...(positions.length > 0 ? { position: positions.join(', ') } : {}),
+      });
+      if (!res.success) throw new Error(res.error || 'Aufstellung konnte nicht aktualisiert werden');
+    };
     if (!existingId && !hasSubstance) {
+      if (params.lineupPlayerId && hasRealName) {
+        setSaving(true);
+        try {
+          await syncLineupName();
+          hasChangesRef.current = false;
+          setHasChanges(false);
+          navigation.goBack();
+        } catch (err: any) {
+          showAlert('Fehler', err.message || 'Name konnte nicht gespeichert werden');
+        } finally {
+          setSaving(false);
+        }
+        return;
+      }
       showAlert(
         'Kein Bericht angelegt',
-        'Ein Bericht wird erst gespeichert, wenn ein Name eingetragen oder etwas bewertet wurde (Körper, Athletik, Scouting Report, Potential oder Einordnung).'
+        'Ein Bericht wird erst gespeichert, wenn etwas bewertet wurde (Körper, Athletik, Scouting Report, Potential oder Einordnung).'
       );
       return;
     }
@@ -629,6 +653,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       // Bericht immer fest mit dem Spieler-Datensatz verknüpfen (legt ihn bei Bedarf an)
       let linkedPlayerId: string | null = null;
       try { linkedPlayerId = await ensureBeraterPlayer(); } catch { /* Verknüpfung optional */ }
+      try { await syncLineupName(); } catch { /* Aufstellungsname optional */ }
       const evalData: Record<string, any> = {
         match_id: params.matchId || null,
         lineup_player_id: params.lineupPlayerId || null,
