@@ -18,6 +18,7 @@ import {
   ScrollView,
   useWindowDimensions,
 } from 'react-native';
+import { CompactMatchTeams } from './ClubLogo';
 import { Ionicons } from '@expo/vector-icons';
 import {
   StipendiumSearchPlayer,
@@ -792,6 +793,14 @@ export function PlayerDetailModal({
                         activeOpacity={0.7}
                       >
                         <Text style={styles.reportDate} numberOfLines={1}>{(ev.match_date || '').replace(/^\d{2}(\d{2})-(\d{2})-(\d{2}).*$/, '$3.$2.$1') || '—'}</Text>
+                        {isMobile && ev.match_name ? (
+                          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                            <CompactMatchTeams matchName={ev.match_name} size={18} textStyle={[styles.reportMatch, { flex: 0, flexShrink: 1 }]} />
+                            {!!ev.age_group && (
+                      <Text style={[styles.reportMeta, { flexShrink: 0 }]} numberOfLines={1}>{'· ' + ev.age_group}</Text>
+                    )}
+                          </View>
+                        ) : (
                         <Text style={styles.reportMatch} numberOfLines={1}>
                           {ev.match_name || 'Spiel unbekannt'}
                           {[ev.age_group, ev.match_type].filter(Boolean).length > 0 && (
@@ -800,6 +809,7 @@ export function PlayerDetailModal({
                             </Text>
                           )}
                         </Text>
+                        )}
                         {ev.overall_rating ? (
                           <View style={[styles.reportRatingBadge, { backgroundColor: potentialColor(ev.overall_rating) }]}>
                             <Text style={styles.reportRatingText}>{ev.overall_rating}</Text>

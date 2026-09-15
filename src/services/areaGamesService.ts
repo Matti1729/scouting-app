@@ -281,7 +281,12 @@ function nationalTeamId(base: string): string | null {
  *  Nationalmannschafts-Fallback) */
 export function clubLogoUriFor(map: Map<string, string>, teamName: string): string | null {
   const b = clubBase(teamName);
-  const clubId = map.get(b) || map.get(`core:${clubCore(b)}`);
+  let clubId = map.get(b) || map.get(`core:${clubCore(b)}`);
+  if (!clubId && /ae|oe|ue/.test(b)) {
+    // ASCII-Schreibweise ("1. FC Koeln") gegen Umlaut-Variante ("1. FC Köln") prüfen
+    const u = b.replace(/ae/g, 'ä').replace(/oe/g, 'ö').replace(/ue/g, 'ü');
+    clubId = map.get(u) || map.get(`core:${clubCore(u)}`);
+  }
   if (clubId) return `https://tmssl.akamaized.net/images/wappen/head/${clubId}.png`;
   // Nationalteams haben kein "head"-Wappen bei TM, aber "normquad"
   const ntId = nationalTeamId(b);

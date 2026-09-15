@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { loadPlayerHistory, BeraterChange, MatchEvaluation } from '../../services/beraterService';
 import { agentDisplayName, tmFlagUrl, flagForNationalTeam, PlayerNationalTeam, PlayerTmDetails, PlayerTmSeasonStats } from '../../services/stipendiumService';
 import { supabase } from '../../config/supabase';
+import { CompactMatchTeams } from '../ClubLogo';
 
 // Spieldatum einheitlich als DD.MM.YY (in der DB liegen ISO- und deutsche Werte)
 const toGermanDate = (d?: string | null): string => {
@@ -510,6 +511,14 @@ export function EvalHeader({
                 activeOpacity={0.7}
               >
                 <Text style={styles.reportDate} numberOfLines={1}>{toGermanDate(ev.match_date) || '—'}</Text>
+                {isMobile && ev.match_name ? (
+                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <CompactMatchTeams matchName={ev.match_name} size={18} textStyle={[styles.reportMatch, { flex: 0, flexShrink: 1 }]} />
+                    {!!ev.age_group && (
+                      <Text style={[styles.reportMeta, { flexShrink: 0 }]} numberOfLines={1}>{'· ' + ev.age_group}</Text>
+                    )}
+                  </View>
+                ) : (
                 <Text style={styles.reportMatch} numberOfLines={1}>
                   {ev.match_name || 'Spiel unbekannt'}
                   {[ev.age_group, ev.match_type].filter(Boolean).length > 0 && (
@@ -518,6 +527,7 @@ export function EvalHeader({
                     </Text>
                   )}
                 </Text>
+                )}
                 {ev.overall_rating ? (
                   <View style={[styles.reportRatingBadge, { backgroundColor: potentialColor(ev.overall_rating) }]}>
                     <Text style={styles.reportRatingText}>{ev.overall_rating}</Text>

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { View, Image, Platform } from 'react-native';
-import { clubLogoUriFor, resolveClubLogoUri } from '../services/areaGamesService';
+import { View, Image, Platform, Text } from 'react-native';
+import { clubLogoUriFor, resolveClubLogoUri, loadClubLogoMap } from '../services/areaGamesService';
 
 // Transfermarkt-Wappen haben unterschiedlich viel transparenten Rand in der
 // Datei — dadurch wirken gleiche 16×16-Boxen unterschiedlich groß. Auf Web
@@ -95,6 +95,58 @@ export function TeamLogo({ name, map, size = 16 }: { name: string; map: Map<stri
   const uri = direct || resolved;
   if (!uri) return null;
   return <ClubLogo uri={uri} size={size} />;
+}
+
+// Wappen-Map einmal pro App-Lauf laden (für Komponenten ohne eigene Map)
+let sharedMapPromise: Promise<Map<string, string>> | null = null;
+let sharedMap: Map<string, string> | null = null;
+export function useClubLogoMap(): Map<string, string> {
+  const [map, setMap] = useState<Map<string, string>>(sharedMap || new Map());
+  useEffect(() => {
+    if (sharedMap) return;
+    if (!sharedMapPromise) sharedMapPromise = loadClubLogoMap().then((m) => { sharedMap = m; return m; });
+    let cancelled = false;
+    sharedMapPromise.then((m) => { if (!cancelled) setMap(m); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
+  return map;
+}
+
+/** Wappen-URI für einen Vereinsnamen (direkt aus Map, sonst On-Demand); null = kein Wappen */
+function useTeamLogoUri(name: string, map: Map<string, string>): string | null {
+  const direct = clubLogoUriFor(map, name);
+  const [resolved, setResolved] = useState<string | null>(null);
+  useEffect(() => {
+    if (direct || !name) return;
+    let cancelled = false;
+    setResolved(null);
+    resolveClubLogoUri(name).then((u) => { if (!cancelled) setResolved(u); });
+    return () => { cancelled = true; };
+  }, [name, direct]);
+  return direct || resolved;
+}
+
+function TeamLogoOrName({ name, map, size, textStyle }: { name: string; map: Map<string, string>; size: number; textStyle?: any }) {
+  const uri = useTeamLogoUri(name, map);
+  if (uri) return <ClubLogo uri={uri} size={size} />;
+  return <Text style={[textStyle, { flexShrink: 1, minWidth: 48 }]} numberOfLines={1}>{name}</Text>;
+}
+
+/**
+ * Kompakte Paarung "Wappen – Wappen" für die mobile Ansicht; ohne Wappen
+ * steht der Vereinsname. Erwartet match_name im Format "Heim - Gast".
+ */
+export function CompactMatchTeams({ matchName, size = 18, textStyle, sepStyle }: { matchName: string; size?: number; textStyle?: any; sepStyle?: any }) {
+  const map = useClubLogoMap();
+  const parts = matchName.split(/\s+[-–]\s+/);
+  if (parts.length !== 2) return <Text style={textStyle} numberOfLines={1}>{matchName}</Text>;
+  return (
+    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1, minWidth: 0 }}>
+      <TeamLogoOrName name={parts[0]} map={map} size={size} textStyle={textStyle} />
+      <Text style={sepStyle || textStyle}>–</Text>
+      <TeamLogoOrName name={parts[1]} map={map} size={size} textStyle={textStyle} />
+    </View>
+  );
 }
 
 export default ClubLogo;
