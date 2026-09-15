@@ -1767,8 +1767,11 @@ export async function loadObservedPlayers(): Promise<ObservedPlayer[]> {
  * Liefert Map<lineup_player_id, Anzahl>.
  */
 export async function loadReportCountsForLineup(
-  lineupPlayers: { id: string; name: string; vorname?: string; transfermarkt_url?: string | null }[]
+  lineupPlayers: { id: string; name: string; vorname?: string; transfermarkt_url?: string | null }[],
+  excludeMatchId?: string
 ): Promise<Map<string, number>> {
+  // excludeMatchId: Berichte zum aktuellen Spiel nicht mitzählen — die zeigt
+  // bereits das Stift-Symbol. Der Zähler steht nur für "aus anderen Spielen bekannt".
   const result = new Map<string, number>();
   if (!lineupPlayers.length) return result;
   try {
@@ -1777,12 +1780,12 @@ export async function loadReportCountsForLineup(
     // unbekannten Spieler denselben (falschen) Zähler
     const lastNames = [...new Set(lineupPlayers.map(p => p.name).filter(n => n && !isPlaceholderName(n)))];
 
-    type EvalRow = { id: string; transfermarkt_url: string | null; last_name: string | null; first_name: string | null };
+    type EvalRow = { id: string; match_id: string | null; transfermarkt_url: string | null; last_name: string | null; first_name: string | null };
     const rowById = new Map<string, EvalRow>();
     for (let i = 0; i < urls.length; i += 100) {
       const { data, error } = await supabase
         .from('player_evaluations')
-        .select('id, transfermarkt_url, last_name, first_name')
+        .select('id, match_id, transfermarkt_url, last_name, first_name')
         .in('transfermarkt_url', urls.slice(i, i + 100));
       if (error) throw error;
       for (const r of (data || []) as EvalRow[]) rowById.set(r.id, r);
@@ -1790,7 +1793,7 @@ export async function loadReportCountsForLineup(
     for (let i = 0; i < lastNames.length; i += 100) {
       const { data, error } = await supabase
         .from('player_evaluations')
-        .select('id, transfermarkt_url, last_name, first_name')
+        .select('id, match_id, transfermarkt_url, last_name, first_name')
         .in('last_name', lastNames.slice(i, i + 100));
       if (error) throw error;
       for (const r of (data || []) as EvalRow[]) rowById.set(r.id, r);
@@ -1801,6 +1804,7 @@ export async function loadReportCountsForLineup(
     const byUrl = new Map<string, number>();
     const byName = new Map<string, number>();
     for (const r of rowById.values()) {
+      if (excludeMatchId && r.match_id === excludeMatchId) continue;
       if (r.transfermarkt_url && urlSet.has(r.transfermarkt_url)) {
         byUrl.set(r.transfermarkt_url, (byUrl.get(r.transfermarkt_url) || 0) + 1);
       } else if (!isPlaceholderName(r.last_name)) {

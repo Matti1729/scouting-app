@@ -218,7 +218,7 @@ export const PlayerRow = memo<PlayerRowProps>(({
         )}
       </View>
 
-      {/* Badges: T (Torwart), C (Kapitän), ✓ (bewertet), n× (Berichte gesamt) */}
+      {/* Badges: T (Torwart), C (Kapitän), 📝 (Bericht zu diesem Spiel), n× (Berichte aus anderen Spielen) */}
       {!isEditMode && (player.isGoalkeeper || player.isCaptain || isEvaluated || reportCount > 0) && (
         <View style={styles.badgeContainer}>
           {player.isGoalkeeper && (

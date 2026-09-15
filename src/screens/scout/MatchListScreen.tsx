@@ -701,8 +701,9 @@ export function MatchListScreen({ navigation, route }: any) {
       const statusMap = await loadBeraterStatusForLineup(allLineupForBerater);
       setBeraterStatusMap(statusMap);
 
-      // Berichte-Anzahl über alle Spiele ("schon X-mal gesehen") fürs Badge
-      loadReportCountsForLineup(allLineupForBerater)
+      // Berichte-Anzahl aus ANDEREN Spielen ("schon X-mal gesehen") fürs Badge;
+      // der Bericht zum aktuellen Spiel wird nur über das Stift-Symbol gezeigt
+      loadReportCountsForLineup(allLineupForBerater, matchId)
         .then(setReportCounts)
         .catch(() => setReportCounts(new Map()));
     } else {
