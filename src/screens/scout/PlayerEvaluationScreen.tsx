@@ -8,13 +8,13 @@ import {
   TouchableOpacity,
   KeyboardAvoidingView,
   Platform,
-  Alert,
   useWindowDimensions,
   BackHandler,
   Image,
   Linking,
   Modal,
 } from 'react-native';
+import { showAlert } from '../../utils/alert';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../config/supabase';
 import { ThemeOverride } from '../../contexts/ThemeContext';
@@ -383,7 +383,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         navigation.goBack();
       }
     } else {
-      Alert.alert(
+      showAlert(
         'Ungespeicherte Änderungen',
         'Du hast ungespeicherte Änderungen. Möchtest du wirklich schließen?',
         [
@@ -418,7 +418,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
           navigation.dispatch(e.data.action);
         }
       } else {
-        Alert.alert(
+        showAlert(
           'Ungespeicherte Änderungen',
           'Du hast ungespeicherte Änderungen. Möchtest du wirklich schließen?',
           [
@@ -581,7 +581,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
     // Nur der Vorname bekannt (beim Spiel gehört)? Dann bleibt der Nachname "k.A."
     const effectiveLastName = lastName.trim() || (firstName.trim() ? 'k.A.' : '');
     if (!effectiveLastName) {
-      Alert.alert('Fehler', 'Nachname ist erforderlich.');
+      showAlert('Fehler', 'Nachname ist erforderlich.');
       return;
     }
     // Ein Bericht wird erst ANGELEGT, wenn es echten Bewertungsinhalt gibt
@@ -594,7 +594,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       overallRating > 0 ||
       beraterEvalStatus !== null;
     if (!existingId && !hasSubstance) {
-      Alert.alert(
+      showAlert(
         'Kein Bericht angelegt',
         'Ein Bericht wird erst gespeichert, wenn etwas bewertet wurde (Körper, Athletik, Scouting Report, Potential oder Einordnung). Name und Position allein reichen nicht.'
       );
@@ -607,7 +607,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       try {
         const { error } = await supabase.from('player_evaluations').delete().eq('id', existingId);
         if (error) {
-          Alert.alert('Fehler', error.message);
+          showAlert('Fehler', error.message);
         } else {
           setExistingId(null);
           hasChangesRef.current = false;
@@ -615,7 +615,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
           navigation.goBack();
         }
       } catch (err: any) {
-        Alert.alert('Fehler', err.message || 'Löschen fehlgeschlagen');
+        showAlert('Fehler', err.message || 'Löschen fehlgeschlagen');
       } finally {
         setSaving(false);
       }
@@ -668,7 +668,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         if (data) setExistingId(data.id);
       }
       if (error) {
-        Alert.alert('Fehler', error.message);
+        showAlert('Fehler', error.message);
       } else {
         hasChangesRef.current = false;
         setHasChanges(false);
@@ -686,7 +686,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         }
       }
     } catch (err: any) {
-      Alert.alert('Fehler', err.message || 'Speichern fehlgeschlagen');
+      showAlert('Fehler', err.message || 'Speichern fehlgeschlagen');
     } finally {
       setSaving(false);
     }

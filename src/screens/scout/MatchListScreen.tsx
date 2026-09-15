@@ -10,10 +10,10 @@ import {
   Modal,
   ScrollView,
   ActivityIndicator,
-  Alert,
   useWindowDimensions,
   Platform,
 } from 'react-native';
+import { showAlert } from '../../utils/alert';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTheme, ThemeOverride } from '../../contexts/ThemeContext';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
@@ -581,7 +581,7 @@ export function MatchListScreen({ navigation, route }: any) {
     if (!info) return;
     const res = await applyMatchChange(matchId, info);
     if (!res.success) {
-      Alert.alert('Fehler', res.error || 'Änderung konnte nicht übernommen werden.');
+      showAlert('Fehler', res.error || 'Änderung konnte nicht übernommen werden.');
       return;
     }
     const u = res.updates || {};
@@ -1165,7 +1165,7 @@ export function MatchListScreen({ navigation, route }: any) {
   const exportSelectedToCalendar = () => {
     const selectedGames = matches.filter(m => selectedMatches.includes(m.id));
     if (selectedGames.length === 0) {
-      Alert.alert('Hinweis', 'Bitte wähle mindestens ein Spiel aus.');
+      showAlert('Hinweis', 'Bitte wähle mindestens ein Spiel aus.');
       return;
     }
 
@@ -1220,7 +1220,7 @@ export function MatchListScreen({ navigation, route }: any) {
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
 
-    Alert.alert('Erfolg', `${selectedGames.length} Spiele wurden exportiert.`);
+    showAlert('Erfolg', `${selectedGames.length} Spiele wurden exportiert.`);
 
     // Auswahl zurücksetzen
     setSelectedMatches([]);
@@ -1776,7 +1776,7 @@ export function MatchListScreen({ navigation, route }: any) {
         selectedMatch: selectedMatch?.id,
         fussballDeUrl: selectedMatch?.fussballDeUrl
       });
-      Alert.alert(
+      showAlert(
         'Keine URL hinterlegt',
         'Für dieses Spiel ist keine fussball.de URL hinterlegt. Bitte Spiel bearbeiten und URL hinzufügen, oder Screenshot importieren.'
       );
@@ -1946,7 +1946,7 @@ export function MatchListScreen({ navigation, route }: any) {
           }
 
           setLineupStatus('available');
-          Alert.alert('Kicker.de', `Aufstellung aus Kicker.de geladen (${detectedLeague}).`);
+          showAlert('Kicker.de', `Aufstellung aus Kicker.de geladen (${detectedLeague}).`);
           return;
         } else {
           console.log('Kicker.de Fallback fehlgeschlagen:', kickerResult.error);
@@ -1977,14 +1977,14 @@ export function MatchListScreen({ navigation, route }: any) {
 
       if (!result.success || !result.data) {
         if (result.error !== 'Keine Datei ausgewählt') {
-          Alert.alert('Fehler', result.error || 'Keine Daten extrahiert');
+          showAlert('Fehler', result.error || 'Keine Daten extrahiert');
         }
         setLineupStatus('unavailable');
         return;
       }
 
       if (!result.data.available) {
-        Alert.alert('Hinweis', 'Keine Aufstellung im Bild erkannt');
+        showAlert('Hinweis', 'Keine Aufstellung im Bild erkannt');
         setLineupStatus('unavailable');
         return;
       }
@@ -2026,7 +2026,7 @@ export function MatchListScreen({ navigation, route }: any) {
 
     } catch (err) {
       console.error('Vision extraction error:', err);
-      Alert.alert('Fehler', 'Bildverarbeitung fehlgeschlagen');
+      showAlert('Fehler', 'Bildverarbeitung fehlgeschlagen');
       setLineupStatus('unavailable');
     } finally {
       setIsLoadingLineups(false);
@@ -3681,7 +3681,7 @@ export function MatchListScreen({ navigation, route }: any) {
                             borderRadius: 6,
                           }}
                           onPress={() => {
-                            Alert.alert(
+                            showAlert(
                               'Debug: HTML-Snippet',
                               `URL: ${scrapeDebugInfo.url}\n\nVerwendete Patterns: ${scrapeDebugInfo.foundPatterns?.join(', ') || 'keine'}\n\nHTML um location:\n${scrapeDebugInfo.locationHtml || scrapeDebugInfo.htmlSnippet || 'Kein HTML verfügbar'}`,
                               [{ text: 'OK' }]
