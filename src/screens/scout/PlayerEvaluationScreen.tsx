@@ -1142,12 +1142,16 @@ const styles = StyleSheet.create({
   // Mobil: Modal über die volle Breite und Höhe (mehr Platz für die Karten)
   modalOverlayMobile: {
     padding: 0,
+    justifyContent: 'flex-end',
   },
   modalContainerMobile: {
     width: '100%',
     maxWidth: '100%',
-    height: '100%',
-    maxHeight: '100%',
+    maxHeight: '90%',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderBottomLeftRadius: 0,
+    borderBottomRightRadius: 0,
     borderWidth: 0,
   },
   // Hochstufen-Dialog nach dem Speichern

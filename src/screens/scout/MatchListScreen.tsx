@@ -95,7 +95,7 @@ import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
 import { RetroHeader } from '../../components/RetroHeader';
-import { TeamLogo } from '../../components/ClubLogo';
+import { TeamLogo, CompactMatchTeams } from '../../components/ClubLogo';
 import { TableRow } from '../../components/table/TableRow';
 
 // Dropdown Optionen
@@ -3210,14 +3210,20 @@ export function MatchListScreen({ navigation, route }: any) {
                               {selectedMatch.mannschaft}
                             </Text>
                           </View>
-                          <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
-                            {selectedMatch.art}
-                          </Text>
+                          {!isMobile && (
+                            <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
+                              {selectedMatch.art}
+                            </Text>
+                          )}
                         </View>
-                        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                        <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                          {isMobile ? (
+                            <CompactMatchTeams matchName={selectedMatch.spiel} size={22} textStyle={{ fontSize: 13, fontWeight: '800', color: RETRO.text }} sepStyle={{ fontSize: 13, fontWeight: '800', color: RETRO.text }} />
+                          ) : (
                           <Text style={{ fontSize: 16, fontWeight: '800', color: RETRO.text }} numberOfLines={1}>
                             {selectedMatch.spiel}
                           </Text>
+                          )}
                           {selectedMatch.fussballDeUrl ? (
                             <TouchableOpacity
                               onPress={() => Linking.openURL(selectedMatch.fussballDeUrl!)}
@@ -3243,7 +3249,7 @@ export function MatchListScreen({ navigation, route }: any) {
                             </TouchableOpacity>
                           ) : null}
                         </View>
-                        <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
+                        <Text style={{ fontSize: isMobile ? 12 : 13, fontWeight: '600', color: RETRO.text, flexShrink: 0 }} numberOfLines={1}>
                           {weekdayShort(selectedMatch.datum) ? `${weekdayShort(selectedMatch.datum)}, ` : ''}{formatDateGerman(selectedMatch.datum, selectedMatch.datumEnde)}{selectedMatch.zeit ? ` · ${selectedMatch.zeit}` : ''}
                         </Text>
                         <TouchableOpacity
