@@ -815,9 +815,6 @@ export function PlayerDetailModal({
                             <Text style={styles.reportRatingText}>{ev.overall_rating}</Text>
                           </View>
                         ) : null}
-                        {onOpenEvaluation ? (
-                          <Ionicons name="chevron-forward" size={14} color={RETRO.shadowDark} />
-                        ) : null}
                       </TouchableOpacity>
                     ))}
                     </ScrollView>

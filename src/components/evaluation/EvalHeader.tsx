@@ -533,9 +533,6 @@ export function EvalHeader({
                     <Text style={styles.reportRatingText}>{ev.overall_rating}</Text>
                   </View>
                 ) : null}
-                {!isCurrent && onOpenReport ? (
-                  <Ionicons name="chevron-forward" size={14} color="#55524e" />
-                ) : null}
               </TouchableOpacity>
             );
           })}

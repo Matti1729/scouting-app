@@ -947,20 +947,36 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                       </Text>
                     </TouchableOpacity>
                   </View>
-                  <TouchableOpacity
-                    style={[RETRO_BTN, HARD_SHADOW, styles.saveButton, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1 }]}
-                    onPress={handleSave}
-                    disabled={saving}
-                  >
-                    <Text style={[styles.saveButtonText, { color: colors.primaryText }]}>
-                      {saving ? 'Speichert...' : 'Änderungen speichern'}
-                    </Text>
-                  </TouchableOpacity>
+                  {!isMobile && (
+                    <TouchableOpacity
+                      style={[RETRO_BTN, HARD_SHADOW, styles.saveButton, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1 }]}
+                      onPress={handleSave}
+                      disabled={saving}
+                    >
+                      <Text style={[styles.saveButtonText, { color: colors.primaryText }]}>
+                        {saving ? 'Speichert...' : 'Speichern'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </View>
             </View>
 
           </ScrollView>
+          {/* Mobil: Speichern immer sichtbar als feste Leiste unter dem Scrollbereich */}
+          {isMobile && (
+            <View style={styles.saveBarMobile}>
+              <TouchableOpacity
+                style={[RETRO_BTN, HARD_SHADOW, styles.saveButton, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1 }]}
+                onPress={handleSave}
+                disabled={saving}
+              >
+                <Text style={[styles.saveButtonText, { color: colors.primaryText }]}>
+                  {saving ? 'Speichert...' : 'Speichern'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </KeyboardAvoidingView>
       </View>
 
@@ -1095,6 +1111,14 @@ const styles = StyleSheet.create({
   saveButton: {
     paddingVertical: 10,
     alignItems: 'center',
+  },
+  saveBarMobile: {
+    paddingHorizontal: 10,
+    paddingTop: 8,
+    paddingBottom: 12,
+    borderTopWidth: 1,
+    borderTopColor: RETRO.shadowDark,
+    backgroundColor: RETRO.page,
   },
   saveButtonText: {
     fontSize: 13,
