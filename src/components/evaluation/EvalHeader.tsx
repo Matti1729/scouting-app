@@ -337,11 +337,17 @@ export function EvalHeader({
             {onFootChange ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Text style={styles.cardRowLabel}>Fuß</Text>
+                {/* Gleiches Verhalten wie Position (Häkchen, abwählbar), aber nur ein Wert */}
                 <Dropdown
                   options={FOOT_OPTIONS}
-                  value={foot || ''}
-                  onChange={(val) => onFootChange((val as string) ? (val as PreferredFoot) : null)}
+                  value={foot ? [foot] : []}
+                  onChange={(val) => {
+                    const arr = (Array.isArray(val) ? val : [val]).filter(Boolean) as PreferredFoot[];
+                    const added = arr.find((v) => v !== foot);
+                    onFootChange(added ?? (arr.length ? arr[0] : null));
+                  }}
                   placeholder="Fuß"
+                  multiSelect
                   compact
                 />
               </View>
