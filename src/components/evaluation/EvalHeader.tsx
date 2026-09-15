@@ -9,6 +9,14 @@ import { loadPlayerHistory, BeraterChange, MatchEvaluation } from '../../service
 import { agentDisplayName, tmFlagUrl, flagForNationalTeam, PlayerNationalTeam, PlayerTmDetails, PlayerTmSeasonStats } from '../../services/stipendiumService';
 import { supabase } from '../../config/supabase';
 
+// Spieldatum einheitlich als DD.MM.YYYY (in der DB liegen ISO- und deutsche Werte)
+const toGermanDate = (d?: string | null): string => {
+  if (!d) return '';
+  const iso = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[3]}.${iso[2]}.${iso[1]}`;
+  return d;
+};
+
 const POSITIONS: Position[] = ['TW', 'IV', 'LV', 'RV', 'DM', 'ZM', 'LM', 'RM', 'OM', 'LF', 'RF', 'ST'];
 const POSITION_OPTIONS = POSITIONS.map(pos => ({
   value: pos,
@@ -499,7 +507,7 @@ export function EvalHeader({
                 onPress={() => (isCurrent ? showCurrentHint() : onOpenReport?.(ev))}
                 activeOpacity={0.7}
               >
-                <Text style={styles.reportDate} numberOfLines={1}>{ev.match_date || '—'}</Text>
+                <Text style={styles.reportDate} numberOfLines={1}>{toGermanDate(ev.match_date) || '—'}</Text>
                 <Text style={styles.reportMatch} numberOfLines={1}>
                   {ev.match_name || 'Spiel unbekannt'}
                   {[ev.age_group, ev.match_type].filter(Boolean).length > 0 && (
