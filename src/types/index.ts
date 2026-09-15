@@ -324,10 +324,10 @@ export type SpeedRating = 'top' | 'gut' | 'durchschnitt' | 'schwach';
 export type Intensity = 'hoch' | 'mittel' | 'niedrig';
 
 // Bewegungsqualität (ehem. Koordination + Beweglichkeit; Schlüssel "koordination" bleibt für Altdaten)
-export type Coordination = 'sauber' | 'normal' | 'wacklig';
+export type Coordination = 'sauber' | 'normal' | 'steif';
 
 // Robustheit: körperliche Zweikampfstabilität, Kontakt aushalten, Ball abschirmen
-export type Robustness = 'faellt_um' | 'haelt_stand' | 'setzt_sich_durch';
+export type Robustness = 'wacklig' | 'stabil' | 'durchsetzungsstark';
 
 /** @deprecated nur noch für Altdaten */
 export type MovementEconomy = 'leichtfuessig' | 'neutral' | 'schwerfaellig';
@@ -377,11 +377,11 @@ export const FLEXIBILITY_LABELS: Record<Flexibility, string> = {
 export const COORDINATION_LABELS: Record<Coordination, string> = {
   sauber: 'sauber',
   normal: 'normal',
-  wacklig: 'wacklig',
+  steif: 'steif',
 };
 
 export const ROBUSTNESS_LABELS: Record<Robustness, string> = {
-  faellt_um: 'fällt um',
-  haelt_stand: 'hält stand',
-  setzt_sich_durch: 'setzt sich durch',
+  wacklig: 'wacklig',
+  stabil: 'stabil',
+  durchsetzungsstark: 'durchsetzungsstark',
 };

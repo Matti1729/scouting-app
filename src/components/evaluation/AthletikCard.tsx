@@ -35,15 +35,15 @@ const SPEED_OPTIONS: { value: SpeedRating; label: string }[] = [
 ];
 
 const ROBUSTHEIT_OPTIONS: { value: Robustness; label: string }[] = [
-  { value: 'faellt_um', label: ROBUSTNESS_LABELS.faellt_um },
-  { value: 'haelt_stand', label: ROBUSTNESS_LABELS.haelt_stand },
-  { value: 'setzt_sich_durch', label: ROBUSTNESS_LABELS.setzt_sich_durch },
+  { value: 'wacklig', label: ROBUSTNESS_LABELS.wacklig },
+  { value: 'stabil', label: ROBUSTNESS_LABELS.stabil },
+  { value: 'durchsetzungsstark', label: ROBUSTNESS_LABELS.durchsetzungsstark },
 ];
 
 const KOORDINATION_OPTIONS: { value: Coordination; label: string }[] = [
   { value: 'sauber', label: COORDINATION_LABELS.sauber },
   { value: 'normal', label: COORDINATION_LABELS.normal },
-  { value: 'wacklig', label: COORDINATION_LABELS.wacklig },
+  { value: 'steif', label: COORDINATION_LABELS.steif },
 ];
 
 const INTENSITAET_OPTIONS: { value: Intensity; label: string }[] = [
