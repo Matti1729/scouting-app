@@ -3213,11 +3213,9 @@ export function MatchListScreen({ navigation, route }: any) {
                               {selectedMatch.mannschaft}
                             </Text>
                           </View>
-                          {!isMobile && (
-                            <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
-                              {selectedMatch.art}
-                            </Text>
-                          )}
+                          <Text style={{ fontSize: isMobile ? 11 : 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
+                            {selectedMatch.art}
+                          </Text>
                         </View>
                         <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                           {isMobile ? (

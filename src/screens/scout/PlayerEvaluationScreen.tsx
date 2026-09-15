@@ -741,8 +741,8 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                 </Text>
               </View>
             ) : null}
-            {matchArt && !isMobile ? (
-              <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
+            {matchArt ? (
+              <Text style={{ fontSize: isMobile ? 11 : 13, fontWeight: '600', color: RETRO.text }} numberOfLines={1}>
                 {matchArt}
               </Text>
             ) : null}
