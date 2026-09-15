@@ -514,8 +514,10 @@ export function EvalHeader({
                 {isMobile && ev.match_name ? (
                   <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     <CompactMatchTeams matchName={ev.match_name} size={18} textStyle={[styles.reportMatch, { flex: 0, flexShrink: 1 }]} />
-                    {!!ev.age_group && (
-                      <Text style={[styles.reportMeta, { flexShrink: 0 }]} numberOfLines={1}>{'· ' + ev.age_group}</Text>
+                    {[ev.age_group, ev.match_type].filter(Boolean).length > 0 && (
+                      <Text style={[styles.reportMeta, { flexShrink: 1 }]} numberOfLines={1}>
+                        {'· ' + [ev.age_group, ev.match_type].filter(Boolean).join(' · ')}
+                      </Text>
                     )}
                   </View>
                 ) : (

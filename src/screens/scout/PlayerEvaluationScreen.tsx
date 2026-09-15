@@ -967,7 +967,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
           {isMobile && (
             <View style={styles.saveBarMobile}>
               <TouchableOpacity
-                style={[RETRO_BTN, HARD_SHADOW, styles.saveButton, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1 }]}
+                style={[RETRO_BTN, HARD_SHADOW, styles.saveButton, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1, alignSelf: 'flex-end', paddingHorizontal: 28 }]}
                 onPress={handleSave}
                 disabled={saving}
               >
