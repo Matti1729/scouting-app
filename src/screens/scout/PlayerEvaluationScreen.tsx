@@ -23,8 +23,7 @@ import {
   AgeGroup,
   Position,
   BodyStructureData,
-  SpeedAthleticismData,
-} from '../../types';
+  SpeedAthleticismData, PreferredFoot } from '../../types';
 import { agentDisplayName, fetchPlayerTmDetails, extractTmPlayerId, PlayerTmDetails } from '../../services/stipendiumService';
 import { updatePlayer as updateLineupPlayer } from '../../services/matchService';
 import { CompactMatchTeams } from '../../components/ClubLogo';
@@ -106,6 +105,8 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
   const [positions, setPositions] = useState<Position[]>(
     params.playerPosition ? [params.playerPosition as Position] : []
   );
+  // Hauptfuß (kommt aus dem Bericht, sonst aus dem Berater-Datensatz)
+  const [preferredFoot, setPreferredFoot] = useState<PreferredFoot | null>(null);
   const transfermarktUrl = params.transfermarktUrl || '';
   const agentName = params.agentName || '';
   const birthDateFromTM = params.playerBirthDate || '';
@@ -200,18 +201,21 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
     market_value?: string | null;
     agent_name?: string | null;
     agent_url?: string | null;
+    preferred_foot?: string | null;
   } | null>(null);
   useEffect(() => {
     if (!beraterPlayerId) return;
     let cancelled = false;
     supabase
       .from('berater_players')
-      .select('birth_date, current_agent_name, current_agent_company, agent_url, market_value, contract_until, berater_clubs (club_name, berater_leagues (name))')
+      .select('birth_date, current_agent_name, current_agent_company, agent_url, market_value, contract_until, preferred_foot, berater_clubs (club_name, berater_leagues (name))')
       .eq('id', beraterPlayerId)
       .maybeSingle()
       .then(({ data }) => {
         if (cancelled || !data) return;
         const d = data as any;
+        // Fuß aus dem Spieler-Datensatz vorbelegen, wenn der Bericht noch keinen hat
+        if (d.preferred_foot) setPreferredFoot((prev) => prev || (d.preferred_foot as PreferredFoot));
         setBeraterInfo({
           birth_date: d.birth_date,
           club_name: d.berater_clubs?.club_name,
@@ -341,6 +345,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         if (data) {
           setExistingId(data.id);
           if (data.positions) setPositions(data.positions.split(', ').filter(Boolean) as Position[]);
+          if (data.preferred_foot) setPreferredFoot(data.preferred_foot as PreferredFoot);
           if (data.body_structure) setBodyStructure(normalizeBodyStructure(data.body_structure));
           if (data.speed_athleticism) setSpeedAthleticism(normalizeSpeedAthleticism(data.speed_athleticism));
           if (data.overall_rating != null) setOverallRating(data.overall_rating);
@@ -372,7 +377,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       changeCountRef.current++;
       if (changeCountRef.current > 1) { setHasChanges(true); hasChangesRef.current = true; }
     }
-  }, [positions, bodyStructure, speedAthleticism, overallRating, notes]);
+  }, [positions, preferredFoot, bodyStructure, speedAthleticism, overallRating, notes]);
 
   // Bestätigungsdialog beim Schließen mit ungespeicherten Änderungen
   const confirmClose = useCallback(() => {
@@ -666,6 +671,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         jersey_number: jerseyNumber ? parseInt(jerseyNumber) : null,
         current_club: currentClub || null,
         positions: positions.join(', ') || null,
+        preferred_foot: preferredFoot,
         transfermarkt_url: transfermarktUrl || null,
         agent_name: agentName || null,
         birth_date: birthDateFromTM || null,
@@ -681,6 +687,10 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       };
       // Nur setzen, wenn Verknüpfung gelang — nie eine bestehende überschreiben
       if (linkedPlayerId) evalData.berater_player_id = linkedPlayerId;
+      // Hauptfuß ist ein Fakt zum Spieler -> auch am Spieler-Datensatz pflegen
+      if (linkedPlayerId && preferredFoot) {
+        supabase.from('berater_players').update({ preferred_foot: preferredFoot }).eq('id', linkedPlayerId).then(() => {});
+      }
       let error;
       if (existingId) {
         ({ error } = await supabase
@@ -794,6 +804,8 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
               birthDate={beraterInfo?.birth_date || birthDateFromTM}
               positions={positions}
               onPositionsChange={setPositions}
+              foot={preferredFoot}
+              onFootChange={setPreferredFoot}
               overallRating={overallRating}
               onRatingChange={setOverallRating}
               transfermarktUrl={transfermarktUrl}

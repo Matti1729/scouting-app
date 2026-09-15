@@ -55,6 +55,14 @@ export interface Player {
 
 export type AgeGroup = 'U14' | 'U15' | 'U16' | 'U17' | 'U19' | 'Herren';
 
+// Hauptfuß (Fakt zum Spieler; player_evaluations.preferred_foot + berater_players.preferred_foot)
+export type PreferredFoot = 'rechts' | 'links' | 'beide';
+export const PREFERRED_FOOT_LABELS: Record<PreferredFoot, string> = {
+  rechts: 'rechts',
+  links: 'links',
+  beide: 'beide',
+};
+
 export type DevelopmentStage =
   | 'vor_wachstumsschub'    // U14, noch alles offen
   | 'im_wachstumsschub'     // U15-U16, gerade im Schub

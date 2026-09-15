@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, Image, Linking, StyleSheet, Platform, ActivityIndicator, TextInput, Modal, ScrollView, useWindowDimensions } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
 import { MONO, HARD_SHADOW, HARD_SHADOW_LG, RETRO_CHIP, RETRO_CHIP_TEXT, RETRO } from '../../theme/retro';
-import { Position } from '../../types';
+import { Position, PreferredFoot, PREFERRED_FOOT_LABELS } from '../../types';
 import { Dropdown } from '../Dropdown';
 import { Ionicons } from '@expo/vector-icons';
 import { loadPlayerHistory, BeraterChange, MatchEvaluation } from '../../services/beraterService';
@@ -21,6 +21,7 @@ const toGermanDate = (d?: string | null): string => {
 };
 
 const POSITIONS: Position[] = ['TW', 'IV', 'LV', 'RV', 'DM', 'ZM', 'LM', 'RM', 'OM', 'LF', 'RF', 'ST'];
+const FOOT_OPTIONS = (['rechts', 'links', 'beide'] as PreferredFoot[]).map((v) => ({ value: v, label: PREFERRED_FOOT_LABELS[v] }));
 const POSITION_OPTIONS = POSITIONS.map(pos => ({
   value: pos,
   label: pos,
@@ -117,6 +118,9 @@ interface EvalHeaderProps {
   birthDate: string;
   positions: Position[];
   onPositionsChange: (positions: Position[]) => void;
+  /** Hauptfuß: rechts | links | beide (Fakt zum Spieler, in derselben Zeile wie Position) */
+  foot?: PreferredFoot | null;
+  onFootChange?: (foot: PreferredFoot | null) => void;
   overallRating: number;
   onRatingChange: (value: number) => void;
   transfermarktUrl?: string;
@@ -157,6 +161,8 @@ export function EvalHeader({
   birthDate,
   positions,
   onPositionsChange,
+  foot,
+  onFootChange,
   overallRating,
   onRatingChange,
   transfermarktUrl,
@@ -319,14 +325,28 @@ export function EvalHeader({
         {row('Alter', alterDisplay)}
         {row(
           'Position',
-          <Dropdown
-            options={POSITION_OPTIONS}
-            value={positions as string[]}
-            onChange={(val) => onPositionsChange(val as Position[])}
-            placeholder="Pos."
-            multiSelect
-            compact
-          />,
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <Dropdown
+              options={POSITION_OPTIONS}
+              value={positions as string[]}
+              onChange={(val) => onPositionsChange(val as Position[])}
+              placeholder="Pos."
+              multiSelect
+              compact
+            />
+            {onFootChange ? (
+              <>
+                <Text style={styles.cardRowLabel}>Fuß</Text>
+                <Dropdown
+                  options={FOOT_OPTIONS}
+                  value={foot || ''}
+                  onChange={(val) => onFootChange((val as string) ? (val as PreferredFoot) : null)}
+                  placeholder="Fuß"
+                  compact
+                />
+              </>
+            ) : null}
+          </View>,
           true
         )}
       </View>
