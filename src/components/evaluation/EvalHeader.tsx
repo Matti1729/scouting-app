@@ -325,7 +325,7 @@ export function EvalHeader({
         {row('Alter', alterDisplay)}
         {row(
           'Position',
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
             <Dropdown
               options={POSITION_OPTIONS}
               value={positions as string[]}
@@ -335,7 +335,7 @@ export function EvalHeader({
               compact
             />
             {onFootChange ? (
-              <>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
                 <Text style={styles.cardRowLabel}>Fuß</Text>
                 <Dropdown
                   options={FOOT_OPTIONS}
@@ -344,7 +344,7 @@ export function EvalHeader({
                   placeholder="Fuß"
                   compact
                 />
-              </>
+              </View>
             ) : null}
           </View>,
           true
