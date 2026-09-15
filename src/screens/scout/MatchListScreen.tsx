@@ -1464,7 +1464,8 @@ export function MatchListScreen({ navigation, route }: any) {
       mannschaft: selectedMatch.mannschaft,
       playerName: `${player.name}, ${player.vorname}`,
       playerNumber: player.nummer?.replace(/^0+/, '') || '', // Führende Nullen entfernen
-      playerPosition: player.position,
+      // Torwart-Flag (T) aus der Aufstellung -> Position TW vorbelegen
+      playerPosition: player.isGoalkeeper ? 'TW' : player.position,
       playerBirthYear: player.jahrgang,
       playerBirthDate: player.birth_date || undefined, // Vollständiges Geburtsdatum von TM
       playerClub: playerClub || '', // Vereinsname aus Aufstellung
@@ -1641,7 +1642,7 @@ export function MatchListScreen({ navigation, route }: any) {
       mannschaft: selectedMatch.mannschaft,
       playerName: `${selectedPlayerForProfile.name}, ${selectedPlayerForProfile.vorname}`,
       playerNumber: selectedPlayerForProfile.nummer,
-      playerPosition: selectedPlayerForProfile.position,
+      playerPosition: selectedPlayerForProfile.isGoalkeeper ? 'TW' : selectedPlayerForProfile.position,
       playerBirthYear: selectedPlayerForProfile.jahrgang,
       // TM-Daten
       playerBirthDate: selectedPlayerForProfile.birth_date,
@@ -3250,7 +3251,7 @@ export function MatchListScreen({ navigation, route }: any) {
                           ) : null}
                         </View>
                         <Text style={{ fontSize: isMobile ? 12 : 13, fontWeight: '600', color: RETRO.text, flexShrink: 0 }} numberOfLines={1}>
-                          {weekdayShort(selectedMatch.datum) ? `${weekdayShort(selectedMatch.datum)}, ` : ''}{formatDateGerman(selectedMatch.datum, selectedMatch.datumEnde)}{selectedMatch.zeit ? ` · ${selectedMatch.zeit}` : ''}
+                          {weekdayShort(selectedMatch.datum) ? `${weekdayShort(selectedMatch.datum)}, ` : ''}{formatDateGerman(selectedMatch.datum, selectedMatch.datumEnde)}{selectedMatch.zeit && !isMobile ? ` · ${selectedMatch.zeit}` : ''}
                         </Text>
                         <TouchableOpacity
                           onPress={() => { setIsEditMode(false); setActionMenuVisible(false); setModalVisible(false); }}

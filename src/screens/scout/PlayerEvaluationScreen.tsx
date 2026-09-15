@@ -770,7 +770,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
           </View>
           {matchDate ? (
             <Text style={{ fontSize: isMobile ? 12 : 13, fontWeight: '600', color: RETRO.text, flexShrink: 0 }} numberOfLines={1}>
-              {formatMatchDateGerman(matchDate)}{matchZeit ? ` · ${matchZeit}` : ''}
+              {formatMatchDateGerman(matchDate)}{matchZeit && !isMobile ? ` · ${matchZeit}` : ''}
             </Text>
           ) : null}
           <TouchableOpacity onPress={confirmClose} activeOpacity={0.7} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
