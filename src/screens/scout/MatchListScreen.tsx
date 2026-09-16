@@ -1330,6 +1330,8 @@ export function MatchListScreen({ navigation, route }: any) {
     await fetchMatches();
     setRemovingArea(false);
     setConfirmRemoveArea(false);
+    // Detail-Fenster schließen: es zeigt sonst weiter "Ich bin beim Spiel"
+    setAreaDetail(null);
   };
 
   // Ist das Umgebungs-Spiel schon als eigenes Event übernommen?
