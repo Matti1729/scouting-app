@@ -96,6 +96,7 @@ import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
 import { RetroHeader } from '../../components/RetroHeader';
 import { TeamLogo, CompactMatchTeams } from '../../components/ClubLogo';
+import { PulseDot } from '../../components/PulseDot';
 import { TableRow } from '../../components/table/TableRow';
 
 // Dropdown Optionen
@@ -2484,9 +2485,6 @@ export function MatchListScreen({ navigation, route }: any) {
                           flexDirection: 'row', alignItems: 'center', gap: 4,
                           
                         }}>
-                          {((!item.isAreaGame && item.source !== 'dfb') || isAreaGameAdded(item)) && (
-                            <View style={{ width: 8, height: 8, borderRadius: 1, backgroundColor: '#e8930c' }} />
-                          )}
                           {item.mannschaft ? (
                             <Text style={{ fontSize: 10, color: RETRO.textMuted }}>{item.mannschaft}</Text>
                           ) : null}
@@ -2501,23 +2499,32 @@ export function MatchListScreen({ navigation, route }: any) {
                           const away = rest.join(' - ');
                           // DFB-Event ohne Gegner (Lehrgang, Turnier, Camp): DFB-Wappen vor dem Titel; Ort nur im Modal
                           const isDfbEvent = !away && item.source === 'dfb';
+                          const attending = (!item.isAreaGame && item.source !== 'dfb') || isAreaGameAdded(item);
                           return (
-                            <>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                                <TeamLogo name={isDfbEvent ? 'Deutschland' : home} map={clubLogoMap} />
-                                <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
-                                  {home}
-                                </Text>
-                              </View>
-                              {away ? (
-                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                                  <TeamLogo name={away} map={clubLogoMap} />
+                            // Partie (Heim/Gast) · dahinter pulsierender Punkt = "Ich bin bei diesem Spiel"
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                              <View style={isMobile ? { flex: 1, minWidth: 0 } : { flexShrink: 1, minWidth: 0 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
+                                  <TeamLogo name={isDfbEvent ? 'Deutschland' : home} map={clubLogoMap} />
                                   <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
-                                    {away}
+                                    {home}
                                   </Text>
                                 </View>
+                                {away ? (
+                                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                                    <TeamLogo name={away} map={clubLogoMap} />
+                                    <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
+                                      {away}
+                                    </Text>
+                                  </View>
+                                ) : null}
+                              </View>
+                              {attending ? (
+                                <View style={{ paddingLeft: isMobile ? 10 : 14, paddingRight: 10 }}>
+                                  <PulseDot />
+                                </View>
                               ) : null}
-                            </>
+                            </View>
                           );
                         })()}
                       {(() => {
