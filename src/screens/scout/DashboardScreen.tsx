@@ -28,6 +28,7 @@ import { areaAge, areaArt, shortVenueName, stripAge, loadClubLogoMap, clubLogoUr
 import { createMatch, deleteMatch } from '../../services/matchService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
 import { TeamLogo, CompactMatchTeams } from '../../components/ClubLogo';
+import { PulseDot } from '../../components/PulseDot';
 import { fetchSearchPlayer, StipendiumSearchPlayer, positionCode, ageFromBirthDate, agentDisplayName } from '../../services/stipendiumService';
 import { BLUE_GRADIENT } from '../../theme/retro';
 import { supabase } from '../../config/supabase';
@@ -550,7 +551,6 @@ export function DashboardScreen() {
                       flexDirection: 'row', alignItems: 'center', gap: 4,
                       
                     }}>
-                      {g.isOwn && !g.isDfb && <View style={styles.attendMarker} />}
                       {g.liga ? (
                         <Text style={{ fontSize: 10, color: RETRO.textMuted }}>{g.liga}</Text>
                       ) : null}
@@ -560,20 +560,30 @@ export function DashboardScreen() {
                     </View>
                     {/* Kurzer Trennstrich */}
                     <View style={{ width: 28, height: 1, backgroundColor: 'rgba(198, 194, 186, 0.9)', marginTop: 3 }} />
-                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                      <TeamLogo name={g.away || !g.isDfb ? g.home : 'Deutschland'} map={clubLogoMap} />
-                      <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
-                        {g.home}
-                      </Text>
-                    </View>
-                    {g.away ? (
-                      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                        <TeamLogo name={g.away} map={clubLogoMap} />
-                        <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
-                          {g.away}
-                        </Text>
+                    {/* Partie (Heim/Gast) · rechts daneben pulsierender Punkt = "Ich bin bei diesem Spiel" */}
+                    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                      <View style={{ flex: 1, minWidth: 0 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
+                          <TeamLogo name={g.away || !g.isDfb ? g.home : 'Deutschland'} map={clubLogoMap} />
+                          <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
+                            {g.home}
+                          </Text>
+                        </View>
+                        {g.away ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                            <TeamLogo name={g.away} map={clubLogoMap} />
+                            <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
+                              {g.away}
+                            </Text>
+                          </View>
+                        ) : null}
                       </View>
-                    ) : null}
+                      {g.isOwn && !g.isDfb ? (
+                        <View style={{ paddingHorizontal: 10 }}>
+                          <PulseDot />
+                        </View>
+                      ) : null}
+                    </View>
                   </View>
                 </TouchableOpacity>
               ))
@@ -1182,13 +1192,6 @@ const styles = StyleSheet.create({
   },
   colDatum: {
     width: 70,
-  },
-  // Oranger Marker: bei diesem Spiel bin ich (in "Meine Spiele" übernommen)
-  attendMarker: {
-    width: 8,
-    height: 8,
-    borderRadius: 1,
-    backgroundColor: '#e8930c',
   },
   clubLogoSm: {
     width: 16,
