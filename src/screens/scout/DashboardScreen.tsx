@@ -562,7 +562,8 @@ export function DashboardScreen() {
                     <View style={{ width: 28, height: 1, backgroundColor: 'rgba(198, 194, 186, 0.9)', marginTop: 3 }} />
                     {/* Partie (Heim/Gast) · rechts daneben pulsierender Punkt = "Ich bin bei diesem Spiel" */}
                     <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                      <View style={{ flex: 1, minWidth: 0 }}>
+                      {/* Desktop: Punkt dicht hinter den Namen (Block schrumpft auf Inhalt); mobil rechtsbündig */}
+                      <View style={isMobile ? { flex: 1, minWidth: 0 } : { flexShrink: 1, minWidth: 0 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
                           <TeamLogo name={g.away || !g.isDfb ? g.home : 'Deutschland'} map={clubLogoMap} />
                           <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
@@ -579,7 +580,7 @@ export function DashboardScreen() {
                         ) : null}
                       </View>
                       {g.isOwn && !g.isDfb ? (
-                        <View style={{ paddingHorizontal: 10 }}>
+                        <View style={{ paddingLeft: isMobile ? 10 : 14, paddingRight: 10 }}>
                           <PulseDot />
                         </View>
                       ) : null}
