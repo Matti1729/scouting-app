@@ -155,6 +155,23 @@ export function clubBase(name: string): string {
     .trim();
 }
 
+/**
+ * Gründungs-/Jahreszahlen im Vereinsnamen (2-4-stellig, ohne U-Altersklassen).
+ * "FSV Babelsberg 74" und "SV Babelsberg 03" landen sonst beide auf "babelsberg";
+ * die Zahl ist hier das einzige Unterscheidungsmerkmal.
+ */
+export function clubNumbers(name: string): Set<string> {
+  const cleaned = (name || '').toLowerCase().replace(/\bu[\s-]?\d{1,2}\b/g, '').replace(/\b[a-d]\d\b/g, '');
+  return new Set((cleaned.match(/\b\d{2,4}\b/g) || []).filter((n) => n !== '1' && n !== '2' && n !== '3'));
+}
+/** true, wenn kein Zahlen-Widerspruch: eine Seite ohne Zahl, oder gemeinsame Zahl */
+export function clubNumbersCompatible(a: string, b: string): boolean {
+  const na = clubNumbers(a); const nb = clubNumbers(b);
+  if (!na.size || !nb.size) return true;
+  for (const n of na) if (nb.has(n)) return true;
+  return false;
+}
+
 /** Vereins-Kern ohne Rechtsform-Präfixe ("fc würzburger kickers" -> "würzburger kickers")
  *  — Fallback, wenn fussball.de und Transfermarkt den Verein unterschiedlich führen */
 function clubCore(base: string): string {
@@ -176,9 +193,9 @@ export async function loadClubLogoMap(): Promise<Map<string, string>> {
   for (const c of (data || []) as any[]) {
     const b = clubBase(c.club_name);
     if (!b) continue;
-    if (!m.has(b)) m.set(b, String(c.tm_club_id));
+    if (!m.has(b)) { m.set(b, String(c.tm_club_id)); m.set(`name:${b}`, String(c.club_name)); }
     const core = clubCore(b);
-    if (core && !m.has(`core:${core}`)) m.set(`core:${core}`, String(c.tm_club_id));
+    if (core && !m.has(`core:${core}`)) { m.set(`core:${core}`, String(c.tm_club_id)); m.set(`name:core:${core}`, String(c.club_name)); }
   }
   return m;
 }
@@ -281,11 +298,18 @@ function nationalTeamId(base: string): string | null {
  *  Nationalmannschafts-Fallback) */
 export function clubLogoUriFor(map: Map<string, string>, teamName: string): string | null {
   const b = clubBase(teamName);
-  let clubId = map.get(b) || map.get(`core:${clubCore(b)}`);
+  // Treffer nur, wenn die Gründungszahl nicht widerspricht (Babelsberg 74 ≠ Babelsberg 03)
+  const pick = (key: string): string | undefined => {
+    const id = map.get(key);
+    if (!id) return undefined;
+    const storedName = map.get(`name:${key}`);
+    return storedName && !clubNumbersCompatible(teamName, storedName) ? undefined : id;
+  };
+  let clubId = pick(b) || pick(`core:${clubCore(b)}`);
   if (!clubId && /ae|oe|ue/.test(b)) {
     // ASCII-Schreibweise ("1. FC Koeln") gegen Umlaut-Variante ("1. FC Köln") prüfen
     const u = b.replace(/ae/g, 'ä').replace(/oe/g, 'ö').replace(/ue/g, 'ü');
-    clubId = map.get(u) || map.get(`core:${clubCore(u)}`);
+    clubId = pick(u) || pick(`core:${clubCore(u)}`);
   }
   if (clubId) return `https://tmssl.akamaized.net/images/wappen/head/${clubId}.png`;
   // Nationalteams haben kein "head"-Wappen bei TM, aber "normquad"
@@ -297,7 +321,7 @@ export function clubLogoUriFor(map: Map<string, string>, teamName: string): stri
 // On-Demand-Wappen: Vereine außerhalb unserer Ligen (Amateure usw.) einmalig
 // über die TM-Schnellsuche auflösen; Ergebnis dauerhaft im localStorage cachen.
 // ---------------------------------------------------------------------------
-const CLUB_RESOLVE_CACHE_KEY = 'tm_club_resolve_v6';
+const CLUB_RESOLVE_CACHE_KEY = 'tm_club_resolve_v7'; // v7: Schlüssel mit Gründungszahl
 let resolveCache: Record<string, string> | null = null; // clubBase -> tm_club_id | 'none'
 const pendingResolve = new Map<string, Promise<string | null>>();
 let resolveChain: Promise<unknown> = Promise.resolve();
@@ -322,13 +346,15 @@ const clubWappenUrl = (id: string) => `https://tmssl.akamaized.net/images/wappen
 export function resolveClubLogoUri(teamName: string): Promise<string | null> {
   const b = clubBase(teamName);
   if (!b) return Promise.resolve(null);
+  // Cache-Schlüssel inkl. Gründungszahl, damit "Babelsberg 74" und "Babelsberg 03" getrennt bleiben
+  const ck = [b, ...Array.from(clubNumbers(teamName)).sort()].join(' ');
   const cache = loadResolveCache();
-  if (cache[b]) return Promise.resolve(cache[b] === 'none' ? null : clubWappenUrl(cache[b]));
-  const inFlight = pendingResolve.get(b);
+  if (cache[ck]) return Promise.resolve(cache[ck] === 'none' ? null : clubWappenUrl(cache[ck]));
+  const inFlight = pendingResolve.get(ck);
   if (inFlight) return inFlight;
   const task = resolveChain.then(async (): Promise<string | null> => {
     const c = loadResolveCache();
-    if (c[b]) return c[b] === 'none' ? null : clubWappenUrl(c[b]);
+    if (c[ck]) return c[ck] === 'none' ? null : clubWappenUrl(c[ck]);
     try {
       // Plausibilität: gefundener Vereinsname muss zur Anfrage passen.
       // Auch ok: Kern-Tokens der einen Seite sind Teilmenge der anderen
@@ -336,6 +362,7 @@ export function resolveClubLogoUri(teamName: string): Promise<string | null> {
       const plausible = (name: string | null | undefined): boolean => {
         const rb = clubBase(name || '');
         if (!rb) return false;
+        if (!clubNumbersCompatible(teamName, name || '')) return false;
         if (rb === b || rb.includes(b) || b.includes(rb) || clubCore(rb) === clubCore(b)) return true;
         const ta = clubCore(b).split(/[\s-]+/).filter(Boolean);
         const tb = clubCore(rb).split(/[\s-]+/).filter(Boolean);
@@ -366,11 +393,11 @@ export function resolveClubLogoUri(teamName: string): Promise<string | null> {
       }
       const ok = !!club && plausible(club.club_name);
       if (ok) {
-        c[b] = String(club.tm_club_id);
+        c[ck] = String(club.tm_club_id);
         saveResolveCache();
       } else if (!throttled) {
         // Nur als "nicht gefunden" merken, wenn TM wirklich geantwortet hat
-        c[b] = 'none';
+        c[ck] = 'none';
         saveResolveCache();
       }
       // TM nicht fluten: Pause zwischen Vereinen
@@ -381,8 +408,8 @@ export function resolveClubLogoUri(teamName: string): Promise<string | null> {
     }
   });
   resolveChain = task.catch(() => {});
-  pendingResolve.set(b, task);
-  task.finally(() => pendingResolve.delete(b));
+  pendingResolve.set(ck, task);
+  task.finally(() => pendingResolve.delete(ck));
   return task;
 }
 
