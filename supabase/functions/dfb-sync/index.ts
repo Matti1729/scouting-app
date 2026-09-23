@@ -254,7 +254,7 @@ async function importDfbLineup(sb: SupabaseClient, matchId: string) {
 
   const { data: existing, error: le } = await sb
     .from('scouting_lineups')
-    .select('id, name, vorname, team, source, nummer, is_starter, is_goalkeeper, dfb_profile_url')
+    .select('id, name, vorname, team, source, club, nummer, is_starter, is_goalkeeper, dfb_profile_url')
     .eq('match_id', matchId)
   if (le) throw le
   const rows = existing || []
@@ -318,11 +318,17 @@ async function importDfbLineup(sb: SupabaseClient, matchId: string) {
     }
   }
 
-  // Deutschland: alle bisherigen Kader-Zeilen (egal welche Seite, sie wurden als 'home' angelegt)
-  const opponentNameKeys = new Set(
-    [...opponent.starters, ...opponent.subs].map((p) => playerKey(p.name, p.vorname)),
-  )
-  const germanyRows = rows.filter((r) => r.team === ourGermanySide || !opponentNameKeys.has(playerKey(r.name, r.vorname || '')) && r.team !== ourOpponentSide)
+  // Deutschland-Zeilen: alle Aufgestellten, dazu Kader-Zeilen (haben einen Verein
+  // aus der DFB-Kaderliste; der Sync legt sie immer als 'home' an, auch bei
+  // Auswärtsspielen) und alles, was schon auf der deutschen Seite steht.
+  const germanyKeys = new Set([...germany.starters, ...germany.subs].map((p) => playerKey(p.name, p.vorname)))
+  const opponentKeys = new Set([...opponent.starters, ...opponent.subs].map((p) => playerKey(p.name, p.vorname)))
+  const germanyRows = rows.filter((r) => {
+    const key = playerKey(r.name, r.vorname || '')
+    if (germanyKeys.has(key)) return true
+    if (opponentKeys.has(key)) return false
+    return !!r.club || r.team === ourGermanySide
+  })
   const opponentRows = rows.filter((r) => !germanyRows.includes(r))
   await apply(
     [...germany.starters.map((p) => ({ p, starter: true })), ...germany.subs.map((p) => ({ p, starter: false }))],
