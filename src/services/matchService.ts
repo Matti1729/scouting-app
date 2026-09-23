@@ -24,6 +24,8 @@ export interface DbMatch {
   // 'dfb' = automatisch von dfb.de gesynct (Edge Function dfb-sync)
   source?: string | null;
   source_key?: string | null;
+  // DFB-Termin als "Meine Spiele" markiert ("Ich bin beim Spiel")
+  attending?: boolean | null;
   // Koordinaten (DFB-Termine, von dfb-sync geokodiert)
   lat?: number | null;
   lng?: number | null;
@@ -66,6 +68,7 @@ export interface MatchInput {
   result?: string;
   fussball_de_url?: string;
   is_archived?: boolean;
+  attending?: boolean;
 }
 
 export interface LineupInput {

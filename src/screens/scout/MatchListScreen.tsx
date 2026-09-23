@@ -143,6 +143,8 @@ interface Match {
   source?: string | null;
   // DFB-Termin: Link zur "Spiele und Termine"-Seite des Jahrgangs auf dfb.de
   dfbUrl?: string | null;
+  // DFB-Termin zu "Meine Spiele" hinzugefügt ("Ich bin beim Spiel")
+  attending?: boolean;
   // Spiele "in der Umgebung" (aus der KMH-Datenbank, read-only)
   isAreaGame?: boolean;
   lat?: number | null;
@@ -297,6 +299,11 @@ const isEventFinished = (startDate: string, endDate: string | null): boolean => 
   return today > relevantDate;
 };
 
+// Automatisch gesyncter DFB-Termin (Länderspiel/Lehrgang)? Diese liegen in der
+// eigenen Tabelle, zählen aber erst mit attending = true zu "Meine Spiele".
+const isDfbSynced = (m: Match): boolean =>
+  m.source === 'dfb' || m.art === 'Nationalmannschaft' || m.art === 'Hallenturnier';
+
 // Hilfsfunktion: DbMatch zu Match konvertieren
 const dbMatchToMatch = (dbMatch: DbMatch): Match => ({
   id: dbMatch.id,
@@ -316,6 +323,7 @@ const dbMatchToMatch = (dbMatch: DbMatch): Match => ({
   isArchived: dbMatch.is_archived,
   source: dbMatch.source || null,
   dfbUrl: dbMatch.source === 'dfb' ? dfbTerminePageUrl(dbMatch.age_group) : null,
+  attending: !!dbMatch.attending,
   // DFB-Termine: Spielort auf der Karte (dunkelgrüner Marker)
   lat: dbMatch.lat ?? null,
   lng: dbMatch.lng ?? null,
@@ -1286,6 +1294,16 @@ export function MatchListScreen({ navigation, route }: any) {
   const handleAddAreaGameToMyGames = async () => {
     if (!areaDetail || addingAreaGame) return;
     setAddingAreaGame(true);
+    // DFB-Termin (liegt schon in der Tabelle): nur "Ich bin dabei" setzen
+    if (!areaDetail.isAreaGame && areaDetail.source === 'dfb') {
+      const res = await updateMatch(areaDetail.id, { attending: true });
+      if (res.success) {
+        setMatches(prev => prev.map(m => m.id === areaDetail.id ? { ...m, attending: true } : m));
+        setAreaDetail({ ...areaDetail, attending: true });
+      }
+      setAddingAreaGame(false);
+      return;
+    }
     const [home, ...rest] = areaDetail.spiel.split(' - ');
     // Duplikat-Schutz: gleiches Spiel (Teams + Datum) existiert schon als eigenes?
     const { data: dupe } = await supabase
@@ -1326,7 +1344,13 @@ export function MatchListScreen({ navigation, route }: any) {
   const handleRemoveAreaFromMyGames = async (ownId: string) => {
     if (removingArea) return;
     setRemovingArea(true);
-    await deleteMatch(ownId);
+    const own = matches.find(m => m.id === ownId);
+    if (own?.source === 'dfb') {
+      // DFB-Termin bleibt in "Anstehend", verliert nur die Markierung
+      await updateMatch(ownId, { attending: false });
+    } else {
+      await deleteMatch(ownId);
+    }
     await fetchMatches();
     setRemovingArea(false);
     setConfirmRemoveArea(false);
@@ -2104,10 +2128,9 @@ export function MatchListScreen({ navigation, route }: any) {
 
       // "Meine Spiele" = eigene kommende Spiele; "Archiv" = eigene vergangene
       // (ab dem Folgetag); "Anstehend" = alles, was noch nicht beendet ist.
-      // DFB-Termine (Nationalmannschaft/Hallenturnier, automatisch gesynct) gehören
-      // nur in "Anstehend" — nicht zu "Meine Spiele"/"Archiv" (nur selbst Hinzugefügtes).
-      const isDfbTermin = match.art === 'Nationalmannschaft' || match.art === 'Hallenturnier';
-      if ((viewTab === 'meine' || viewTab === 'archiv') && isDfbTermin) return false;
+      // DFB-Termine (automatisch gesynct) stehen immer in "Anstehend"; in
+      // "Meine Spiele"/"Archiv" nur, wenn sie einzeln hinzugefügt wurden (attending).
+      if ((viewTab === 'meine' || viewTab === 'archiv') && isDfbSynced(match) && !match.attending) return false;
       const isArchived = match.isArchived || isEventFinished(match.datum, match.datumEnde);
       const matchesArchiveFilter = viewTab === 'archiv' ? isArchived : !isArchived;
 
@@ -2117,9 +2140,9 @@ export function MatchListScreen({ navigation, route }: any) {
   }, [matches, areaMatches, searchQuery, jahrgangFilter, artFilter, dateFilter, viewTab, sortField, sortDirection]);
 
   // Anzahl archivierter Spiele
-  // Zähler für "Meine Spiele"/"Archiv": ohne automatisch gesyncte DFB-Termine
+  // Zähler für "Meine Spiele"/"Archiv": DFB-Termine nur, wenn hinzugefügt (attending)
   const ownMatchCount = useMemo(
-    () => matches.filter(m => m.art !== 'Nationalmannschaft' && m.art !== 'Hallenturnier'),
+    () => matches.filter(m => !isDfbSynced(m) || m.attending),
     [matches]
   );
   const archivedCount = ownMatchCount.filter(m => m.isArchived || isEventFinished(m.datum, m.datumEnde)).length;
@@ -2501,7 +2524,7 @@ export function MatchListScreen({ navigation, route }: any) {
                           const away = rest.join(' - ');
                           // DFB-Event ohne Gegner (Lehrgang, Turnier, Camp): DFB-Wappen vor dem Titel; Ort nur im Modal
                           const isDfbEvent = !away && item.source === 'dfb';
-                          const attending = (!item.isAreaGame && item.source !== 'dfb') || isAreaGameAdded(item);
+                          const attending = item.source === 'dfb' ? !!item.attending : (!item.isAreaGame || isAreaGameAdded(item));
                           return (
                             // Partie (Heim/Gast) · dahinter pulsierender Punkt = "Ich bin bei diesem Spiel"
                             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -2868,7 +2891,10 @@ export function MatchListScreen({ navigation, route }: any) {
       {/* Spiel-Detail-Modal (Anstoss-Optik) — für alle Spiele in der Liste */}
       {areaDetail && (() => {
         const isOwn = !areaDetail.isAreaGame;
-        const added = isOwn || isAreaGameAdded(areaDetail);
+        // DFB-Termine liegen zwar in der eigenen Tabelle, gelten aber erst mit
+        // attending als "Meine Spiele"
+        const isDfb = isOwn && areaDetail.source === 'dfb';
+        const added = isDfb ? !!areaDetail.attending : (isOwn || isAreaGameAdded(areaDetail));
         // Vergangene Spiele: "Ich bin beim Spiel" ergibt keinen Sinn mehr
         const isPastGame = !!areaDetail.datum && String(areaDetail.datum).slice(0, 10) < new Date().toISOString().slice(0, 10);
         // Zugehöriges eigenes Event (für "Aufstellung & Scouting öffnen")
@@ -2990,7 +3016,7 @@ export function MatchListScreen({ navigation, route }: any) {
                 <View style={{ borderTopWidth: 1, borderTopColor: RETRO.rowBorder, marginTop: 14, paddingTop: 12 }}>
                   {added ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                      {!isPastGame && areaDetail.source !== 'dfb' && (
+                      {!isPastGame && (
                       <TouchableOpacity
                         style={[HARD_SHADOW, {
                           backgroundColor: '#e8930c', paddingVertical: 5, paddingHorizontal: 10,
@@ -3056,11 +3082,12 @@ export function MatchListScreen({ navigation, route }: any) {
                       )}
                     </View>
                   ) : (
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    {!isPastGame && (
                     <TouchableOpacity
                       style={[HARD_SHADOW, {
                         backgroundColor: RETRO.headerBg, paddingVertical: 5, paddingHorizontal: 10,
                         minHeight: 24, alignItems: 'center', justifyContent: 'center',
-                        alignSelf: 'flex-end',
                       }, BLUE_GRADIENT]}
                       onPress={handleAddAreaGameToMyGames}
                       disabled={addingAreaGame}
@@ -3071,6 +3098,23 @@ export function MatchListScreen({ navigation, route }: any) {
                         <Text style={{ fontSize: 11, fontWeight: '600', color: '#fff' }}>Zu „Meine Spiele" hinzufügen</Text>
                       )}
                     </TouchableOpacity>
+                    )}
+                    {/* DFB-Termin: Kader immer einsehbar, auch ohne "Meine Spiele" */}
+                    {isDfb && (
+                      <TouchableOpacity
+                        style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                        onPress={() => {
+                          const m = areaDetail;
+                          setAreaDetail(null);
+                          setSelectedMatch(m);
+                          setModalVisible(true);
+                          void fetchLineupForMatch(m.id);
+                        }}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Kader & Scouting</Text>
+                      </TouchableOpacity>
+                    )}
+                    </View>
                   )}
                 </View>
               </Pressable>
@@ -3092,7 +3136,7 @@ export function MatchListScreen({ navigation, route }: any) {
                 </Text>
               </View>
               <FlatList
-                style={{ marginTop: 12 }}
+                style={{ marginTop: 12, flex: 1, minHeight: 0 }}
                 data={filteredMatches}
                 keyExtractor={(item) => item.id}
                 renderItem={renderGameRow}
@@ -3126,6 +3170,7 @@ export function MatchListScreen({ navigation, route }: any) {
           {mobileView === 'liste' || showArchive ? (
             <View style={[HARD_SHADOW, { flex: 1, backgroundColor: RETRO.panel }]}>
               <FlatList
+                style={{ flex: 1, minHeight: 0 }}
                 data={filteredMatches}
                 keyExtractor={(item) => item.id}
                 renderItem={renderGameRow}
