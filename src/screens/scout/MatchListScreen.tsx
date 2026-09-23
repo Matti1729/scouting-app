@@ -482,6 +482,15 @@ export function MatchListScreen({ navigation, route }: any) {
   const [artFilter, setArtFilter] = useState<string[]>([]);
   const [filterMenu, setFilterMenu] = useState<'jahrgang' | 'art' | null>(null);
   const [dateFilter, setDateFilter] = useState(''); // ISO "YYYY-MM-DD", leer = alle
+  // Tab-Wechsel (Anstehend / Meine Spiele / Archiv): immer filterfrei starten
+  const switchViewTab = (tab: 'anstehend' | 'meine' | 'archiv') => {
+    setSearchQuery('');
+    setJahrgangFilter([]);
+    setArtFilter([]);
+    setDateFilter('');
+    setFilterMenu(null);
+    setViewTab(tab);
+  };
   const [hoveredMapKey, setHoveredMapKey] = useState<string | null>(null);
   // Liste wird portionsweise gerendert (RN-Web misst die Zeilenhöhen der
   // FlatList nicht zuverlässig → Virtualisierung blieb bei 10 Zeilen hängen).
@@ -2665,7 +2674,7 @@ export function MatchListScreen({ navigation, route }: any) {
               { key: 'archiv', label: `Archiv (${archivedCount})` },
             ]}
             activeTab={viewTab}
-            onTabChange={(k) => setViewTab(k as typeof viewTab)}
+            onTabChange={(k) => switchViewTab(k as typeof viewTab)}
           />
           {/* Suche + Filter + Event anlegen */}
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 10, paddingTop: 10 }}>
@@ -2853,7 +2862,7 @@ export function MatchListScreen({ navigation, route }: any) {
                     { backgroundColor: '#ffffff', borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 25, alignItems: 'center' as const, justifyContent: 'center' as const },
                     viewTab === t.key && { backgroundColor: RETRO.text },
                   ]}
-                  onPress={() => setViewTab(t.key)}
+                  onPress={() => switchViewTab(t.key)}
                   activeOpacity={0.7}
                 >
                   <Text style={{

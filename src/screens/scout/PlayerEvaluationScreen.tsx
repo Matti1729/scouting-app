@@ -472,7 +472,13 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
     // Platzhalter-Name ("k.A.") ohne TM-Profil: keine belastbare Identität —
     // NICHT anlegen/matchen, sonst teilen sich alle unbekannten Spieler
     // denselben Datensatz (Berichte, Notizen, Status).
-    if ((isPlaceholderName(lastName) || !lastName.trim()) && !transfermarktUrl) return null;
+    if ((isPlaceholderName(lastName) || !lastName.trim()) && !transfermarktUrl) {
+      showAlert(
+        'Spieler noch unbekannt',
+        'Bitte zuerst den Nachnamen eintragen (oder ein Transfermarkt-Profil verknüpfen). Ohne Namen kann der Spieler nicht als interessant/uninteressant markiert werden.'
+      );
+      return null;
+    }
 
     // 2. Per Name suchen — nie mit Platzhalter-Namen. Akzent-unabhängig über
     //    normalized_name, damit "Ouedraogo" den TM-Spieler "Ouédraogo" findet.
@@ -543,36 +549,68 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       .single();
 
     if (error) {
+      // Gleicher TM-Spieler existiert schon (UNIQUE tm_player_id) → den nehmen
+      if (tmIdMatch && (error as any).code === '23505') {
+        const { data: existing } = await supabase
+          .from('berater_players')
+          .select('id')
+          .eq('tm_player_id', tmIdMatch[1])
+          .maybeSingle();
+        if (existing) {
+          setBeraterPlayerId(existing.id);
+          return existing.id;
+        }
+      }
       console.error('Error creating berater player:', error);
+      showAlert('Fehler', `Spieler konnte nicht angelegt werden: ${error.message}`);
       return null;
     }
     setBeraterPlayerId(newPlayer.id);
     return newPlayer.id;
   };
 
+  // Sperre gegen Doppel-Tipps, solange Einordnung/Watchlist gespeichert wird
+  const [evalBusy, setEvalBusy] = useState(false);
+
   const handleBeraterEvaluation = async (status: 'interessant' | 'nicht_interessant') => {
-    if (beraterEvalStatus === status) {
-      if (!beraterPlayerId) return;
-      const success = await deleteBeraterEval(beraterPlayerId);
-      if (success) setBeraterEvalStatus(null);
-    } else {
-      const playerId = await ensureBeraterPlayer();
-      if (!playerId) return;
-      const success = await saveBeraterEval(playerId, status);
-      if (success) setBeraterEvalStatus(status);
+    if (evalBusy) return;
+    setEvalBusy(true);
+    try {
+      if (beraterEvalStatus === status) {
+        if (!beraterPlayerId) return;
+        const success = await deleteBeraterEval(beraterPlayerId);
+        if (success) setBeraterEvalStatus(null);
+        else showAlert('Fehler', 'Einordnung konnte nicht entfernt werden.');
+      } else {
+        const playerId = await ensureBeraterPlayer();
+        if (!playerId) return;
+        const success = await saveBeraterEval(playerId, status);
+        if (success) setBeraterEvalStatus(status);
+        else showAlert('Fehler', 'Einordnung konnte nicht gespeichert werden. Bitte noch einmal versuchen.');
+      }
+    } finally {
+      setEvalBusy(false);
     }
   };
 
   const handleWatchlistToggle = async () => {
-    if (onWatchlist) {
-      if (!beraterPlayerId) return;
-      const success = await removeFromWatchlist(beraterPlayerId);
-      if (success) setOnWatchlist(false);
-    } else {
-      const playerId = await ensureBeraterPlayer();
-      if (!playerId) return;
-      const success = await addToWatchlist(playerId);
-      if (success) setOnWatchlist(true);
+    if (evalBusy) return;
+    setEvalBusy(true);
+    try {
+      if (onWatchlist) {
+        if (!beraterPlayerId) return;
+        const success = await removeFromWatchlist(beraterPlayerId);
+        if (success) setOnWatchlist(false);
+        else showAlert('Fehler', 'Spieler konnte nicht von der Watchlist entfernt werden.');
+      } else {
+        const playerId = await ensureBeraterPlayer();
+        if (!playerId) return;
+        const success = await addToWatchlist(playerId);
+        if (success) setOnWatchlist(true);
+        else showAlert('Fehler', 'Spieler konnte nicht auf die Watchlist gesetzt werden.');
+      }
+    } finally {
+      setEvalBusy(false);
     }
   };
 
@@ -929,8 +967,10 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                       style={[
                         RETRO_BTN, HARD_SHADOW, styles.evalButton,
                         beraterEvalStatus === 'nicht_interessant' && { backgroundColor: colors.error },
+                        evalBusy && { opacity: 0.5 },
                       ]}
                       onPress={() => handleBeraterEvaluation('nicht_interessant')}
+                      disabled={evalBusy}
                     >
                       <Text style={[styles.evalButtonText, { color: beraterEvalStatus === 'nicht_interessant' ? '#fff' : RETRO.text }]}>
                         Uninteressant
@@ -940,8 +980,10 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                       style={[
                         RETRO_BTN, HARD_SHADOW, styles.evalButton,
                         beraterEvalStatus === 'interessant' && { backgroundColor: colors.success },
+                        evalBusy && { opacity: 0.5 },
                       ]}
                       onPress={() => handleBeraterEvaluation('interessant')}
+                      disabled={evalBusy}
                     >
                       <Text style={[styles.evalButtonText, { color: beraterEvalStatus === 'interessant' ? '#fff' : RETRO.text }]}>
                         Interessant
@@ -951,8 +993,10 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                       style={[
                         RETRO_BTN, HARD_SHADOW, styles.evalButton,
                         onWatchlist && { backgroundColor: '#d4a017' },
+                        evalBusy && { opacity: 0.5 },
                       ]}
                       onPress={handleWatchlistToggle}
+                      disabled={evalBusy}
                     >
                       <Text style={[styles.evalButtonText, { color: onWatchlist ? '#fff' : RETRO.text }]}>
                         Watchlist

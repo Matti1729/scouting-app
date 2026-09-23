@@ -2,6 +2,7 @@
 // Wird von der Suchmaschine und dem Sportstipendium-Board geteilt, damit das
 // Spielerprofil überall identisch aussieht. Lädt die TM-Details (Einsätze,
 // Transfers) selbst nach.
+import { showAlert } from '../utils/alert';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
@@ -296,6 +297,8 @@ export function PlayerDetailModal({
     if (ok) {
       setScoutStatusState(next);
       onStatusChanged?.(next);
+    } else {
+      showAlert('Fehler', 'Status konnte nicht gespeichert werden. Bitte noch einmal versuchen.');
     }
     setStatusSaving(false);
   };
