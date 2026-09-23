@@ -483,6 +483,18 @@ export function MatchListScreen({ navigation, route }: any) {
   const [filterMenu, setFilterMenu] = useState<'jahrgang' | 'art' | null>(null);
   const [dateFilter, setDateFilter] = useState(''); // ISO "YYYY-MM-DD", leer = alle
   const [hoveredMapKey, setHoveredMapKey] = useState<string | null>(null);
+  // Liste wird portionsweise gerendert (RN-Web misst die Zeilenhöhen der
+  // FlatList nicht zuverlässig → Virtualisierung blieb bei 10 Zeilen hängen).
+  // Nachgeladen wird beim Scrollen anhand der echten DOM-Scrollwerte.
+  const LIST_PAGE = 60;
+  const [listVisibleCount, setListVisibleCount] = useState(LIST_PAGE);
+  const handleListScroll = useCallback((e: any, total: number) => {
+    const { contentOffset, contentSize, layoutMeasurement } = e.nativeEvent || {};
+    if (!contentOffset || !contentSize || !layoutMeasurement) return;
+    if (contentOffset.y + layoutMeasurement.height >= contentSize.height - 800) {
+      setListVisibleCount((c) => (c < total ? Math.min(c + LIST_PAGE, total) : c));
+    }
+  }, []);
   // Vereinswappen (normalisierte Vereins-Basis -> tm_club_id)
   const [clubLogoMap, setClubLogoMap] = useState<Map<string, string>>(new Map());
   useEffect(() => {
@@ -2138,6 +2150,48 @@ export function MatchListScreen({ navigation, route }: any) {
     });
     return getSortedMatches(filtered);
   }, [matches, areaMatches, searchQuery, jahrgangFilter, artFilter, dateFilter, viewTab, sortField, sortDirection]);
+  // Zurück auf die erste Portion, wenn sich Filter/Tab/Sortierung ändern
+  // (nicht bei jeder Neuberechnung der Liste, sonst springt sie beim Nachladen zurück)
+  const listResetKey = [viewTab, searchQuery, jahrgangFilter.join(','), artFilter.join(','), dateFilter, sortField, sortDirection, filteredMatches.length].join('|');
+  useEffect(() => { setListVisibleCount(LIST_PAGE); }, [listResetKey]);
+  const listData = useMemo(() => filteredMatches.slice(0, listVisibleCount), [filteredMatches, listVisibleCount]);
+  // Spiele-Liste (Desktop + Mobile): im Web als einfacher ScrollView mit
+  // portionsweisem Nachladen (die FlatList-Virtualisierung misst dort die
+  // Zeilen nicht und blieb bei 10 Zeilen stehen); nativ als FlatList.
+  const renderGamesList = (style: any) => {
+    const empty = (
+      <View style={styles.emptyState}>
+        <Text style={[styles.emptyText, { color: RETRO.textMuted }]}>
+          {viewTab === 'archiv' ? 'Keine archivierten Spiele' : 'Keine Spiele gefunden'}
+        </Text>
+      </View>
+    );
+    if (Platform.OS === 'web') {
+      return (
+        <ScrollView
+          style={style}
+          onScroll={(e) => handleListScroll(e, filteredMatches.length)}
+          scrollEventThrottle={100}
+        >
+          {listData.length === 0
+            ? empty
+            : listData.map((item) => <React.Fragment key={item.id}>{renderGameRow({ item })}</React.Fragment>)}
+        </ScrollView>
+      );
+    }
+    return (
+      <FlatList
+        style={style}
+        data={listData}
+        keyExtractor={(item) => item.id}
+        renderItem={renderGameRow}
+        initialNumToRender={LIST_PAGE}
+        onEndReached={() => setListVisibleCount((c) => Math.min(c + LIST_PAGE, filteredMatches.length))}
+        onEndReachedThreshold={1}
+        ListEmptyComponent={empty}
+      />
+    );
+  };
 
   // Anzahl archivierter Spiele
   // Zähler für "Meine Spiele"/"Archiv": DFB-Termine nur, wenn hinzugefügt (attending)
@@ -3135,19 +3189,7 @@ export function MatchListScreen({ navigation, route }: any) {
                   {`${viewTab === 'archiv' ? 'ARCHIV' : viewTab === 'meine' ? 'MEINE SPIELE' : 'SPIELE'} (${filteredMatches.length})`}
                 </Text>
               </View>
-              <FlatList
-                style={{ marginTop: 12, flex: 1, minHeight: 0 }}
-                data={filteredMatches}
-                keyExtractor={(item) => item.id}
-                renderItem={renderGameRow}
-                ListEmptyComponent={
-                  <View style={styles.emptyState}>
-                    <Text style={[styles.emptyText, { color: RETRO.textMuted }]}>
-                      {viewTab === 'archiv' ? 'Keine archivierten Spiele' : 'Keine Spiele gefunden'}
-                    </Text>
-                  </View>
-                }
-              />
+              {renderGamesList({ marginTop: 12, flex: 1, minHeight: 0 })}
             </View>
           </View>
           {/* Karte rechts (nur Anstehend): gleiche Chip-Optik wie die Liste */}
@@ -3169,19 +3211,7 @@ export function MatchListScreen({ navigation, route }: any) {
         <View style={{ flex: 1 }}>
           {mobileView === 'liste' || showArchive ? (
             <View style={[HARD_SHADOW, { flex: 1, backgroundColor: RETRO.panel }]}>
-              <FlatList
-                style={{ flex: 1, minHeight: 0 }}
-                data={filteredMatches}
-                keyExtractor={(item) => item.id}
-                renderItem={renderGameRow}
-                ListEmptyComponent={
-                  <View style={styles.emptyState}>
-                    <Text style={[styles.emptyText, { color: RETRO.textMuted }]}>
-                      {viewTab === 'archiv' ? 'Keine archivierten Spiele' : 'Keine Spiele gefunden'}
-                    </Text>
-                  </View>
-                }
-              />
+              {renderGamesList({ flex: 1, minHeight: 0 })}
             </View>
           ) : (
             <View style={[HARD_SHADOW_LG, { flex: 1, overflow: 'hidden' }]}>
