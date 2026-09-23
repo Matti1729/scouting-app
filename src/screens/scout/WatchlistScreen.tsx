@@ -186,22 +186,43 @@ export function WatchlistScreen() {
   const [ambiguousHidden, setAmbiguousHidden] = useState<Set<string>>(new Set());
   const [assigning, setAssigning] = useState(false);
 
-  const fetchData = useCallback(async () => {
-    // Gescoutete Spieler mit später aufgetauchten TM-Datensätzen zusammenführen
-    // (z.B. U15 gesichtet, ab U17 bei Transfermarkt gelistet)
-    await mergeObservedDuplicates();
-    const [data, evals, obs, amb] = await Promise.all([
+  // Listen laden (schnell, 3 Abfragen parallel)
+  const loadLists = useCallback(async () => {
+    const [data, evals, obs] = await Promise.all([
       loadWatchlist(),
       loadAllEvaluations(),
       loadObservedPlayers(),
-      findAmbiguousMergeCandidates(),
     ]);
     setWatchlist(data);
     setEvaluations(evals);
     setObserved(obs);
-    setAmbiguous(amb);
     setLoading(false);
   }, []);
+
+  // Doppelgänger-Abgleich läuft im Hintergrund (Dutzende Einzelabfragen,
+  // mehrere Sekunden) und darf die Anzeige nicht blockieren; bei Änderungen
+  // werden die Listen danach still nachgeladen.
+  const mergeRunning = useRef(false);
+  const runMergeInBackground = useCallback(async () => {
+    if (mergeRunning.current) return;
+    mergeRunning.current = true;
+    try {
+      // Gescoutete Spieler mit später aufgetauchten TM-Datensätzen zusammenführen
+      // (z.B. U15 gesichtet, ab U17 bei Transfermarkt gelistet)
+      const merged = await mergeObservedDuplicates();
+      if (merged > 0) await loadLists();
+      setAmbiguous(await findAmbiguousMergeCandidates());
+    } catch {
+      // still bleiben — die Listen sind bereits sichtbar
+    } finally {
+      mergeRunning.current = false;
+    }
+  }, [loadLists]);
+
+  const fetchData = useCallback(async () => {
+    await loadLists();
+    void runMergeInBackground();
+  }, [loadLists, runMergeInBackground]);
 
   useFocusEffect(
     useCallback(() => {
