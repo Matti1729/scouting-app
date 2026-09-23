@@ -23,7 +23,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { RootStackParamList } from '../../navigation/types';
 import { RETRO, HARD_SHADOW, HARD_SHADOW_LG, MONO } from '../../theme/retro';
-import { loadScanStatus, BeraterStats, loadWatchlist, WatchlistEntry, loadAllEvaluations, PlayerEvaluation, loadUnseenAlerts, markAlertSeen, AgentAlertNotification, findAmbiguousMergeCandidates, AmbiguousMerge, mergeScoutedInto } from '../../services/beraterService';
+import { loadScanStatus, BeraterStats, loadWatchlist, WatchlistEntry, loadAllEvaluations, PlayerEvaluation, loadObservedPlayers, ObservedPlayer, loadUnseenAlerts, markAlertSeen, AgentAlertNotification, findAmbiguousMergeCandidates, AmbiguousMerge, mergeScoutedInto } from '../../services/beraterService';
 import { areaAge, areaArt, shortVenueName, stripAge, loadClubLogoMap, clubLogoUriFor } from '../../services/areaGamesService';
 import { createMatch, deleteMatch } from '../../services/matchService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
@@ -86,6 +86,7 @@ export function DashboardScreen() {
   const [stipendiumCount, setStipendiumCount] = useState(0);
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [evaluations, setEvaluations] = useState<Map<string, PlayerEvaluation>>(new Map());
+  const [observed, setObserved] = useState<ObservedPlayer[]>([]);
   const [beraterStats, setBeraterStats] = useState<BeraterStats | null>(null);
   const [todayGames, setTodayGames] = useState<TodayGame[]>([]);
   // Wappen-Lookup: normalisierte Vereins-Basis -> tm_club_id
@@ -213,6 +214,7 @@ export function DashboardScreen() {
 
     loadWatchlist().then(setWatchlist).catch(() => {});
     loadAllEvaluations().then(setEvaluations).catch(() => {});
+    loadObservedPlayers().then(setObserved).catch(() => {});
 
     // Vereinswappen: alle bekannten Vereine einmal laden (Lookup über Namensbasis)
     loadClubLogoMap().then(setClubLogoMap).catch(() => {});
@@ -291,10 +293,11 @@ export function DashboardScreen() {
     } catch { /* Karte bleibt leer */ }
   };
 
-  // Watchlist-Spieler mit dem höchsten Potential (Bewertung aus dem
-  // Watchlist-System: Status-Eintrag vor Watchlist-Feld)
+  // Potential wie im Spielerprofil/Watchlist: neuester Spielbericht schlägt
+  // manuelle Bewertung (Status-Eintrag vor Watchlist-Feld)
+  const lastReportRating = new Map(observed.map((o) => [o.player.id, o.lastRating]));
   const watchlistRating = (w: WatchlistEntry): number | null =>
-    evaluations.get(w.player_id)?.rating ?? w.rating ?? null;
+    lastReportRating.get(w.player_id) ?? evaluations.get(w.player_id)?.rating ?? w.rating ?? null;
   // Zielspieler-Panel: alle Spieler mit Zielspieler-Status, höchstes Potential zuerst
   const topWatchlist = [...watchlist]
     .map((w) => ({

@@ -181,6 +181,11 @@ export function WatchlistScreen() {
     for (const o of observed) m.set(o.player.id, o);
     return m;
   }, [observed]);
+  // Potential wie im Spielerprofil: neuester Spielbericht schlägt manuelle
+  // Watchlist-/Einordnungs-Bewertung (sonst zeigt die Liste "—", obwohl
+  // im Profil eine 7 steht)
+  const displayRating = (playerId: string, fallback: number | null | undefined): number | null =>
+    observedById.get(playerId)?.lastRating ?? evaluations.get(playerId)?.rating ?? fallback ?? null;
   // Unklare TM-Zuordnungen (mehrere Kandidaten) — der Nutzer ordnet von Hand zu
   const [ambiguous, setAmbiguous] = useState<AmbiguousMerge[]>([]);
   const [ambiguousHidden, setAmbiguousHidden] = useState<Set<string>>(new Set());
@@ -403,8 +408,8 @@ export function WatchlistScreen() {
     if (mobileSort) {
       list = [...list].sort((a, b) => {
         if (!a.player || !b.player) return 0;
-        const ra = evaluations.get(a.player.id)?.rating ?? a.rating ?? null;
-        const rb = evaluations.get(b.player.id)?.rating ?? b.rating ?? null;
+        const ra = displayRating(a.player.id, a.rating);
+        const rb = displayRating(b.player.id, b.rating);
         return mobileSortCompare(a.player, b.player, ra, rb);
       });
     }
@@ -454,8 +459,8 @@ export function WatchlistScreen() {
     if (mobileSort) {
       list = [...list].sort((a, b) => mobileSortCompare(
         a.player, b.player,
-        evaluations.get(a.player.id)?.rating ?? a.lastRating,
-        evaluations.get(b.player.id)?.rating ?? b.lastRating,
+        displayRating(a.player.id, a.lastRating),
+        displayRating(b.player.id, b.lastRating),
       ));
     }
     return list;
@@ -602,7 +607,7 @@ export function WatchlistScreen() {
   const renderPlayerCard = (player: BeraterPlayer, extra?: { lastMatchDate?: string | null; reportCount?: number; lastRating?: number | null }) => {
     const agentLabel = getAgentLabel(player);
     const ev = evaluations.get(player.id);
-    const rating = ev?.rating ?? extra?.lastRating ?? null;
+    const rating = displayRating(player.id, extra?.lastRating);
     const age = calculateAge(player.birth_date);
     const pos = positionCode(player.position);
     const clubName = player.club_name || '';
@@ -671,7 +676,7 @@ export function WatchlistScreen() {
     const addedDate = formatDateDE(item.added_at);
     const evalColor = getEvalColor(player.id, true);
     const ev = evaluations.get(player.id);
-    const rating = ev?.rating ?? item.rating ?? null;
+    const rating = displayRating(player.id, item.rating);
     const hasNotes = !!(ev?.notes || item.notes);
 
     return (
