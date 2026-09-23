@@ -26,6 +26,10 @@ export interface DbMatch {
   source_key?: string | null;
   // DFB-Termin als "Meine Spiele" markiert ("Ich bin beim Spiel")
   attending?: boolean | null;
+  // DFB-Termin: Kader-Überschrift (dfb.de), Datencenter-Spielseite, letzter Aufstellungs-Import
+  kader_title?: string | null;
+  dfb_match_url?: string | null;
+  dfb_lineup_loaded_at?: string | null;
   // Koordinaten (DFB-Termine, von dfb-sync geokodiert)
   lat?: number | null;
   lng?: number | null;
@@ -53,6 +57,10 @@ export interface DbLineup {
   // Verein (DFB-Kader) + Herkunft ('dfb')
   club?: string | null;
   source?: string | null;
+  // DFB-Kaderliste: Länderspiele / Tore / Datencenter-Profil
+  dfb_games?: number | null;
+  dfb_goals?: number | null;
+  dfb_profile_url?: string | null;
 }
 
 // Input-Typen (ohne auto-generierte Felder)

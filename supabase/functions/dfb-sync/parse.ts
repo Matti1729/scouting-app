@@ -440,3 +440,109 @@ export async function kaderHash(players: DfbKaderPlayer[]): Promise<string> {
   const buf = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(norm));
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
+
+// ---------------------------------------------------------------------------
+// Datencenter: Saisonplan einer Mannschaft (alle Spiele mit Link zur Spielseite)
+// https://datencenter.dfb.de/teams/deutschland-u-20-m/seasonplan
+// ---------------------------------------------------------------------------
+export interface DfbSeasonGame {
+  date: string;          // ISO "2026-09-25"
+  time: string | null;   // "17:30"
+  home: string;          // "Deutschland" (ohne "U 20 (m)")
+  away: string;          // "Frankreich"
+  url: string;           // Spielseite (…/saison/… oder …/spieltag/…)
+}
+
+export const seasonplanUrl = (age: number) =>
+  `https://datencenter.dfb.de/teams/deutschland-u-${age}-m/seasonplan`;
+
+/** "Deutschland U&nbsp;20 (m)" → "Deutschland" */
+export function stripNationalTeamSuffix(s: string): string {
+  return decodeEntities(s)
+    .replace(/ /g, ' ')
+    .replace(/\s*\(m\)\s*/gi, ' ')
+    .replace(/\bU\s?-?\s?\d{2}\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function parseSeasonplanHtml(html: string): DfbSeasonGame[] {
+  const out: DfbSeasonGame[] = [];
+  // Jede Spielzeile beginnt mit der Info-Zelle id="match_<id>"
+  const chunks = html.split(/id="match_\d+"/).slice(1);
+  for (const c of chunks) {
+    const d = c.match(/(\d{2})\.(\d{2})\.(\d{4})(?:\s+(\d{2}:\d{2}))?/);
+    const homeHtml = c.match(/c-MatchTable-team--home[^>]*>([\s\S]*?)<\/div>/);
+    const awayHtml = c.match(/c-MatchTable-team--away[^>]*>([\s\S]*?)<\/div>/);
+    const link = c.match(/href="(https?:\/\/datencenter\.dfb\.de\/datencenter\/[^"]*\/(?:saison|spieltag)\/[^"?]+)/);
+    if (!d || !homeHtml || !awayHtml || !link) continue;
+    out.push({
+      date: `${d[3]}-${d[2]}-${d[1]}`,
+      time: d[4] || null,
+      home: stripNationalTeamSuffix(stripTags(homeHtml[1])),
+      away: stripNationalTeamSuffix(stripTags(awayHtml[1])),
+      url: link[1],
+    });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Datencenter: Aufstellung einer Spielseite (Tabellen "Aufstellung" und
+// "Auswechselspieler", je Zeile Heim-Spieler | Nr | Rolle | Nr | Gast-Spieler)
+// ---------------------------------------------------------------------------
+export interface DfbLineupPlayer {
+  nummer: string | null;
+  vorname: string;
+  name: string;
+  isGoalkeeper: boolean;
+  profileUrl: string | null;
+}
+export interface DfbMatchLineup {
+  homeName: string;      // "Schweiz"
+  awayName: string;      // "Deutschland"
+  homeStarters: DfbLineupPlayer[];
+  homeSubs: DfbLineupPlayer[];
+  awayStarters: DfbLineupPlayer[];
+  awaySubs: DfbLineupPlayer[];
+}
+
+function lineupPerson(cellHtml: string, nummer: string | null): DfbLineupPlayer | null {
+  const link = cellHtml.match(/href="(https?:\/\/datencenter\.dfb\.de\/profil\/\d+)[^"]*"/i);
+  let text = stripTags(cellHtml).replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  const isGoalkeeper = /\(\s*T\s*\)/i.test(text);
+  text = text.replace(/\(\s*[A-Z]{1,3}\s*\)/g, '').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  const { vorname, name } = splitFullName(text);
+  return { nummer, vorname, name, isGoalkeeper, profileUrl: link ? link[1] : null };
+}
+
+export function parseMatchLineupHtml(html: string): DfbMatchLineup | null {
+  const tables = html.match(/<table[^>]*>[\s\S]*?<\/table>/gi) || [];
+  const res: DfbMatchLineup = { homeName: '', awayName: '', homeStarters: [], homeSubs: [], awayStarters: [], awaySubs: [] };
+  let any = false;
+  for (const t of tables) {
+    if (!/m-MatchDetails-lineup/.test(t)) continue;
+    const title = (t.match(/m-MatchDetails-title[^>]*>\s*([^<]+)/) || [])[1]?.trim() || '';
+    const isSubs = /auswechsel|ersatz|bank/i.test(title);
+    const alts = [...t.matchAll(/m-MatchDetails-lineup-emblem[^>]*alt="([^"]+)"/g)].map((m) => stripNationalTeamSuffix(m[1]));
+    if (!res.homeName && alts[0]) res.homeName = alts[0];
+    if (!res.awayName && alts[1]) res.awayName = alts[1];
+    for (const row of t.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || []) {
+      const hp = row.match(/lineup-person--home[^>]*>([\s\S]*?)<\/td>/);
+      const ap = row.match(/lineup-person--away[^>]*>([\s\S]*?)<\/td>/);
+      const hn = row.match(/lineup-number--home[^>]*>\s*([^<]*?)\s*<\/td>/);
+      const an = row.match(/lineup-number--away[^>]*>\s*([^<]*?)\s*<\/td>/);
+      if (!hp && !ap) continue;
+      // Zeilen mit Rolle (Trainer/in, Formation) sind keine Spieler
+      const role = row.match(/lineup-role[^>]*>([\s\S]*?)<\/td>/);
+      if (role && stripTags(role[1]).trim()) continue;
+      const h = hp ? lineupPerson(hp[1], hn && hn[1].trim() ? hn[1].trim() : null) : null;
+      const a = ap ? lineupPerson(ap[1], an && an[1].trim() ? an[1].trim() : null) : null;
+      if (h) { (isSubs ? res.homeSubs : res.homeStarters).push(h); any = true; }
+      if (a) { (isSubs ? res.awaySubs : res.awayStarters).push(a); any = true; }
+    }
+  }
+  return any ? res : null;
+}

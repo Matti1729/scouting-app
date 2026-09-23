@@ -20,6 +20,8 @@ import { getDocumentProxy } from 'npm:unpdf@0.12.1'
 import {
   AGES, termineUrl, teamUrl, parseTerminePage, parseTeamPage, kaderMatchesTermin,
   parsePeopleListHtml, parseKaderPdfItems, kaderHash,
+  seasonplanUrl, parseSeasonplanHtml, parseMatchLineupHtml, stripNationalTeamSuffix,
+  DfbLineupPlayer,
   type DfbKaderPlayer, type DfbKaderSource, type DfbTermin, type PdfTextItem,
 } from './parse.ts'
 
@@ -86,7 +88,7 @@ async function syncLineup(
 ): Promise<{ inserted: number; updated: number; deleted: number }> {
   const { data: existing, error } = await sb
     .from('scouting_lineups')
-    .select('id, name, vorname, source, club, nummer, is_goalkeeper, jahrgang, birth_date')
+    .select('id, name, vorname, source, club, nummer, is_goalkeeper, jahrgang, birth_date, dfb_games, dfb_goals, dfb_profile_url')
     .eq('match_id', matchId)
   if (error) throw error
   const byKey = new Map<string, any>()
@@ -104,10 +106,14 @@ async function syncLineup(
     if (ex) {
       const patch: any = {}
       if (p.club && ex.club !== p.club) patch.club = p.club
-      if ((ex.nummer || null) !== (p.nummer || null)) patch.nummer = p.nummer
+      // Rückennummer nur aus dem Kader übernehmen, wenn noch keine (Aufstellung) gesetzt ist
+      if (p.nummer && (ex.nummer || null) !== p.nummer) patch.nummer = p.nummer
       if (p.isGoalkeeper !== !!ex.is_goalkeeper) patch.is_goalkeeper = p.isGoalkeeper
       if (!ex.jahrgang && jahrgang) patch.jahrgang = jahrgang
       if (!ex.birth_date && birth) patch.birth_date = birth
+      if (p.games != null && ex.dfb_games !== p.games) patch.dfb_games = p.games
+      if (p.goals != null && ex.dfb_goals !== p.goals) patch.dfb_goals = p.goals
+      if (p.profileUrl && ex.dfb_profile_url !== p.profileUrl) patch.dfb_profile_url = p.profileUrl
       if (!ex.source) patch.source = 'dfb'
       if (Object.keys(patch).length) {
         const { error: ue } = await sb.from('scouting_lineups').update(patch).eq('id', ex.id)
@@ -127,6 +133,9 @@ async function syncLineup(
         is_goalkeeper: p.isGoalkeeper,
         club: p.club,
         source: 'dfb',
+        dfb_games: p.games,
+        dfb_goals: p.goals,
+        dfb_profile_url: p.profileUrl,
       })
     }
   }
@@ -211,8 +220,148 @@ function terminRow(t: DfbTermin) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Aufstellung eines Länderspiels von der Datencenter-Spielseite übernehmen
+// (auf Abruf aus der App). Deutsche Spieler werden mit dem Kader (Name)
+// zusammengeführt, damit lineup_player_id/Berichte stabil bleiben; Gegner
+// werden als eigene Zeilen angelegt.
+// ---------------------------------------------------------------------------
+async function importDfbLineup(sb: SupabaseClient, matchId: string) {
+  const { data: m, error } = await sb
+    .from('scouting_matches')
+    .select('id, home_team, away_team, dfb_match_url, source, age_group')
+    .eq('id', matchId)
+    .maybeSingle()
+  if (error) throw error
+  if (!m) return { available: false, reason: 'match_not_found' }
+  if (!m.dfb_match_url) return { available: false, reason: 'no_match_url' }
+
+  const parsed = parseMatchLineupHtml(await fetchText(m.dfb_match_url))
+  if (!parsed || (parsed.homeStarters.length + parsed.awayStarters.length) < 11) {
+    return { available: false, reason: 'not_published', url: m.dfb_match_url }
+  }
+
+  // Welche Seite der DFB-Seite ist Deutschland, und welche Seite ist das bei uns?
+  const pageGermanyHome = /deutschland/i.test(parsed.homeName) || !/deutschland/i.test(parsed.awayName)
+  const ourGermanySide: 'home' | 'away' = /deutschland/i.test(m.home_team || '') ? 'home' : 'away'
+  const ourOpponentSide: 'home' | 'away' = ourGermanySide === 'home' ? 'away' : 'home'
+  const germany = pageGermanyHome
+    ? { starters: parsed.homeStarters, subs: parsed.homeSubs }
+    : { starters: parsed.awayStarters, subs: parsed.awaySubs }
+  const opponent = pageGermanyHome
+    ? { starters: parsed.awayStarters, subs: parsed.awaySubs }
+    : { starters: parsed.homeStarters, subs: parsed.homeSubs }
+
+  const { data: existing, error: le } = await sb
+    .from('scouting_lineups')
+    .select('id, name, vorname, team, source, nummer, is_starter, is_goalkeeper, dfb_profile_url')
+    .eq('match_id', matchId)
+  if (le) throw le
+  const rows = existing || []
+  const stats = { inserted: 0, updated: 0, deleted: 0 }
+
+  const apply = async (
+    players: { p: DfbLineupPlayer; starter: boolean }[],
+    side: 'home' | 'away',
+    candidates: any[],
+    deleteUnseen: boolean,
+  ) => {
+    const byKey = new Map<string, any>()
+    for (const r of candidates) byKey.set(playerKey(r.name, r.vorname || ''), r)
+    const seen = new Set<string>()
+    const inserts: any[] = []
+    for (const { p, starter } of players) {
+      const key = playerKey(p.name, p.vorname)
+      if (seen.has(key)) continue
+      seen.add(key)
+      const ex = byKey.get(key)
+      if (ex) {
+        const patch: any = {}
+        if (ex.team !== side) patch.team = side
+        if ((ex.nummer || null) !== (p.nummer || null) && p.nummer) patch.nummer = p.nummer
+        if (!!ex.is_starter !== starter) patch.is_starter = starter
+        if (!!ex.is_goalkeeper !== p.isGoalkeeper) patch.is_goalkeeper = p.isGoalkeeper
+        if (p.profileUrl && ex.dfb_profile_url !== p.profileUrl) patch.dfb_profile_url = p.profileUrl
+        if (!ex.source) patch.source = 'dfb'
+        if (Object.keys(patch).length) {
+          const { error: ue } = await sb.from('scouting_lineups').update(patch).eq('id', ex.id)
+          if (ue) throw ue
+          stats.updated++
+        }
+      } else {
+        inserts.push({
+          match_id: matchId, team: side, is_starter: starter, nummer: p.nummer,
+          vorname: p.vorname || null, name: p.name, is_goalkeeper: p.isGoalkeeper,
+          source: 'dfb', dfb_profile_url: p.profileUrl,
+        })
+      }
+    }
+    if (inserts.length) {
+      const { error: ie } = await sb.from('scouting_lineups').insert(inserts)
+      if (ie) throw ie
+      stats.inserted += inserts.length
+    }
+    // Nicht (mehr) aufgestellte Zeilen: Kader-Spieler bleiben (Bank), Gegner werden entfernt
+    for (const r of candidates) {
+      if (seen.has(playerKey(r.name, r.vorname || ''))) continue
+      if (deleteUnseen) {
+        if (r.source === 'dfb') {
+          const { error: de } = await sb.from('scouting_lineups').delete().eq('id', r.id)
+          if (de) throw de
+          stats.deleted++
+        }
+      } else if (r.is_starter || r.team !== side) {
+        const { error: ue } = await sb.from('scouting_lineups').update({ is_starter: false, team: side }).eq('id', r.id)
+        if (ue) throw ue
+        stats.updated++
+      }
+    }
+  }
+
+  // Deutschland: alle bisherigen Kader-Zeilen (egal welche Seite, sie wurden als 'home' angelegt)
+  const opponentNameKeys = new Set(
+    [...opponent.starters, ...opponent.subs].map((p) => playerKey(p.name, p.vorname)),
+  )
+  const germanyRows = rows.filter((r) => r.team === ourGermanySide || !opponentNameKeys.has(playerKey(r.name, r.vorname || '')) && r.team !== ourOpponentSide)
+  const opponentRows = rows.filter((r) => !germanyRows.includes(r))
+  await apply(
+    [...germany.starters.map((p) => ({ p, starter: true })), ...germany.subs.map((p) => ({ p, starter: false }))],
+    ourGermanySide, germanyRows, false,
+  )
+  await apply(
+    [...opponent.starters.map((p) => ({ p, starter: true })), ...opponent.subs.map((p) => ({ p, starter: false }))],
+    ourOpponentSide, opponentRows, true,
+  )
+
+  const { error: me } = await sb.from('scouting_matches')
+    .update({ dfb_lineup_loaded_at: new Date().toISOString() }).eq('id', matchId)
+  if (me) throw me
+  return {
+    available: true, url: m.dfb_match_url, ...stats,
+    germany: { starters: germany.starters.length, subs: germany.subs.length },
+    opponent: { name: pageGermanyHome ? parsed.awayName : parsed.homeName, starters: opponent.starters.length, subs: opponent.subs.length },
+  }
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+
+  // Aufstellung auf Abruf: ?lineup=<matchId> oder Body {"lineup": "<matchId>"}
+  {
+    const u = new URL(req.url)
+    let lineupId = u.searchParams.get('lineup')
+    if (!lineupId && req.method === 'POST') {
+      try { lineupId = (await req.clone().json())?.lineup || null } catch { /* kein JSON */ }
+    }
+    if (lineupId) {
+      const sb = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+      try {
+        return json(await importDfbLineup(sb, lineupId))
+      } catch (e) {
+        return json({ available: false, error: (e as Error).message }, 500)
+      }
+    }
+  }
 
   const url = new URL(req.url)
   const dry = url.searchParams.get('dry') === '1'
@@ -227,7 +376,7 @@ serve(async (req) => {
     ages: ages.map((a) => `U${a}`),
     termine: 0, inserted: 0, updated: 0, unchanged: 0, deleted: 0, legacyDeleted: 0,
     kaderAssigned: 0, kaderUnchanged: 0, lineups: { inserted: 0, updated: 0, deleted: 0 },
-    geocoded: 0, geocodeFailed: 0,
+    geocoded: 0, geocodeFailed: 0, matchUrls: 0,
     errors: [] as string[],
     preview: [] as any[],
   }
@@ -235,7 +384,7 @@ serve(async (req) => {
   // Bestehende DFB-Termine (alle, auch vergangene → Kader-Hash & Update)
   const { data: existingRows, error: exErr } = await sb
     .from('scouting_matches')
-    .select('id, source_key, match_date, kader_hash, home_team, away_team, match_date_end, match_time, location, age_group, lat, lng, geo_query')
+    .select('id, source_key, match_date, kader_hash, kader_title, dfb_match_url, home_team, away_team, match_date_end, match_time, location, age_group, lat, lng, geo_query')
     .eq('source', 'dfb')
   if (exErr && !dry) return json({ error: exErr.message }, 500)
   if (exErr) stats.errors.push(`DB (dry, ignoriert): ${exErr.message}`)
@@ -257,6 +406,8 @@ serve(async (req) => {
         if (!kaderCache.has(src.url)) kaderCache.set(src.url, loadKader(src))
         return kaderCache.get(src.url)!
       }
+      // Länderspiele dieses Jahrgangs → Datencenter-Spielseite (für die Aufstellung)
+      const games: { t: DfbTermin; matchId: string; ex: any }[] = []
 
       for (const t of tp.termine) {
         stats.termine++
@@ -311,6 +462,12 @@ serve(async (req) => {
           }
         }
 
+        if (t.isGame && matchId) games.push({ t, matchId, ex })
+        if (src && matchId && !dry && (ex?.kader_title || null) !== src.title) {
+          const { error } = await sb.from('scouting_matches').update({ kader_title: src.title }).eq('id', matchId)
+          if (error) stats.errors.push(`U${age} Kader-Titel: ${error.message}`)
+        }
+
         if (src && matchId) {
           try {
             const players = await loadCached(src)
@@ -332,6 +489,26 @@ serve(async (req) => {
           } catch (e) {
             stats.errors.push(`U${age} Kader ${src.url}: ${(e as Error).message}`)
           }
+        }
+      }
+
+      // Spielseiten-Links (Saisonplan im Datencenter) nachtragen
+      if (games.length && !dry) {
+        try {
+          const plan = parseSeasonplanHtml(await fetchText(seasonplanUrl(age)))
+          const norm = (x: string) => normName(stripNationalTeamSuffix(x))
+          for (const g of games) {
+            const opp = norm(/deutschland/i.test(g.t.homeTeam) ? g.t.awayTeam : g.t.homeTeam)
+            const hit = plan.find((p) => p.date === g.t.start && (norm(p.home) === opp || norm(p.away) === opp))
+              || plan.find((p) => p.date === g.t.start)
+            if (hit && g.ex?.dfb_match_url !== hit.url) {
+              const { error } = await sb.from('scouting_matches').update({ dfb_match_url: hit.url }).eq('id', g.matchId)
+              if (error) throw error
+              stats.matchUrls++
+            }
+          }
+        } catch (e) {
+          stats.errors.push(`U${age} Saisonplan: ${(e as Error).message}`)
         }
       }
     } catch (e) {

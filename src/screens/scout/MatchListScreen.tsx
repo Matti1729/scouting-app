@@ -145,6 +145,9 @@ interface Match {
   dfbUrl?: string | null;
   // DFB-Termin zu "Meine Spiele" hinzugefügt ("Ich bin beim Spiel")
   attending?: boolean;
+  // DFB-Termin: Kader-Überschrift + Datencenter-Spielseite (Aufstellung)
+  kaderTitle?: string | null;
+  dfbMatchUrl?: string | null;
   // Spiele "in der Umgebung" (aus der KMH-Datenbank, read-only)
   isAreaGame?: boolean;
   lat?: number | null;
@@ -324,6 +327,8 @@ const dbMatchToMatch = (dbMatch: DbMatch): Match => ({
   source: dbMatch.source || null,
   dfbUrl: dbMatch.source === 'dfb' ? dfbTerminePageUrl(dbMatch.age_group) : null,
   attending: !!dbMatch.attending,
+  kaderTitle: dbMatch.kader_title || null,
+  dfbMatchUrl: dbMatch.dfb_match_url || null,
   // DFB-Termine: Spielort auf der Karte (dunkelgrüner Marker)
   lat: dbMatch.lat ?? null,
   lng: dbMatch.lng ?? null,
@@ -1377,6 +1382,38 @@ export function MatchListScreen({ navigation, route }: any) {
     setConfirmRemoveArea(false);
     // Detail-Fenster schließen: es zeigt sonst weiter "Ich bin beim Spiel"
     setAreaDetail(null);
+  };
+
+  // DFB-Kaderliste (wie auf dfb.de: Funktion · Name · Geburtstag · Verein · Spiele · Tore)
+  const [kaderView, setKaderView] = useState<{ match: Match; rows: DbLineup[]; loading: boolean } | null>(null);
+  const dfbGermanySide = (m: Match): 'home' | 'away' => {
+    const [home] = (m.spiel || '').split(' - ');
+    return /deutschland/i.test(home || '') || !(m.spiel || '').includes(' - ') ? 'home' : 'away';
+  };
+  const openKader = async (m: Match) => {
+    setKaderView({ match: m, rows: [], loading: true });
+    const res = await loadLineups(m.id);
+    const side = dfbGermanySide(m);
+    const rows = (res.success && res.data ? res.data : [])
+      // Kader = deutsche Seite (Gegner-Zeilen aus der Aufstellung haben keinen Verein)
+      .filter((r) => r.team === side || !!r.club)
+      .sort((a, b) => (Number(!!b.is_goalkeeper) - Number(!!a.is_goalkeeper)) || (a.name || '').localeCompare(b.name || '', 'de'));
+    setKaderView({ match: m, rows, loading: false });
+  };
+  // DFB-Länderspiel: Aufstellung von der Datencenter-Spielseite holen, dann Scouting öffnen
+  const [dfbLineupLoading, setDfbLineupLoading] = useState(false);
+  const openDfbScouting = async (m: Match) => {
+    setAreaDetail(null);
+    setSelectedMatch(m);
+    setModalVisible(true);
+    await fetchLineupForMatch(m.id);
+    if (!(m.spiel || '').includes(' - ')) return; // Lehrgang: nur Kader
+    setDfbLineupLoading(true);
+    try {
+      const { data } = await supabase.functions.invoke('dfb-sync', { body: { lineup: m.id } });
+      if (data?.available) await fetchLineupForMatch(m.id);
+    } catch { /* Aufstellung ist Komfort — Kader bleibt sichtbar */ }
+    setDfbLineupLoading(false);
   };
 
   // Ist das Umgebungs-Spiel schon als eigenes Event übernommen?
@@ -2959,7 +2996,8 @@ export function MatchListScreen({ navigation, route }: any) {
         const isDfb = isOwn && areaDetail.source === 'dfb';
         const added = isDfb ? !!areaDetail.attending : (isOwn || isAreaGameAdded(areaDetail));
         // Vergangene Spiele: "Ich bin beim Spiel" ergibt keinen Sinn mehr
-        const isPastGame = !!areaDetail.datum && String(areaDetail.datum).slice(0, 10) < new Date().toISOString().slice(0, 10);
+        // Mehrtägige Termine (Lehrgänge) gelten bis zum Enddatum als aktuell
+        const isPastGame = !!areaDetail.datum && String(areaDetail.datumEnde || areaDetail.datum).slice(0, 10) < new Date().toISOString().slice(0, 10);
         // Zugehöriges eigenes Event (für "Aufstellung & Scouting öffnen")
         const ownMatch = isOwn
           ? areaDetail
@@ -3125,8 +3163,25 @@ export function MatchListScreen({ navigation, route }: any) {
                           </View>
                         </Modal>
                       )}
-                      {/* Aufstellung nur im "Meine Spiele"-Tab anbieten; DFB-Termine: Kader immer */}
-                      {ownMatch && (showArchive || ownMatch.source === 'dfb') && (
+                      {/* DFB-Termin: Kaderliste (wie dfb.de) + Scouting (Spiel: Aufstellung von der DFB-Spielseite) */}
+                      {ownMatch && ownMatch.source === 'dfb' && (
+                        <>
+                          <TouchableOpacity
+                            style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                            onPress={() => void openKader(ownMatch)}
+                          >
+                            <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Kader</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                            onPress={() => void openDfbScouting(ownMatch)}
+                          >
+                            <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{ownMatch.spiel.includes(' - ') ? 'Aufstellung & Scouting' : 'Scouting'}</Text>
+                          </TouchableOpacity>
+                        </>
+                      )}
+                      {/* Aufstellung nur im "Meine Spiele"-Tab anbieten */}
+                      {ownMatch && ownMatch.source !== 'dfb' && showArchive && (
                         <TouchableOpacity
                           style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
                           onPress={() => {
@@ -3140,7 +3195,7 @@ export function MatchListScreen({ navigation, route }: any) {
                             });
                           }}
                         >
-                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{ownMatch.source === 'dfb' ? 'Kader & Scouting' : 'Aufstellung & Scouting'}</Text>
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Aufstellung & Scouting</Text>
                         </TouchableOpacity>
                       )}
                     </View>
@@ -3162,23 +3217,120 @@ export function MatchListScreen({ navigation, route }: any) {
                       )}
                     </TouchableOpacity>
                     )}
-                    {/* DFB-Termin: Kader immer einsehbar, auch ohne "Meine Spiele" */}
+                    {/* DFB-Termin: Kaderliste + Scouting immer einsehbar, auch ohne "Meine Spiele" */}
                     {isDfb && (
-                      <TouchableOpacity
-                        style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
-                        onPress={() => {
-                          const m = areaDetail;
-                          setAreaDetail(null);
-                          setSelectedMatch(m);
-                          setModalVisible(true);
-                          void fetchLineupForMatch(m.id);
-                        }}
-                      >
-                        <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Kader & Scouting</Text>
-                      </TouchableOpacity>
+                      <>
+                        <TouchableOpacity
+                          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                          onPress={() => void openKader(areaDetail)}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Kader</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                          onPress={() => void openDfbScouting(areaDetail)}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{areaDetail.spiel.includes(' - ') ? 'Aufstellung & Scouting' : 'Scouting'}</Text>
+                        </TouchableOpacity>
+                      </>
                     )}
                     </View>
                   )}
+                </View>
+              </Pressable>
+            </Pressable>
+          </Modal>
+        );
+      })()}
+
+      {/* DFB-Kaderliste: exakt wie auf dfb.de (Funktion · Name · Geburtstag · Verein · Spiele · Tore) */}
+      {kaderView && (() => {
+        const { match: km, rows, loading } = kaderView;
+        const gks = rows.filter((r) => r.is_goalkeeper);
+        const field = rows.filter((r) => !r.is_goalkeeper);
+        const fmtBirth = (d: string | null) => {
+          if (!d) return '—';
+          const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
+          return m ? `${m[3]}.${m[2]}.${m[1]}` : d;
+        };
+        const cell = (txt: string, flex: number, bold = false, align: 'left' | 'right' = 'left') => (
+          <Text numberOfLines={1} style={{ flex, fontSize: isMobile ? 12 : 13, color: RETRO.text, fontWeight: bold ? '600' : '400', textAlign: align }}>{txt}</Text>
+        );
+        const headCell = (txt: string, flex: number, align: 'left' | 'right' = 'left') => (
+          <Text style={{ flex, fontSize: 10, fontFamily: MONO, letterSpacing: 0.5, color: RETRO.textMuted, textAlign: align }}>{txt.toUpperCase()}</Text>
+        );
+        const section = (title: string, list: DbLineup[]) => list.length === 0 ? null : (
+          <View key={title}>
+            <View style={{ paddingVertical: 6, paddingHorizontal: 8, backgroundColor: 'rgba(0,0,0,0.04)' }}>
+              <Text style={{ fontSize: 12, fontWeight: '700', color: RETRO.text }}>{title}</Text>
+            </View>
+            {list.map((r) => (
+              <View key={r.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 7, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder, gap: 8 }}>
+                {cell([r.vorname, r.name].filter(Boolean).join(' '), 2.2, true)}
+                {!isMobile && cell(fmtBirth(r.birth_date), 1.1)}
+                {cell(r.club || '—', 2)}
+                {cell(r.dfb_games != null ? String(r.dfb_games) : '—', 0.6, false, 'right')}
+                {cell(r.dfb_goals != null ? String(r.dfb_goals) : '—', 0.6, false, 'right')}
+              </View>
+            ))}
+          </View>
+        );
+        return (
+          <Modal visible transparent animationType="fade" onRequestClose={() => setKaderView(null)}>
+            <Pressable
+              style={{ flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.5)', justifyContent: isMobile ? 'flex-end' : 'center', alignItems: 'center', padding: isMobile ? 0 : 20 }}
+              onPress={() => setKaderView(null)}
+            >
+              <Pressable style={[HARD_SHADOW_LG, {
+                width: '100%', maxWidth: isMobile ? undefined : 760, maxHeight: '90%', borderWidth: 1, borderColor: RETRO.shadowDark,
+                borderRadius: 2, padding: isMobile ? 10 : 16, backgroundColor: 'rgba(238, 234, 226, 0.97)',
+              }]}>
+                <View style={[HARD_SHADOW, {
+                  flexDirection: 'row', alignItems: 'center', backgroundColor: RETRO.yellow,
+                  paddingVertical: 6, paddingHorizontal: 10, marginBottom: 10, gap: 8,
+                }]}>
+                  <Text style={{ flex: 1, fontSize: 16, fontWeight: '700', color: RETRO.text }} numberOfLines={1}>{`Kader ${km.mannschaft} · ${km.spiel}`}</Text>
+                  <TouchableOpacity onPress={() => setKaderView(null)} hitSlop={8}>
+                    <Ionicons name="close" size={18} color={RETRO.text} />
+                  </TouchableOpacity>
+                </View>
+                {km.kaderTitle ? (
+                  <Text style={{ fontSize: 13, fontWeight: '600', color: RETRO.text, paddingHorizontal: 4, marginBottom: 10 }}>{km.kaderTitle}</Text>
+                ) : null}
+                <View style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 6, paddingHorizontal: 8, borderBottomWidth: 2, borderBottomColor: RETRO.shadowDark, gap: 8 }}>
+                  {headCell('Name', 2.2)}
+                  {!isMobile && headCell('Geburtstag', 1.1)}
+                  {headCell('Verein', 2)}
+                  {headCell('Spiele', 0.6, 'right')}
+                  {headCell('Tore', 0.6, 'right')}
+                </View>
+                <ScrollView style={{ flexGrow: 0 }}>
+                  {loading ? (
+                    <ActivityIndicator style={{ marginVertical: 24 }} color={RETRO.text} />
+                  ) : rows.length === 0 ? (
+                    <Text style={{ padding: 16, fontSize: 13, color: RETRO.textMuted }}>Noch kein Kader auf dfb.de veröffentlicht.</Text>
+                  ) : (
+                    <>
+                      {section('Torwart', gks)}
+                      {section('Feldspieler', field)}
+                    </>
+                  )}
+                </ScrollView>
+                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 12 }}>
+                  {km.dfbUrl ? (
+                    <TouchableOpacity
+                      style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                      onPress={() => Linking.openURL(km.dfbUrl!)}
+                    >
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>dfb.de öffnen</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  <TouchableOpacity
+                    style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                    onPress={() => { setKaderView(null); void openDfbScouting(km); }}
+                  >
+                    <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{km.spiel.includes(' - ') ? 'Aufstellung & Scouting' : 'Scouting'}</Text>
+                  </TouchableOpacity>
                 </View>
               </Pressable>
             </Pressable>
@@ -3386,7 +3538,15 @@ export function MatchListScreen({ navigation, route }: any) {
                   {/* Import Status */}
                   {!isEditMode && (
                     <View style={styles.importSection}>
-                      {lineupStatus === 'unavailable' && (
+                      {dfbLineupLoading && (
+                        <View style={styles.tmSearchProgress}>
+                          <ActivityIndicator size="small" color={colors.primary} />
+                          <Text style={[styles.tmSearchText, { color: colors.textSecondary }]}>
+                            Aufstellung wird von der DFB-Spielseite geladen …
+                          </Text>
+                        </View>
+                      )}
+                      {lineupStatus === 'unavailable' && selectedMatch?.source !== 'dfb' && (
                         <Text style={[styles.lineupStatusText, { color: colors.textSecondary }]}>
                           Keine Aufstellung bei fussball.de. Screenshot importieren oder manuell anlegen.
                         </Text>
