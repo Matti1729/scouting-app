@@ -52,12 +52,10 @@ import {
   clubBaseQuery,
   clubLogoUriFor,
   AreaLeague,
-  loadKmhPlayerGames,
-  buildKmhGameIndex,
-  fussballDeGameId,
+  loadKmhPlayers,
+  buildKmhClubIndex,
   kmhClubKey,
-  KmhGameIndex,
-  KmhGamePlayers,
+  KmhClubIndex,
 } from '../../services/areaGamesService';
 import { GamesMapView, GameMapFeature } from '../../components/GamesMapView';
 import { Image } from 'react-native';
@@ -325,7 +323,7 @@ const KMH_TAG = { bg: '#dff3e4', border: '#1f6b35', text: '#0f3d2a' };
 const KmhPlayerTag = ({ name }: { name: string }) => (
   <View style={{
     backgroundColor: KMH_TAG.bg, borderWidth: 1.5, borderColor: KMH_TAG.border, borderRadius: 3,
-    paddingHorizontal: 6, paddingVertical: 2, marginLeft: 2,
+    paddingHorizontal: 6, paddingVertical: 2,
   }}>
     <Text style={{ fontSize: 11, fontWeight: '600', color: KMH_TAG.text }} numberOfLines={1}>{name}</Text>
   </View>
@@ -542,39 +540,25 @@ export function MatchListScreen({ navigation, route }: any) {
     loadClubLogoMap().then(setClubLogoMap).catch(() => {});
   }, []);
   const clubLogoUri = (teamName: string): string | null => clubLogoUriFor(clubLogoMap, teamName);
-  // Spiele unserer eigenen Spieler (KMH-App, player_games): Name als Tag am Verein
-  const [kmhIndex, setKmhIndex] = useState<KmhGameIndex>({ byGameId: new Map(), byKey: new Map(), byClub: new Map() });
+  // Unsere eigenen Spieler (KMH-Spielerübersicht): Zuordnung über hinterlegten Verein + Altersklasse
+  const [kmhIndex, setKmhIndex] = useState<KmhClubIndex>(new Map());
   useEffect(() => {
-    loadKmhPlayerGames().then(({ players, games }) => setKmhIndex(buildKmhGameIndex(players, games))).catch(() => {});
+    loadKmhPlayers().then((players) => setKmhIndex(buildKmhClubIndex(players))).catch(() => {});
   }, []);
-  const EMPTY_KMH: KmhGamePlayers = { home: [], away: [] };
-  /** Eigene Spieler in diesem Spiel — drei Wege, Ergebnis vereinigt:
-   *  1) fussball.de-Spiel-ID (player_games-Sync), 2) Datum + Heim/Gast,
-   *  3) Verein + Altersklasse aus der Spielerübersicht (auch ohne fussball.de-Link). */
-  const kmhPlayersFor = (m: Match): KmhGamePlayers => {
-    if (kmhIndex.byKey.size === 0 && kmhIndex.byClub.size === 0) return EMPTY_KMH;
-    const home = new Set<string>();
-    const away = new Set<string>();
-    const merge = (hit?: KmhGamePlayers) => { hit?.home.forEach((n) => home.add(n)); hit?.away.forEach((n) => away.add(n)); };
-    const gid = fussballDeGameId(m.fussballDeUrl);
-    if (gid) merge(kmhIndex.byGameId.get(gid));
-    const d = parseDateString(m.datum);
-    const iso = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '';
-    const isDfb = m.source === 'dfb';
+  /** Namen unserer Spieler in diesem Spiel (Heim zuerst, dann Gast) */
+  const kmhPlayersFor = (m: Match): string[] => {
+    if (kmhIndex.size === 0 || m.source === 'dfb') return [];
+    const out: string[] = [];
+    const age = m.mannschaft || 'Herren';
     for (const spiel of [m.spielRaw, m.spiel]) {
       if (!spiel) continue;
       const [h, ...rest] = spiel.split(' - ');
       if (!rest.length) continue;
-      const a = rest.join(' - ');
-      if (iso) merge(kmhIndex.byKey.get(`${iso}|${clubBase(h)}|${clubBase(a)}`));
-      if (!isDfb) {
-        const age = m.mannschaft || 'Herren';
-        (kmhIndex.byClub.get(kmhClubKey(h, age)) || []).forEach((n) => home.add(n));
-        (kmhIndex.byClub.get(kmhClubKey(a, age)) || []).forEach((n) => away.add(n));
+      for (const team of [h, rest.join(' - ')]) {
+        for (const n of kmhIndex.get(kmhClubKey(team, age)) || []) if (!out.includes(n)) out.push(n);
       }
     }
-    if (!home.size && !away.size) return EMPTY_KMH;
-    return { home: Array.from(home), away: Array.from(away) };
+    return out;
   };
   // Detail-Modal für Umgebungs-Spiele (+ "Zu Meine Spiele hinzufügen")
   const [areaDetail, setAreaDetail] = useState<Match | null>(null);
@@ -2673,7 +2657,7 @@ export function MatchListScreen({ navigation, route }: any) {
   const renderGameRow = ({ item }: { item: Match }) => {
     const isToday = isEventActive(item.datum, item.datumEnde);
     const kmh = kmhPlayersFor(item);
-    const hasKmh = kmh.home.length > 0 || kmh.away.length > 0;
+    const hasKmh = kmh.length > 0;
     return (
                     <TouchableOpacity
                       onPress={() => (viewTab === 'archiv' && !item.isAreaGame ? handleMatchPress(item) : setAreaDetail(item))}
@@ -2749,7 +2733,6 @@ export function MatchListScreen({ navigation, route }: any) {
                                   <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
                                     {home}
                                   </Text>
-                                  {!isMobile && kmh.home.map((n) => <KmhPlayerTag key={n} name={n} />)}
                                 </View>
                                 {away ? (
                                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
@@ -2757,13 +2740,12 @@ export function MatchListScreen({ navigation, route }: any) {
                                     <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
                                       {away}
                                     </Text>
-                                    {!isMobile && kmh.away.map((n) => <KmhPlayerTag key={n} name={n} />)}
                                   </View>
                                 ) : null}
-                                {/* Mobil: Tags in eigener Zeile unter den Vereinen (Spalte zu schmal) */}
-                                {isMobile && hasKmh ? (
+                                {/* Unsere Spieler: immer in eigener Zeile unter der Partie (Zeile sonst zu voll) */}
+                                {hasKmh ? (
                                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
-                                    {[...kmh.home, ...kmh.away].map((n) => <KmhPlayerTag key={n} name={n} />)}
+                                    {kmh.map((n) => <KmhPlayerTag key={n} name={n} />)}
                                   </View>
                                 ) : null}
                               </View>

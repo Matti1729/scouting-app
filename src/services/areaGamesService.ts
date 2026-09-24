@@ -576,27 +576,10 @@ export function areaArt(g: AreaGame): string {
 }
 
 // ---------------------------------------------------------------------------
-// Spiele unserer eigenen Spieler (KMH-App). Die KMH-Seite synct täglich die
-// fussball.de-Spielpläne jedes Spielers nach player_games; wir lesen nur.
-// Spielerkreis = Spielerübersicht der KMH-App (provision_only ausgenommen).
+// Unsere eigenen Spieler (KMH-App, Spielerübersicht). Zuordnung zu den Spielen
+// der Übersicht ausschließlich über den beim Spieler hinterlegten Verein +
+// Altersklasse (kein fussball.de-Link nötig).
 // ---------------------------------------------------------------------------
-
-export interface KmhPlayerGame {
-  playerId: string;
-  playerName: string;
-  date: string; // ISO "YYYY-MM-DD"
-  homeTeam: string;
-  awayTeam: string;
-  gameUrl: string | null;
-  // Seite, auf der der Spieler steht (Abgleich Verein aus der KMH-App ↔ Heim/Gast)
-  playerSide: 'home' | 'away';
-}
-
-/** fussball.de-Spiel-ID aus einer Spiel-URL (".../spiel/031DEIC2VC0000...") */
-export function fussballDeGameId(url?: string | null): string | null {
-  const m = (url || '').match(/\/spiel\/([A-Z0-9]{20,})/i);
-  return m ? m[1].toUpperCase() : null;
-}
 
 export interface KmhPlayer {
   id: string;
@@ -606,59 +589,21 @@ export interface KmhPlayer {
   category: string; // "Fußball" | "Handball" | "Funktionär" …
 }
 
-/** Spieler der KMH-Spielerübersicht + ihre anstehenden Spiele (player_games) laden.
- *  Spiele gibt es nur für Spieler mit fussball.de-Link; alle anderen werden in
- *  der Spiele-Übersicht über Verein + Altersklasse zugeordnet (buildKmhGameIndex). */
-export async function loadKmhPlayerGames(): Promise<{ players: KmhPlayer[]; games: KmhPlayerGame[] }> {
-  const today = new Date().toISOString().slice(0, 10);
-  const { data: players, error: pErr } = await supabase
+/** Spieler der KMH-Spielerübersicht laden (gleicher Filter wie dort) */
+export async function loadKmhPlayers(): Promise<KmhPlayer[]> {
+  const { data, error } = await supabase
     .from('player_details')
     .select('id, first_name, last_name, club, league, category')
     .or('provision_only.is.null,provision_only.eq.false')
     .limit(1000);
-  if (pErr) { console.error('player_details laden fehlgeschlagen:', pErr); return { players: [], games: [] }; }
-  const names = new Map<string, string>();
-  const clubs = new Map<string, string>();
-  const list: KmhPlayer[] = [];
-  for (const p of (players || []) as any[]) {
-    const name = `${p.first_name || ''} ${p.last_name || ''}`.trim();
-    names.set(p.id, name);
-    clubs.set(p.id, clubBase(p.club || ''));
-    list.push({ id: p.id, name, club: p.club || '', league: p.league || '', category: p.category || '' });
-  }
-  if (names.size === 0) return { players: [], games: [] };
-  const { data: games, error: gErr } = await supabase
-    .from('player_games')
-    .select('player_id, player_name, date, home_team, away_team, game_url')
-    .in('player_id', Array.from(names.keys()))
-    .gte('date', today)
-    .eq('status', 'scheduled')
-    .order('date')
-    .limit(2000);
-  if (gErr) { console.error('player_games laden fehlgeschlagen:', gErr); return { players: list, games: [] }; }
-  const mapped = ((games || []) as any[]).map((g) => {
-    // Seite des Spielers: Verein aus der KMH-App gegen Heim/Gast abgleichen.
-    // Kein Treffer (Namensabweichung) -> Heim; im Zweifel steht der Name dann
-    // wenigstens am Spiel.
-    const club = clubs.get(g.player_id) || '';
-    const homeB = clubBase(g.home_team || '');
-    const awayB = clubBase(g.away_team || '');
-    let side: 'home' | 'away' = 'home';
-    if (club) {
-      const hit = (b: string) => b === club || b.includes(club) || club.includes(b);
-      if (!hit(homeB) && hit(awayB)) side = 'away';
-    }
-    return {
-      playerId: g.player_id,
-      playerName: names.get(g.player_id) || g.player_name || '',
-      date: g.date,
-      homeTeam: g.home_team || '',
-      awayTeam: g.away_team || '',
-      gameUrl: g.game_url || null,
-      playerSide: side,
-    };
-  });
-  return { players: list, games: mapped };
+  if (error) { console.error('player_details laden fehlgeschlagen:', error); return []; }
+  return ((data || []) as any[]).map((p) => ({
+    id: p.id,
+    name: `${p.first_name || ''} ${p.last_name || ''}`.trim(),
+    club: p.club || '',
+    league: p.league || '',
+    category: p.category || '',
+  }));
 }
 
 /** Altersklasse aus Verein/Liga der Spielerübersicht ("U19", sonst "Herren"; U20+ = Herren) */
@@ -679,20 +624,11 @@ export function kmhClubKey(teamName: string, age: string): string {
   return `${age}|${kmhIsSecond(teamName) ? 1 : 0}|${base}`;
 }
 
-/** Nachschlagewerk für die Spiele-Übersicht: fussball.de-Spiel-ID bzw.
- *  "datum|heim|gast" (normalisierte Vereinsbasis) -> Spieler je Seite. */
-export interface KmhGamePlayers { home: string[]; away: string[] }
-export type KmhGameIndex = {
-  byGameId: Map<string, KmhGamePlayers>;
-  byKey: Map<string, KmhGamePlayers>;
-  /** kmhClubKey(Verein, Altersklasse) -> Spielernamen (für Spieler ohne fussball.de-Sync) */
-  byClub: Map<string, string[]>;
-};
+/** kmhClubKey(Verein, Altersklasse) -> Spielernamen */
+export type KmhClubIndex = Map<string, string[]>;
 
-export function buildKmhGameIndex(players: KmhPlayer[], games: KmhPlayerGame[]): KmhGameIndex {
-  const byGameId = new Map<string, KmhGamePlayers>();
-  const byKey = new Map<string, KmhGamePlayers>();
-  const byClub = new Map<string, string[]>();
+export function buildKmhClubIndex(players: KmhPlayer[]): KmhClubIndex {
+  const byClub: KmhClubIndex = new Map();
   for (const p of players) {
     if (!p.name || !p.club || /vereinslos/i.test(p.club)) continue;
     // Nur Fußballer aus dem Männer-/Junioren-Bereich (Handball, Funktionäre, Frauen-Ligen
@@ -704,18 +640,5 @@ export function buildKmhGameIndex(players: KmhPlayer[], games: KmhPlayerGame[]):
     if (!cur.includes(p.name)) cur.push(p.name);
     byClub.set(key, cur);
   }
-  const add = (map: Map<string, KmhGamePlayers>, key: string, side: 'home' | 'away', name: string) => {
-    const cur = map.get(key) || { home: [], away: [] };
-    if (!cur[side].includes(name)) cur[side].push(name);
-    map.set(key, cur);
-  };
-  for (const g of games) {
-    if (!g.playerName) continue;
-    const gid = fussballDeGameId(g.gameUrl);
-    const key = `${g.date}|${clubBase(g.homeTeam)}|${clubBase(g.awayTeam)}`;
-    const side = g.playerSide;
-    if (gid) add(byGameId, gid, side, g.playerName);
-    add(byKey, key, side, g.playerName);
-  }
-  return { byGameId, byKey, byClub };
+  return byClub;
 }
