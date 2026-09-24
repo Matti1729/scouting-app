@@ -152,7 +152,9 @@ export function clubBase(name: string): string {
     .replace(/\b\d{2,4}\b/g, '')
     .replace(/[().]/g, ' ')
     .replace(/\s+/g, ' ')
-    .trim();
+    .trim()
+    // Abkürzungen mit Punkten ("U.S.I.", "F.C.") zerfallen zu Einzelbuchstaben → wieder zusammenziehen
+    .replace(/\b(?:[a-zäöü] )+[a-zäöü]\b/g, (m) => m.replace(/ /g, ''));
 }
 
 /**
@@ -392,7 +394,7 @@ export function clubLogoUriFor(map: Map<string, string>, teamName: string): stri
 // On-Demand-Wappen: Vereine außerhalb unserer Ligen (Amateure usw.) einmalig
 // über die TM-Schnellsuche auflösen; Ergebnis dauerhaft im localStorage cachen.
 // ---------------------------------------------------------------------------
-const CLUB_RESOLVE_CACHE_KEY = 'tm_club_resolve_v7'; // v7: Schlüssel mit Gründungszahl
+const CLUB_RESOLVE_CACHE_KEY = 'tm_club_resolve_v8'; // v8: Kürzel-Zusammenzug (U.S.I.), alte "none" neu
 let resolveCache: Record<string, string> | null = null; // clubBase -> tm_club_id | 'none'
 const pendingResolve = new Map<string, Promise<string | null>>();
 let resolveChain: Promise<unknown> = Promise.resolve();
@@ -456,6 +458,8 @@ export function resolveClubLogoUri(teamName: string): Promise<string | null> {
       if (core && core.length >= 5 && core !== b) candidates.push(core);
       const parts = b.split(' ');
       if (parts.length >= 3) candidates.push(parts.slice(0, -1).join(' '));
+      // Unbekanntes Kürzel vorne weglassen ("USI Lupo Martini" → "Lupo Martini")
+      if (parts.length >= 3 && parts[0].length <= 4) candidates.push(parts.slice(1).join(' '));
       let club: any = null;
       for (const q of candidates) {
         const found = await search(q);
