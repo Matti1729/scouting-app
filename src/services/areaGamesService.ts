@@ -614,9 +614,11 @@ function kmhAge(club: string, league: string): string {
   }
   return 'Herren';
 }
-/** Zweite Mannschaft? ("II", "U23", "U21") — Profis und Reserve nicht vermischen */
+/** Zweite/dritte Mannschaft? ("II", "III", "U23", "U21", fussball.de auch "1. FC Nürnberg 2",
+ *  "… 3", "… 1.Hr") — Profis und Reserve nicht vermischen */
 function kmhIsSecond(club: string): boolean {
-  return /\b(II|U[\s-]?2[0-9])\b/i.test(club);
+  const c = (club || '').replace(/\s*\([^)]*\)/g, '').trim();
+  return /\b(II|III|U[\s-]?2[0-9])\b/i.test(c) || /\s[23]$/.test(c);
 }
 /** Schlüssel für den Vereins-Abgleich: Altersklasse | Reserve-Flag | Vereinsbasis */
 export function kmhClubKey(teamName: string, age: string): string {
