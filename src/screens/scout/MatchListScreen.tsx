@@ -52,6 +52,11 @@ import {
   clubBaseQuery,
   clubLogoUriFor,
   AreaLeague,
+  loadKmhPlayerGames,
+  buildKmhGameIndex,
+  fussballDeGameId,
+  KmhGameIndex,
+  KmhGamePlayers,
 } from '../../services/areaGamesService';
 import { GamesMapView, GameMapFeature } from '../../components/GamesMapView';
 import { Image } from 'react-native';
@@ -314,6 +319,17 @@ const isEventFinished = (startDate: string, endDate: string | null): boolean => 
 
 // Automatisch gesyncter DFB-Termin (Länderspiel/Lehrgang)? Diese liegen in der
 // eigenen Tabelle, zählen aber erst mit attending = true zu "Meine Spiele".
+// Tag "einer unserer Spieler" (KMH-Dunkelgrün auf hellem Grün, Retro-Kante)
+const KMH_TAG = { bg: '#dff3e4', border: '#1f6b35', text: '#0f3d2a' };
+const KmhPlayerTag = ({ name }: { name: string }) => (
+  <View style={{
+    backgroundColor: KMH_TAG.bg, borderWidth: 1.5, borderColor: KMH_TAG.border, borderRadius: 3,
+    paddingHorizontal: 6, paddingVertical: 2, marginLeft: 2,
+  }}>
+    <Text style={{ fontSize: 11, fontWeight: '600', color: KMH_TAG.text }} numberOfLines={1}>{name}</Text>
+  </View>
+);
+
 const isDfbSynced = (m: Match): boolean =>
   m.source === 'dfb' || m.art === 'Nationalmannschaft' || m.art === 'Hallenturnier';
 
@@ -525,6 +541,33 @@ export function MatchListScreen({ navigation, route }: any) {
     loadClubLogoMap().then(setClubLogoMap).catch(() => {});
   }, []);
   const clubLogoUri = (teamName: string): string | null => clubLogoUriFor(clubLogoMap, teamName);
+  // Spiele unserer eigenen Spieler (KMH-App, player_games): Name als Tag am Verein
+  const [kmhIndex, setKmhIndex] = useState<KmhGameIndex>({ byGameId: new Map(), byKey: new Map() });
+  useEffect(() => {
+    loadKmhPlayerGames().then((games) => setKmhIndex(buildKmhGameIndex(games))).catch(() => {});
+  }, []);
+  const EMPTY_KMH: KmhGamePlayers = { home: [], away: [] };
+  /** Eigene Spieler in diesem Spiel: erst über die fussball.de-Spiel-ID,
+   *  sonst über Datum + Heim/Gast (normalisierte Vereinsbasis). */
+  const kmhPlayersFor = (m: Match): KmhGamePlayers => {
+    const gid = fussballDeGameId(m.fussballDeUrl);
+    if (gid) {
+      const hit = kmhIndex.byGameId.get(gid);
+      if (hit) return hit;
+    }
+    if (kmhIndex.byKey.size === 0) return EMPTY_KMH;
+    const d = parseDateString(m.datum);
+    if (!d) return EMPTY_KMH;
+    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    for (const spiel of [m.spielRaw, m.spiel]) {
+      if (!spiel) continue;
+      const [home, ...rest] = spiel.split(' - ');
+      if (!rest.length) continue;
+      const hit = kmhIndex.byKey.get(`${iso}|${clubBase(home)}|${clubBase(rest.join(' - '))}`);
+      if (hit) return hit;
+    }
+    return EMPTY_KMH;
+  };
   // Detail-Modal für Umgebungs-Spiele (+ "Zu Meine Spiele hinzufügen")
   const [areaDetail, setAreaDetail] = useState<Match | null>(null);
 
@@ -2621,6 +2664,8 @@ export function MatchListScreen({ navigation, route }: any) {
   // gemeinsamer Renderer für Desktop-Liste und mobile Ansicht
   const renderGameRow = ({ item }: { item: Match }) => {
     const isToday = isEventActive(item.datum, item.datumEnde);
+    const kmh = kmhPlayersFor(item);
+    const hasKmh = kmh.home.length > 0 || kmh.away.length > 0;
     return (
                     <TouchableOpacity
                       onPress={() => (viewTab === 'archiv' && !item.isAreaGame ? handleMatchPress(item) : setAreaDetail(item))}
@@ -2639,6 +2684,8 @@ export function MatchListScreen({ navigation, route }: any) {
                         alignItems: 'center', justifyContent: 'center',
                         paddingVertical: 8, paddingHorizontal: 4,
                         borderRightWidth: 1, borderRightColor: RETRO.rowBorder,
+                        // Dunkelgrüner Strich = einer unserer Spieler spielt hier
+                        borderLeftWidth: hasKmh ? 4 : 0, borderLeftColor: KMH_TAG.border,
                       }}>
                         {item.source === 'dfb' && item.datumEnde && item.datumEnde !== item.datum ? (
                           // Mehrtägiger DFB-Termin (Lehrgang/Turnier): Beginn / bis / Ende
@@ -2694,6 +2741,7 @@ export function MatchListScreen({ navigation, route }: any) {
                                   <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
                                     {home}
                                   </Text>
+                                  {!isMobile && kmh.home.map((n) => <KmhPlayerTag key={n} name={n} />)}
                                 </View>
                                 {away ? (
                                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
@@ -2701,6 +2749,13 @@ export function MatchListScreen({ navigation, route }: any) {
                                     <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
                                       {away}
                                     </Text>
+                                    {!isMobile && kmh.away.map((n) => <KmhPlayerTag key={n} name={n} />)}
+                                  </View>
+                                ) : null}
+                                {/* Mobil: Tags in eigener Zeile unter den Vereinen (Spalte zu schmal) */}
+                                {isMobile && hasKmh ? (
+                                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
+                                    {[...kmh.home, ...kmh.away].map((n) => <KmhPlayerTag key={n} name={n} />)}
                                   </View>
                                 ) : null}
                               </View>

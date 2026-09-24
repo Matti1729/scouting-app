@@ -574,3 +574,99 @@ export function areaArt(g: AreaGame): string {
   if (/turnier|cup/i.test(w)) return 'Turnier';
   return 'Punktspiel';
 }
+
+// ---------------------------------------------------------------------------
+// Spiele unserer eigenen Spieler (KMH-App). Die KMH-Seite synct täglich die
+// fussball.de-Spielpläne jedes Spielers nach player_games; wir lesen nur.
+// Spielerkreis = Spielerübersicht der KMH-App (provision_only ausgenommen).
+// ---------------------------------------------------------------------------
+
+export interface KmhPlayerGame {
+  playerId: string;
+  playerName: string;
+  date: string; // ISO "YYYY-MM-DD"
+  homeTeam: string;
+  awayTeam: string;
+  gameUrl: string | null;
+  // Seite, auf der der Spieler steht (Abgleich Verein aus der KMH-App ↔ Heim/Gast)
+  playerSide: 'home' | 'away';
+}
+
+/** fussball.de-Spiel-ID aus einer Spiel-URL (".../spiel/031DEIC2VC0000...") */
+export function fussballDeGameId(url?: string | null): string | null {
+  const m = (url || '').match(/\/spiel\/([A-Z0-9]{20,})/i);
+  return m ? m[1].toUpperCase() : null;
+}
+
+/** Anstehende Spiele aller Spieler aus der KMH-Spielerübersicht laden */
+export async function loadKmhPlayerGames(): Promise<KmhPlayerGame[]> {
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: players, error: pErr } = await supabase
+    .from('player_details')
+    .select('id, first_name, last_name, club')
+    .or('provision_only.is.null,provision_only.eq.false')
+    .limit(1000);
+  if (pErr) { console.error('player_details laden fehlgeschlagen:', pErr); return []; }
+  const names = new Map<string, string>();
+  const clubs = new Map<string, string>();
+  for (const p of (players || []) as any[]) {
+    names.set(p.id, `${p.first_name || ''} ${p.last_name || ''}`.trim());
+    clubs.set(p.id, clubBase(p.club || ''));
+  }
+  if (names.size === 0) return [];
+  const { data: games, error: gErr } = await supabase
+    .from('player_games')
+    .select('player_id, player_name, date, home_team, away_team, game_url')
+    .in('player_id', Array.from(names.keys()))
+    .gte('date', today)
+    .eq('status', 'scheduled')
+    .order('date')
+    .limit(2000);
+  if (gErr) { console.error('player_games laden fehlgeschlagen:', gErr); return []; }
+  return ((games || []) as any[]).map((g) => {
+    // Seite des Spielers: Verein aus der KMH-App gegen Heim/Gast abgleichen.
+    // Kein Treffer (Namensabweichung) -> Heim; im Zweifel steht der Name dann
+    // wenigstens am Spiel.
+    const club = clubs.get(g.player_id) || '';
+    const homeB = clubBase(g.home_team || '');
+    const awayB = clubBase(g.away_team || '');
+    let side: 'home' | 'away' = 'home';
+    if (club) {
+      const hit = (b: string) => b === club || b.includes(club) || club.includes(b);
+      if (!hit(homeB) && hit(awayB)) side = 'away';
+    }
+    return {
+      playerId: g.player_id,
+      playerName: names.get(g.player_id) || g.player_name || '',
+      date: g.date,
+      homeTeam: g.home_team || '',
+      awayTeam: g.away_team || '',
+      gameUrl: g.game_url || null,
+      playerSide: side,
+    };
+  });
+}
+
+/** Nachschlagewerk für die Spiele-Übersicht: fussball.de-Spiel-ID bzw.
+ *  "datum|heim|gast" (normalisierte Vereinsbasis) -> Spieler je Seite. */
+export interface KmhGamePlayers { home: string[]; away: string[] }
+export type KmhGameIndex = { byGameId: Map<string, KmhGamePlayers>; byKey: Map<string, KmhGamePlayers> };
+
+export function buildKmhGameIndex(games: KmhPlayerGame[]): KmhGameIndex {
+  const byGameId = new Map<string, KmhGamePlayers>();
+  const byKey = new Map<string, KmhGamePlayers>();
+  const add = (map: Map<string, KmhGamePlayers>, key: string, side: 'home' | 'away', name: string) => {
+    const cur = map.get(key) || { home: [], away: [] };
+    if (!cur[side].includes(name)) cur[side].push(name);
+    map.set(key, cur);
+  };
+  for (const g of games) {
+    if (!g.playerName) continue;
+    const gid = fussballDeGameId(g.gameUrl);
+    const key = `${g.date}|${clubBase(g.homeTeam)}|${clubBase(g.awayTeam)}`;
+    const side = g.playerSide;
+    if (gid) add(byGameId, gid, side, g.playerName);
+    add(byKey, key, side, g.playerName);
+  }
+  return { byGameId, byKey };
+}
