@@ -91,6 +91,8 @@ import {
 } from '../../services/matchChangeService';
 import { Ionicons } from '@expo/vector-icons';
 import { loadBeraterStatusForLineup, BeraterStatusResult, loadReportCountsForLineup, isPlaceholderName } from '../../services/beraterService';
+import { PlayerDetailModal } from '../../components/PlayerDetailModal';
+import { fetchSearchPlayer, StipendiumSearchPlayer, ageFromBirthDate } from '../../services/stipendiumService';
 import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
@@ -1386,6 +1388,34 @@ export function MatchListScreen({ navigation, route }: any) {
 
   // DFB-Kaderliste (wie auf dfb.de: Funktion · Name · Geburtstag · Verein · Spiele · Tore)
   const [kaderView, setKaderView] = useState<{ match: Match; rows: DbLineup[]; loading: boolean } | null>(null);
+  // Spielerprofil (geteiltes Retro-Modal wie Watchlist/Dashboard) aus der Kaderliste
+  const [kaderDetailPlayer, setKaderDetailPlayer] = useState<StipendiumSearchPlayer | null>(null);
+  const openKaderPlayer = async (r: DbLineup) => {
+    const fullName = [r.vorname, r.name].filter(Boolean).join(' ');
+    const tmId = (r.transfermarkt_url || '').match(/\/spieler\/(\d+)/)?.[1] || null;
+    const sp = await fetchSearchPlayer(tmId, fullName);
+    // Geburtsdatum aus dem DFB-Kader ist ISO → "DD.MM.YYYY"
+    const iso = (r.birth_date || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+    const birth = iso ? `${iso[3]}.${iso[2]}.${iso[1]}` : (r.birth_date || null);
+    setKaderDetailPlayer(sp || {
+      id: r.id,
+      player_name: fullName,
+      birth_date: birth,
+      age: ageFromBirthDate(birth),
+      position: r.is_goalkeeper ? 'TW' : (r.position || null),
+      current_agent_name: /^kein berater/i.test(r.agent_name || '') ? null : (r.agent_name || null),
+      current_agent_company: r.agent_company || null,
+      agent_url: null,
+      tm_player_id: tmId,
+      tm_profile_url: r.transfermarkt_url || null,
+      market_value: null,
+      contract_until: null,
+      is_vereinslos: false,
+      club_name: r.club || null,
+      club_tm_id: null,
+      league_name: null,
+    });
+  };
   const dfbGermanySide = (m: Match): 'home' | 'away' => {
     const [home] = (m.spiel || '').split(' - ');
     return /deutschland/i.test(home || '') || !(m.spiel || '').includes(' - ') ? 'home' : 'away';
@@ -3278,7 +3308,7 @@ export function MatchListScreen({ navigation, route }: any) {
             {list.map((r) => (
               <View key={r.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 7, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder, gap: 8 }}>
                 <View style={{ flex: 2.2, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <TouchableOpacity style={{ flexShrink: 1 }} onPress={() => void handleOpenPlayerProfile(dbLineupToPlayer(r))} hitSlop={4}>
+                  <TouchableOpacity style={{ flexShrink: 1 }} onPress={() => void openKaderPlayer(r)} hitSlop={4}>
                     <Text numberOfLines={1} style={{ fontSize: isMobile ? 12 : 13, color: RETRO.text, fontWeight: '600' }}>{[r.vorname, r.name].filter(Boolean).join(' ')}</Text>
                   </TouchableOpacity>
                   {r.transfermarkt_url ? (
@@ -4181,6 +4211,38 @@ export function MatchListScreen({ navigation, route }: any) {
         </View>
       </Modal>
 
+      {/* Spielerprofil aus der DFB-Kaderliste (geteiltes Modal) — mountet zuletzt, liegt über Popup + Kader */}
+      {kaderDetailPlayer && (
+        <PlayerDetailModal
+          player={kaderDetailPlayer}
+          onClose={() => setKaderDetailPlayer(null)}
+          onCreateReport={(navParams) => {
+            setKaderDetailPlayer(null);
+            setKaderView(null);
+            setAreaDetail(null);
+            (navigation as any).navigate('PlayerEvaluation', navParams);
+          }}
+          onOpenEvaluation={(ev) => {
+            setKaderDetailPlayer(null);
+            setKaderView(null);
+            setAreaDetail(null);
+            (navigation as any).navigate('PlayerEvaluation', {
+              evaluationId: ev.id,
+              matchId: ev.match_id,
+              matchName: ev.match_name,
+              matchDate: ev.match_date,
+              mannschaft: ev.age_group,
+              playerName: `${ev.last_name || ''}, ${ev.first_name || ''}`,
+              playerNumber: ev.jersey_number,
+              playerPosition: ev.positions?.split(', ')[0] || null,
+              playerBirthDate: ev.birth_date,
+              agentName: ev.agent_name,
+              transfermarktUrl: ev.transfermarkt_url,
+              beraterPlayerId: kaderDetailPlayer.id,
+            });
+          }}
+        />
+      )}
       {/* Spielerprofil Modal — erst beim Öffnen mounten, damit es über Termin-Popup und Kader liegt */}
       {playerProfileModalVisible && (
       <Modal
