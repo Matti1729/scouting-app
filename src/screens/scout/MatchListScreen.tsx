@@ -3307,16 +3307,9 @@ export function MatchListScreen({ navigation, route }: any) {
             </View>
             {list.map((r) => (
               <View key={r.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 7, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder, gap: 8 }}>
-                <View style={{ flex: 2.2, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <TouchableOpacity style={{ flexShrink: 1 }} onPress={() => void openKaderPlayer(r)} hitSlop={4}>
-                    <Text numberOfLines={1} style={{ fontSize: isMobile ? 12 : 13, color: RETRO.text, fontWeight: '600' }}>{[r.vorname, r.name].filter(Boolean).join(' ')}</Text>
-                  </TouchableOpacity>
-                  {r.transfermarkt_url ? (
-                    <TouchableOpacity onPress={() => Linking.openURL(r.transfermarkt_url!)} hitSlop={6}>
-                      <Image source={require('../../../assets/tm-icon.png')} style={{ width: 16, height: 16, borderRadius: 3 }} />
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
+                <TouchableOpacity style={{ flex: 2.2 }} onPress={() => void openKaderPlayer(r)} hitSlop={4}>
+                  <Text numberOfLines={1} style={{ fontSize: isMobile ? 12 : 13, color: RETRO.text, fontWeight: '600' }}>{[r.vorname, r.name].filter(Boolean).join(' ')}</Text>
+                </TouchableOpacity>
                 {!isMobile && cell(fmtBirth(r.birth_date), 1.1)}
                 {cell(r.club || '—', 2)}
                 {cell(/^kein berater/i.test(r.agent_name || '') ? '—' : (r.agent_name || r.agent_company || '—'), 1.6)}
