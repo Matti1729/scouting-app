@@ -55,6 +55,7 @@ import {
   loadKmhPlayerGames,
   buildKmhGameIndex,
   fussballDeGameId,
+  kmhClubKey,
   KmhGameIndex,
   KmhGamePlayers,
 } from '../../services/areaGamesService';
@@ -542,31 +543,38 @@ export function MatchListScreen({ navigation, route }: any) {
   }, []);
   const clubLogoUri = (teamName: string): string | null => clubLogoUriFor(clubLogoMap, teamName);
   // Spiele unserer eigenen Spieler (KMH-App, player_games): Name als Tag am Verein
-  const [kmhIndex, setKmhIndex] = useState<KmhGameIndex>({ byGameId: new Map(), byKey: new Map() });
+  const [kmhIndex, setKmhIndex] = useState<KmhGameIndex>({ byGameId: new Map(), byKey: new Map(), byClub: new Map() });
   useEffect(() => {
-    loadKmhPlayerGames().then((games) => setKmhIndex(buildKmhGameIndex(games))).catch(() => {});
+    loadKmhPlayerGames().then(({ players, games }) => setKmhIndex(buildKmhGameIndex(players, games))).catch(() => {});
   }, []);
   const EMPTY_KMH: KmhGamePlayers = { home: [], away: [] };
-  /** Eigene Spieler in diesem Spiel: erst über die fussball.de-Spiel-ID,
-   *  sonst über Datum + Heim/Gast (normalisierte Vereinsbasis). */
+  /** Eigene Spieler in diesem Spiel — drei Wege, Ergebnis vereinigt:
+   *  1) fussball.de-Spiel-ID (player_games-Sync), 2) Datum + Heim/Gast,
+   *  3) Verein + Altersklasse aus der Spielerübersicht (auch ohne fussball.de-Link). */
   const kmhPlayersFor = (m: Match): KmhGamePlayers => {
+    if (kmhIndex.byKey.size === 0 && kmhIndex.byClub.size === 0) return EMPTY_KMH;
+    const home = new Set<string>();
+    const away = new Set<string>();
+    const merge = (hit?: KmhGamePlayers) => { hit?.home.forEach((n) => home.add(n)); hit?.away.forEach((n) => away.add(n)); };
     const gid = fussballDeGameId(m.fussballDeUrl);
-    if (gid) {
-      const hit = kmhIndex.byGameId.get(gid);
-      if (hit) return hit;
-    }
-    if (kmhIndex.byKey.size === 0) return EMPTY_KMH;
+    if (gid) merge(kmhIndex.byGameId.get(gid));
     const d = parseDateString(m.datum);
-    if (!d) return EMPTY_KMH;
-    const iso = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const iso = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '';
+    const isDfb = m.source === 'dfb';
     for (const spiel of [m.spielRaw, m.spiel]) {
       if (!spiel) continue;
-      const [home, ...rest] = spiel.split(' - ');
+      const [h, ...rest] = spiel.split(' - ');
       if (!rest.length) continue;
-      const hit = kmhIndex.byKey.get(`${iso}|${clubBase(home)}|${clubBase(rest.join(' - '))}`);
-      if (hit) return hit;
+      const a = rest.join(' - ');
+      if (iso) merge(kmhIndex.byKey.get(`${iso}|${clubBase(h)}|${clubBase(a)}`));
+      if (!isDfb) {
+        const age = m.mannschaft || 'Herren';
+        (kmhIndex.byClub.get(kmhClubKey(h, age)) || []).forEach((n) => home.add(n));
+        (kmhIndex.byClub.get(kmhClubKey(a, age)) || []).forEach((n) => away.add(n));
+      }
     }
-    return EMPTY_KMH;
+    if (!home.size && !away.size) return EMPTY_KMH;
+    return { home: Array.from(home), away: Array.from(away) };
   };
   // Detail-Modal für Umgebungs-Spiele (+ "Zu Meine Spiele hinzufügen")
   const [areaDetail, setAreaDetail] = useState<Match | null>(null);

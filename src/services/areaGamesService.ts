@@ -598,22 +598,35 @@ export function fussballDeGameId(url?: string | null): string | null {
   return m ? m[1].toUpperCase() : null;
 }
 
-/** Anstehende Spiele aller Spieler aus der KMH-Spielerübersicht laden */
-export async function loadKmhPlayerGames(): Promise<KmhPlayerGame[]> {
+export interface KmhPlayer {
+  id: string;
+  name: string;
+  club: string;   // Verein laut KMH-Spielerübersicht ("Dynamo Dresden U19", "SC Paderborn 07 II")
+  league: string; // Liga laut Spielerübersicht ("U16 Regionalliga", "Regionalliga Nordost")
+  category: string; // "Fußball" | "Handball" | "Funktionär" …
+}
+
+/** Spieler der KMH-Spielerübersicht + ihre anstehenden Spiele (player_games) laden.
+ *  Spiele gibt es nur für Spieler mit fussball.de-Link; alle anderen werden in
+ *  der Spiele-Übersicht über Verein + Altersklasse zugeordnet (buildKmhGameIndex). */
+export async function loadKmhPlayerGames(): Promise<{ players: KmhPlayer[]; games: KmhPlayerGame[] }> {
   const today = new Date().toISOString().slice(0, 10);
   const { data: players, error: pErr } = await supabase
     .from('player_details')
-    .select('id, first_name, last_name, club')
+    .select('id, first_name, last_name, club, league, category')
     .or('provision_only.is.null,provision_only.eq.false')
     .limit(1000);
-  if (pErr) { console.error('player_details laden fehlgeschlagen:', pErr); return []; }
+  if (pErr) { console.error('player_details laden fehlgeschlagen:', pErr); return { players: [], games: [] }; }
   const names = new Map<string, string>();
   const clubs = new Map<string, string>();
+  const list: KmhPlayer[] = [];
   for (const p of (players || []) as any[]) {
-    names.set(p.id, `${p.first_name || ''} ${p.last_name || ''}`.trim());
+    const name = `${p.first_name || ''} ${p.last_name || ''}`.trim();
+    names.set(p.id, name);
     clubs.set(p.id, clubBase(p.club || ''));
+    list.push({ id: p.id, name, club: p.club || '', league: p.league || '', category: p.category || '' });
   }
-  if (names.size === 0) return [];
+  if (names.size === 0) return { players: [], games: [] };
   const { data: games, error: gErr } = await supabase
     .from('player_games')
     .select('player_id, player_name, date, home_team, away_team, game_url')
@@ -622,8 +635,8 @@ export async function loadKmhPlayerGames(): Promise<KmhPlayerGame[]> {
     .eq('status', 'scheduled')
     .order('date')
     .limit(2000);
-  if (gErr) { console.error('player_games laden fehlgeschlagen:', gErr); return []; }
-  return ((games || []) as any[]).map((g) => {
+  if (gErr) { console.error('player_games laden fehlgeschlagen:', gErr); return { players: list, games: [] }; }
+  const mapped = ((games || []) as any[]).map((g) => {
     // Seite des Spielers: Verein aus der KMH-App gegen Heim/Gast abgleichen.
     // Kein Treffer (Namensabweichung) -> Heim; im Zweifel steht der Name dann
     // wenigstens am Spiel.
@@ -645,16 +658,52 @@ export async function loadKmhPlayerGames(): Promise<KmhPlayerGame[]> {
       playerSide: side,
     };
   });
+  return { players: list, games: mapped };
+}
+
+/** Altersklasse aus Verein/Liga der Spielerübersicht ("U19", sonst "Herren"; U20+ = Herren) */
+function kmhAge(club: string, league: string): string {
+  for (const src of [club, league]) {
+    const m = src.match(/\bU[\s-]?(\d{2})\b/i);
+    if (m) return parseInt(m[1], 10) >= 20 ? 'Herren' : 'U' + m[1];
+  }
+  return 'Herren';
+}
+/** Zweite Mannschaft? ("II", "U23", "U21") — Profis und Reserve nicht vermischen */
+function kmhIsSecond(club: string): boolean {
+  return /\b(II|U[\s-]?2[0-9])\b/i.test(club);
+}
+/** Schlüssel für den Vereins-Abgleich: Altersklasse | Reserve-Flag | Vereinsbasis */
+export function kmhClubKey(teamName: string, age: string): string {
+  const base = clubBase(teamName.replace(/\bJugend\b/gi, ''));
+  return `${age}|${kmhIsSecond(teamName) ? 1 : 0}|${base}`;
 }
 
 /** Nachschlagewerk für die Spiele-Übersicht: fussball.de-Spiel-ID bzw.
  *  "datum|heim|gast" (normalisierte Vereinsbasis) -> Spieler je Seite. */
 export interface KmhGamePlayers { home: string[]; away: string[] }
-export type KmhGameIndex = { byGameId: Map<string, KmhGamePlayers>; byKey: Map<string, KmhGamePlayers> };
+export type KmhGameIndex = {
+  byGameId: Map<string, KmhGamePlayers>;
+  byKey: Map<string, KmhGamePlayers>;
+  /** kmhClubKey(Verein, Altersklasse) -> Spielernamen (für Spieler ohne fussball.de-Sync) */
+  byClub: Map<string, string[]>;
+};
 
-export function buildKmhGameIndex(games: KmhPlayerGame[]): KmhGameIndex {
+export function buildKmhGameIndex(players: KmhPlayer[], games: KmhPlayerGame[]): KmhGameIndex {
   const byGameId = new Map<string, KmhGamePlayers>();
   const byKey = new Map<string, KmhGamePlayers>();
+  const byClub = new Map<string, string[]>();
+  for (const p of players) {
+    if (!p.name || !p.club || /vereinslos/i.test(p.club)) continue;
+    // Nur Fußballer aus dem Männer-/Junioren-Bereich (Handball, Funktionäre, Frauen-Ligen
+    // haben keine Spiele in dieser Übersicht und würden sonst falsch am Männer-Team hängen)
+    if (p.category && !/fu(ß|ss)ball/i.test(p.category)) continue;
+    if (/frauen|women|juniorinnen/i.test(`${p.club} ${p.league}`)) continue;
+    const key = kmhClubKey(p.club, kmhAge(p.club, p.league));
+    const cur = byClub.get(key) || [];
+    if (!cur.includes(p.name)) cur.push(p.name);
+    byClub.set(key, cur);
+  }
   const add = (map: Map<string, KmhGamePlayers>, key: string, side: 'home' | 'away', name: string) => {
     const cur = map.get(key) || { home: [], away: [] };
     if (!cur[side].includes(name)) cur[side].push(name);
@@ -668,5 +717,5 @@ export function buildKmhGameIndex(games: KmhPlayerGame[]): KmhGameIndex {
     if (gid) add(byGameId, gid, side, g.playerName);
     add(byKey, key, side, g.playerName);
   }
-  return { byGameId, byKey };
+  return { byGameId, byKey, byClub };
 }
