@@ -1722,18 +1722,20 @@ export function MatchListScreen({ navigation, route }: any) {
 
   // Von Spielerprofil zur Bewertung navigieren
   const handleEvaluateFromProfile = () => {
-    if (!selectedMatch || !selectedPlayerForProfile) return;
+    // Aus dem DFB-Kader-Modal geöffnet: Termin des Kaders verwenden
+    const evalMatch = selectedMatch ?? kaderView?.match ?? null;
+    if (!evalMatch || !selectedPlayerForProfile) return;
     setPlayerProfileModalVisible(false);
     setModalVisible(false);
-    setShouldReopenModal(true);
+    if (kaderView) { setKaderView(null); setAreaDetail(null); } else setShouldReopenModal(true);
     navigation.navigate('PlayerEvaluation', {
-      matchId: selectedMatch.id,
-      matchName: selectedMatch.spiel,
-      matchDate: selectedMatch.datum,
-      matchArt: selectedMatch.art,
-      matchZeit: selectedMatch.zeit,
-      fussballDeUrl: selectedMatch.fussballDeUrl,
-      mannschaft: selectedMatch.mannschaft,
+      matchId: evalMatch.id,
+      matchName: evalMatch.spiel,
+      matchDate: evalMatch.datum,
+      matchArt: evalMatch.art,
+      matchZeit: evalMatch.zeit,
+      fussballDeUrl: evalMatch.fussballDeUrl,
+      mannschaft: evalMatch.mannschaft,
       playerName: `${selectedPlayerForProfile.name}, ${selectedPlayerForProfile.vorname}`,
       playerNumber: selectedPlayerForProfile.nummer,
       playerPosition: selectedPlayerForProfile.isGoalkeeper ? 'TW' : selectedPlayerForProfile.position,
@@ -3276,7 +3278,9 @@ export function MatchListScreen({ navigation, route }: any) {
             {list.map((r) => (
               <View key={r.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 7, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder, gap: 8 }}>
                 <View style={{ flex: 2.2, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: isMobile ? 12 : 13, color: RETRO.text, fontWeight: '600' }}>{[r.vorname, r.name].filter(Boolean).join(' ')}</Text>
+                  <TouchableOpacity style={{ flexShrink: 1 }} onPress={() => void handleOpenPlayerProfile(dbLineupToPlayer(r))} hitSlop={4}>
+                    <Text numberOfLines={1} style={{ fontSize: isMobile ? 12 : 13, color: RETRO.text, fontWeight: '600' }}>{[r.vorname, r.name].filter(Boolean).join(' ')}</Text>
+                  </TouchableOpacity>
                   {r.transfermarkt_url ? (
                     <TouchableOpacity onPress={() => Linking.openURL(r.transfermarkt_url!)} hitSlop={6}>
                       <Image source={require('../../../assets/tm-icon.png')} style={{ width: 16, height: 16, borderRadius: 3 }} />
@@ -3305,6 +3309,14 @@ export function MatchListScreen({ navigation, route }: any) {
                   paddingVertical: 6, paddingHorizontal: 10, marginBottom: 10, gap: 8,
                 }]}>
                   <Text style={{ flex: 1, fontSize: 16, fontWeight: '700', color: RETRO.text }} numberOfLines={1}>{`Kader ${km.mannschaft} · ${km.spiel}`}</Text>
+                  {km.dfbUrl ? (
+                    <TouchableOpacity
+                      onPress={() => { if (Platform.OS === 'web') window.open(km.dfbUrl as string, '_blank'); else Linking.openURL(km.dfbUrl as string); }}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    >
+                      <Image source={require('../../../assets/dfb-logo.png')} style={{ width: 20, height: 20, borderWidth: 1, borderColor: RETRO.shadowDark }} />
+                    </TouchableOpacity>
+                  ) : null}
                   <TouchableOpacity onPress={() => setKaderView(null)} hitSlop={8}>
                     <Ionicons name="close" size={18} color={RETRO.text} />
                   </TouchableOpacity>
@@ -3330,16 +3342,6 @@ export function MatchListScreen({ navigation, route }: any) {
                     </>
                   )}
                 </ScrollView>
-                <View style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: 10, marginTop: 12 }}>
-                  {km.dfbUrl ? (
-                    <TouchableOpacity
-                      style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
-                      onPress={() => Linking.openURL(km.dfbUrl!)}
-                    >
-                      <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>dfb.de öffnen</Text>
-                    </TouchableOpacity>
-                  ) : null}
-                </View>
               </Pressable>
             </Pressable>
           </Modal>
@@ -4179,7 +4181,8 @@ export function MatchListScreen({ navigation, route }: any) {
         </View>
       </Modal>
 
-      {/* Spielerprofil Modal */}
+      {/* Spielerprofil Modal — erst beim Öffnen mounten, damit es über Termin-Popup und Kader liegt */}
+      {playerProfileModalVisible && (
       <Modal
         visible={playerProfileModalVisible}
         transparent
@@ -4328,6 +4331,7 @@ export function MatchListScreen({ navigation, route }: any) {
           </View>
         </View>
       </Modal>
+      )}
 
       {/* Aufstellungen laden - Quellenauswahl Modal */}
       <Modal
