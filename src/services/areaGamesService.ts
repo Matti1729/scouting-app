@@ -218,6 +218,25 @@ export function canonicalClubName(map: Map<string, string>, teamName: string): s
   return disp ? `${disp}${suffix}` : cleaned;
 }
 
+/** Vereins-Aliase (fussball.de-Schreibweise → Kurzform wie bei TM) */
+const CLUB_ALIASES: Array<[string, string]> = [['rasenballsport', 'rb']];
+
+/**
+ * Suchbegriff wie clubBase normalisieren, aber Aliase auch bei angefangenen
+ * Wörtern anwenden: "rasenball" → "rb", "rasenb leip" → "rb leip"
+ */
+export function clubBaseQuery(q: string): string {
+  const base = clubBase(q);
+  return base
+    .split(' ')
+    .map((tok) => {
+      if (tok.length < 3) return tok;
+      const alias = CLUB_ALIASES.find(([full]) => full.startsWith(tok));
+      return alias ? alias[1] : tok;
+    })
+    .join(' ');
+}
+
 /** "Heim - Gast" mit einheitlichen Vereinsnamen (Events ohne Gegner unverändert) */
 export function canonicalSpiel(map: Map<string, string>, spiel: string): string {
   if (!spiel) return spiel;

@@ -49,6 +49,7 @@ import {
   loadClubLogoMap,
   canonicalSpiel,
   clubBase,
+  clubBaseQuery,
   clubLogoUriFor,
   AreaLeague,
 } from '../../services/areaGamesService';
@@ -2212,7 +2213,7 @@ export function MatchListScreen({ navigation, route }: any) {
       return spiel === m.spiel ? m : { ...m, spiel, spielRaw: m.spiel };
     });
     const q = searchQuery.toLowerCase();
-    const qBase = clubBase(q);
+    const qBase = clubBaseQuery(q);
     const filtered = pool.filter(match => {
       const matchesSearch =
         searchQuery === '' ||
