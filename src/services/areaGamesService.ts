@@ -182,6 +182,50 @@ function clubCore(base: string): string {
     .trim();
 }
 
+/** Vereinsname aus berater_clubs als Anzeigename: ohne U-Label/II, "1.FC Köln" → "1. FC Köln" */
+function displayClubName(name: string): string {
+  return stripAge(name)
+    .replace(/\s+(II|III|U2\d)$/i, '')
+    .replace(/^(\d)\.(?=[A-ZÄÖÜ])/, '$1. ')
+    .trim();
+}
+
+/**
+ * Einheitlicher Vereinsname für die Anzeige (Matti 2026-09-24: ein Verein = ein Name,
+ * egal welche Mannschaft). fussball.de nennt die Teams je Altersklasse anders
+ * ("RB Leipzig" / "RasenBallsport Leipzig U16"); wir zeigen den Namen aus
+ * berater_clubs, "II" für zweite Mannschaften bleibt erhalten. Unbekannte Vereine
+ * (nicht in berater_clubs) bleiben wie bereinigt.
+ */
+export function canonicalClubName(map: Map<string, string>, teamName: string): string {
+  const cleaned = stripAge(teamName);
+  if (!cleaned) return cleaned;
+  // Zweite/dritte Mannschaft behalten ("FC Augsburg 2" / "VfL Wolfsburg II" → "… II")
+  const sm = cleaned.match(/\s+(II|III|2|3)$/);
+  const suffix = sm ? (sm[1] === 'III' || sm[1] === '3' ? ' III' : ' II') : '';
+  const b = clubBase(cleaned);
+  const pick = (key: string): string | undefined => {
+    const disp = map.get(`canon:${key}`);
+    if (!disp) return undefined;
+    const storedName = map.get(`name:${key}`);
+    return storedName && !clubNumbersCompatible(teamName, storedName) ? undefined : disp;
+  };
+  let disp = pick(b) || pick(`core:${clubCore(b)}`);
+  if (!disp && /ae|oe|ue/.test(b)) {
+    const u = b.replace(/ae/g, 'ä').replace(/oe/g, 'ö').replace(/ue/g, 'ü');
+    disp = pick(u) || pick(`core:${clubCore(u)}`);
+  }
+  return disp ? `${disp}${suffix}` : cleaned;
+}
+
+/** "Heim - Gast" mit einheitlichen Vereinsnamen (Events ohne Gegner unverändert) */
+export function canonicalSpiel(map: Map<string, string>, spiel: string): string {
+  if (!spiel) return spiel;
+  const parts = spiel.split(' - ');
+  if (parts.length !== 2) return canonicalClubName(map, spiel);
+  return `${canonicalClubName(map, parts[0])} - ${canonicalClubName(map, parts[1])}`;
+}
+
 /** Wappen-Lookup laden: normalisierte Vereins-Basis -> tm_club_id */
 export async function loadClubLogoMap(): Promise<Map<string, string>> {
   const { data } = await supabase
@@ -196,6 +240,14 @@ export async function loadClubLogoMap(): Promise<Map<string, string>> {
     if (!m.has(b)) { m.set(b, String(c.tm_club_id)); m.set(`name:${b}`, String(c.club_name)); }
     const core = clubCore(b);
     if (core && !m.has(`core:${core}`)) { m.set(`core:${core}`, String(c.tm_club_id)); m.set(`name:core:${core}`, String(c.club_name)); }
+    // Einheitlicher Anzeigename je Verein: kürzeste Variante ohne U-Label/II
+    // ("RB Leipzig" statt "RB Leipzig U19"; fussball.de "RasenBallsport Leipzig" → "RB Leipzig")
+    const disp = displayClubName(c.club_name);
+    for (const key of [`canon:${b}`, core ? `canon:core:${core}` : '']) {
+      if (!key) continue;
+      const cur = m.get(key);
+      if (!cur || disp.length < cur.length) m.set(key, disp);
+    }
   }
   return m;
 }

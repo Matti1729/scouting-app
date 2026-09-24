@@ -47,6 +47,8 @@ import {
   resolveGameVenue,
   saveGameVenue,
   loadClubLogoMap,
+  canonicalSpiel,
+  clubBase,
   clubLogoUriFor,
   AreaLeague,
 } from '../../services/areaGamesService';
@@ -138,6 +140,8 @@ interface Match {
   art: string;
   ort: string | null;
   selected?: boolean;
+  // Original-Partie (fussball.de-Namen), wenn `spiel` vereinheitlicht wurde
+  spielRaw?: string;
   fussballDeUrl?: string;
   ergebnis?: string;
   isArchived?: boolean;
@@ -2199,14 +2203,23 @@ export function MatchListScreen({ navigation, route }: any) {
   const filteredMatches = useMemo(() => {
     // Bereits als eigenes Event übernommene Umgebungs-Spiele ausblenden (kein Duplikat)
     const ownUrls = new Set(matches.map((m) => m.fussballDeUrl).filter(Boolean));
-    const pool = showArchive
+    const rawPool = showArchive
       ? matches
       : [...matches, ...areaMatches.filter((a) => !a.fussballDeUrl || !ownUrls.has(a.fussballDeUrl))];
+    // Vereinsnamen vereinheitlichen (RB Leipzig = RasenBallsport Leipzig); Original für die Suche behalten
+    const pool = rawPool.map((m) => {
+      const spiel = m.source === 'dfb' ? m.spiel : canonicalSpiel(clubLogoMap, m.spiel);
+      return spiel === m.spiel ? m : { ...m, spiel, spielRaw: m.spiel };
+    });
     const q = searchQuery.toLowerCase();
+    const qBase = clubBase(q);
     const filtered = pool.filter(match => {
       const matchesSearch =
         searchQuery === '' ||
         match.spiel.toLowerCase().includes(q) ||
+        (match.spielRaw && match.spielRaw.toLowerCase().includes(q)) ||
+        // Vereins-Basis vergleichen (Wortanfang): "Rasenballsport" → "rb" findet "RB Leipzig"
+        (qBase.length > 0 && (` ${clubBase(match.spiel)} `).includes(` ${qBase}`)) ||
         match.mannschaft.toLowerCase().includes(q) ||
         match.art.toLowerCase().includes(q) ||
         (match.ort && match.ort.toLowerCase().includes(q));
@@ -2236,7 +2249,7 @@ export function MatchListScreen({ navigation, route }: any) {
       return matchesSearch && matchesJahrgang && matchesArt && matchesDate && matchesArchiveFilter;
     });
     return getSortedMatches(filtered);
-  }, [matches, areaMatches, searchQuery, jahrgangFilter, artFilter, dateFilter, viewTab, sortField, sortDirection]);
+  }, [matches, areaMatches, searchQuery, jahrgangFilter, artFilter, dateFilter, viewTab, sortField, sortDirection, clubLogoMap]);
   // Zurück auf die erste Portion, wenn sich Filter/Tab/Sortierung ändern
   // (nicht bei jeder Neuberechnung der Liste, sonst springt sie beim Nachladen zurück)
   const listResetKey = [viewTab, searchQuery, jahrgangFilter.join(','), artFilter.join(','), dateFilter, sortField, sortDirection, filteredMatches.length].join('|');

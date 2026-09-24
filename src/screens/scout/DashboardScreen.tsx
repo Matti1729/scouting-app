@@ -24,7 +24,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { RootStackParamList } from '../../navigation/types';
 import { RETRO, HARD_SHADOW, HARD_SHADOW_LG, MONO } from '../../theme/retro';
 import { loadScanStatus, BeraterStats, loadWatchlist, WatchlistEntry, loadAllEvaluations, PlayerEvaluation, loadObservedPlayers, ObservedPlayer, loadUnseenAlerts, markAlertSeen, AgentAlertNotification, findAmbiguousMergeCandidates, AmbiguousMerge, mergeScoutedInto } from '../../services/beraterService';
-import { areaAge, areaArt, shortVenueName, stripAge, loadClubLogoMap, clubLogoUriFor } from '../../services/areaGamesService';
+import { areaAge, areaArt, shortVenueName, stripAge, loadClubLogoMap, clubLogoUriFor, canonicalClubName } from '../../services/areaGamesService';
 import { createMatch, deleteMatch } from '../../services/matchService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
 import { TeamLogo, CompactMatchTeams } from '../../components/ClubLogo';
@@ -570,14 +570,14 @@ export function DashboardScreen() {
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
                           <TeamLogo name={g.away || !g.isDfb ? g.home : 'Deutschland'} map={clubLogoMap} />
                           <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
-                            {g.home}
+                            {g.isDfb ? g.home : canonicalClubName(clubLogoMap, g.home)}
                           </Text>
                         </View>
                         {g.away ? (
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
                             <TeamLogo name={g.away} map={clubLogoMap} />
                             <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
-                              {g.away}
+                              {canonicalClubName(clubLogoMap, g.away)}
                             </Text>
                           </View>
                         ) : null}
