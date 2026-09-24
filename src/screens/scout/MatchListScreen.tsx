@@ -805,7 +805,7 @@ export function MatchListScreen({ navigation, route }: any) {
           id: p.id,
           name: p.name,
           vorname: p.vorname || undefined,
-          clubHint: p.team === 'home' ? homeTeam : awayTeam,
+          clubHint: p.club || (p.team === 'home' ? homeTeam : awayTeam),
           transfermarkt_url: p.transfermarkt_url,
           agent_name: p.agent_name,
           agent_company: p.agent_company,
@@ -865,7 +865,7 @@ export function MatchListScreen({ navigation, route }: any) {
             id: p.id,
             name: p.name,
             vorname: p.vorname || undefined,
-            clubHint: p.team === 'home' ? homeTeam : awayTeam,
+            clubHint: p.club || (p.team === 'home' ? homeTeam : awayTeam),
             transfermarkt_url: p.transfermarkt_url,
             agent_name: p.agent_name,
             agent_company: p.agent_company,
@@ -1399,6 +1399,15 @@ export function MatchListScreen({ navigation, route }: any) {
       .filter((r) => r.team === side || !!r.club)
       .sort((a, b) => (Number(!!b.is_goalkeeper) - Number(!!a.is_goalkeeper)) || (a.name || '').localeCompare(b.name || '', 'de'));
     setKaderView({ match: m, rows, loading: false });
+    // Transfermarkt-Profil + Berater nachziehen (Verein des Spielers als Suchhinweis), dann Liste aktualisieren
+    if (rows.some((r) => !isPlaceholderName(r.name) && (!r.transfermarkt_url || !r.agent_name))) {
+      await searchTransfermarktForLineup(m.id, 'Deutschland', '');
+      const again = await loadLineups(m.id);
+      if (again.success && again.data) {
+        const byId = new Map(again.data.map((r) => [r.id, r]));
+        setKaderView((cur) => cur && cur.match.id === m.id ? { ...cur, rows: cur.rows.map((r) => byId.get(r.id) || r) } : cur);
+      }
+    }
   };
   // DFB-Länderspiel: Aufstellung von der Datencenter-Spielseite holen, dann Scouting öffnen
   const [dfbLineupLoading, setDfbLineupLoading] = useState(false);
@@ -3117,6 +3126,14 @@ export function MatchListScreen({ navigation, route }: any) {
                 <View style={{ borderTopWidth: 1, borderTopColor: RETRO.rowBorder, marginTop: 14, paddingTop: 12 }}>
                   {added ? (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      {ownMatch && ownMatch.source === 'dfb' && (
+                        <TouchableOpacity
+                          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center', marginRight: 'auto' }]}
+                          onPress={() => void openKader(ownMatch)}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Kader</Text>
+                        </TouchableOpacity>
+                      )}
                       {!isPastGame && (
                       <TouchableOpacity
                         style={[HARD_SHADOW, {
@@ -3165,20 +3182,12 @@ export function MatchListScreen({ navigation, route }: any) {
                       )}
                       {/* DFB-Termin: Kaderliste (wie dfb.de) + Scouting (Spiel: Aufstellung von der DFB-Spielseite) */}
                       {ownMatch && ownMatch.source === 'dfb' && (
-                        <>
-                          <TouchableOpacity
-                            style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
-                            onPress={() => void openKader(ownMatch)}
-                          >
-                            <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Kader</Text>
-                          </TouchableOpacity>
-                          <TouchableOpacity
-                            style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
-                            onPress={() => void openDfbScouting(ownMatch)}
-                          >
-                            <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{ownMatch.spiel.includes(' - ') ? 'Aufstellung & Scouting' : 'Scouting'}</Text>
-                          </TouchableOpacity>
-                        </>
+                        <TouchableOpacity
+                          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                          onPress={() => void openDfbScouting(ownMatch)}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{ownMatch.spiel.includes(' - ') ? 'Aufstellung & Scouting' : 'Scouting'}</Text>
+                        </TouchableOpacity>
                       )}
                       {/* Aufstellung nur im "Meine Spiele"-Tab anbieten */}
                       {ownMatch && ownMatch.source !== 'dfb' && showArchive && (
@@ -3201,6 +3210,14 @@ export function MatchListScreen({ navigation, route }: any) {
                     </View>
                   ) : (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    {isDfb && (
+                      <TouchableOpacity
+                          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center', marginRight: 'auto' }]}
+                          onPress={() => void openKader(areaDetail)}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Kader</Text>
+                        </TouchableOpacity>
+                    )}
                     {!isPastGame && (
                     <TouchableOpacity
                       style={[HARD_SHADOW, {
@@ -3219,20 +3236,12 @@ export function MatchListScreen({ navigation, route }: any) {
                     )}
                     {/* DFB-Termin: Kaderliste + Scouting immer einsehbar, auch ohne "Meine Spiele" */}
                     {isDfb && (
-                      <>
-                        <TouchableOpacity
-                          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
-                          onPress={() => void openKader(areaDetail)}
-                        >
-                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Kader</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
-                          onPress={() => void openDfbScouting(areaDetail)}
-                        >
-                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{areaDetail.spiel.includes(' - ') ? 'Aufstellung & Scouting' : 'Scouting'}</Text>
-                        </TouchableOpacity>
-                      </>
+                      <TouchableOpacity
+                        style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                        onPress={() => void openDfbScouting(areaDetail)}
+                      >
+                        <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{areaDetail.spiel.includes(' - ') ? 'Aufstellung & Scouting' : 'Scouting'}</Text>
+                      </TouchableOpacity>
                     )}
                     </View>
                   )}
@@ -3266,11 +3275,17 @@ export function MatchListScreen({ navigation, route }: any) {
             </View>
             {list.map((r) => (
               <View key={r.id} style={{ flexDirection: 'row', alignItems: 'center', paddingVertical: 7, paddingHorizontal: 8, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder, gap: 8 }}>
-                {cell([r.vorname, r.name].filter(Boolean).join(' '), 2.2, true)}
+                <View style={{ flex: 2.2, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                  <Text numberOfLines={1} style={{ flexShrink: 1, fontSize: isMobile ? 12 : 13, color: RETRO.text, fontWeight: '600' }}>{[r.vorname, r.name].filter(Boolean).join(' ')}</Text>
+                  {r.transfermarkt_url ? (
+                    <TouchableOpacity onPress={() => Linking.openURL(r.transfermarkt_url!)} hitSlop={6}>
+                      <Image source={require('../../../assets/tm-icon.png')} style={{ width: 16, height: 16, borderRadius: 3 }} />
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
                 {!isMobile && cell(fmtBirth(r.birth_date), 1.1)}
                 {cell(r.club || '—', 2)}
-                {cell(r.dfb_games != null ? String(r.dfb_games) : '—', 0.6, false, 'right')}
-                {cell(r.dfb_goals != null ? String(r.dfb_goals) : '—', 0.6, false, 'right')}
+                {cell(/^kein berater/i.test(r.agent_name || '') ? '—' : (r.agent_name || r.agent_company || '—'), 1.6)}
               </View>
             ))}
           </View>
@@ -3301,8 +3316,7 @@ export function MatchListScreen({ navigation, route }: any) {
                   {headCell('Name', 2.2)}
                   {!isMobile && headCell('Geburtstag', 1.1)}
                   {headCell('Verein', 2)}
-                  {headCell('Spiele', 0.6, 'right')}
-                  {headCell('Tore', 0.6, 'right')}
+                  {headCell('Berater', 1.6)}
                 </View>
                 <ScrollView style={{ flexGrow: 0 }}>
                   {loading ? (
