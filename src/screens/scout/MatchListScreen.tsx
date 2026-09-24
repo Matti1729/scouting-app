@@ -3339,12 +3339,6 @@ export function MatchListScreen({ navigation, route }: any) {
                       <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>dfb.de öffnen</Text>
                     </TouchableOpacity>
                   ) : null}
-                  <TouchableOpacity
-                    style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
-                    onPress={() => { setKaderView(null); void openDfbScouting(km); }}
-                  >
-                    <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{km.spiel.includes(' - ') ? 'Aufstellung & Scouting' : 'Scouting'}</Text>
-                  </TouchableOpacity>
                 </View>
               </Pressable>
             </Pressable>
