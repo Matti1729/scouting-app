@@ -27,6 +27,7 @@ export interface AreaGame {
   home_name: string;
   away_name: string;
   home_team_id: string | null;
+  away_team_id?: string | null;
   wettbewerb: string | null;
   game_url: string | null;
   lat: number | null;
@@ -50,7 +51,7 @@ export async function loadAreaData(): Promise<{ leagues: AreaLeague[]; clubs: Ar
       .limit(3000),
     supabase
       .from('area_games')
-      .select('league_key, match_key, kickoff_date, kickoff_time, home_name, away_name, home_team_id, wettbewerb, game_url, lat, lng, venue, venue_address')
+      .select('league_key, match_key, kickoff_date, kickoff_time, home_name, away_name, home_team_id, away_team_id, wettbewerb, game_url, lat, lng, venue, venue_address')
       .gte('kickoff_date', today)
       .order('kickoff_date')
       .limit(2000),
@@ -394,7 +395,40 @@ export function clubLogoUriFor(map: Map<string, string>, teamName: string): stri
 // On-Demand-Wappen: Vereine außerhalb unserer Ligen (Amateure usw.) einmalig
 // über die TM-Schnellsuche auflösen; Ergebnis dauerhaft im localStorage cachen.
 // ---------------------------------------------------------------------------
-const CLUB_RESOLVE_CACHE_KEY = 'tm_club_resolve_v8'; // v8: Kürzel-Zusammenzug (U.S.I.), alte "none" neu
+const CLUB_RESOLVE_CACHE_KEY = 'tm_club_resolve_v10'; // v10: Gründungszahl in der Suche, Teilstring-Treffer nur mit Zahl/2 Tokens
+
+// fussball.de-Vereinsdaten je team-id (Edge Function fussballde-club), dauerhaft gecacht
+const FDE_CLUB_CACHE_KEY = 'fde_club_v1';
+interface FdeClubInfo { teamName: string | null; clubName: string | null; city: string | null; founded: string | null }
+async function fetchFdeClubInfo(teamId: string): Promise<FdeClubInfo | null> {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(FDE_CLUB_CACHE_KEY) : null;
+    const cache: Record<string, FdeClubInfo> = raw ? JSON.parse(raw) : {};
+    if (cache[teamId]) return cache[teamId];
+    const { data } = await supabase.functions.invoke('fussballde-club', { body: { teamId } });
+    if (!(data as any)?.success) return null;
+    const info: FdeClubInfo = {
+      teamName: (data as any).teamName || null,
+      clubName: (data as any).clubName || null,
+      city: (data as any).city || null,
+      founded: (data as any).founded || null,
+    };
+    cache[teamId] = info;
+    try { localStorage.setItem(FDE_CLUB_CACHE_KEY, JSON.stringify(cache)); } catch { /* egal */ }
+    return info;
+  } catch {
+    return null;
+  }
+}
+
+/** TM-Kürzel wie "V/W" (SC V/W Billstedt) gegen Anfangsbuchstaben der Namensteile ("Vorwärts-Wacker") */
+function initialsMatch(tmBase: string, queryBase: string): boolean {
+  const abbr = tmBase.match(/\b([a-zäöü](?:\/[a-zäöü])+)\b/);
+  if (!abbr) return false;
+  const letters = abbr[1].split('/');
+  const words = clubCore(queryBase).split(/[\s-]+/).filter((w) => w.length >= 3);
+  return letters.length >= 2 && letters.every((l, i) => words[i]?.startsWith(l));
+}
 let resolveCache: Record<string, string> | null = null; // clubBase -> tm_club_id | 'none'
 const pendingResolve = new Map<string, Promise<string | null>>();
 let resolveChain: Promise<unknown> = Promise.resolve();
@@ -416,7 +450,7 @@ function saveResolveCache(): void {
 }
 const clubWappenUrl = (id: string) => `https://tmssl.akamaized.net/images/wappen/head/${id}.png`;
 
-export function resolveClubLogoUri(teamName: string): Promise<string | null> {
+export function resolveClubLogoUri(teamName: string, teamId?: string | null): Promise<string | null> {
   const b = clubBase(teamName);
   if (!b) return Promise.resolve(null);
   // Cache-Schlüssel inkl. Gründungszahl, damit "Babelsberg 74" und "Babelsberg 03" getrennt bleiben
@@ -432,16 +466,36 @@ export function resolveClubLogoUri(teamName: string): Promise<string | null> {
       // Plausibilität: gefundener Vereinsname muss zur Anfrage passen.
       // Auch ok: Kern-Tokens der einen Seite sind Teilmenge der anderen
       // ("SGV Freiberg" <-> "SGV Heilbronn-Freiberg")
-      const plausible = (name: string | null | undefined): boolean => {
+      // `against`: Anfrage-Name (Standard: der Teamname; bei fussball.de-Fallback der volle Vereinsname)
+      const plausible = (name: string | null | undefined, against: string = teamName, city: string | null = null): boolean => {
         const rb = clubBase(name || '');
-        if (!rb) return false;
-        if (!clubNumbersCompatible(teamName, name || '')) return false;
-        if (rb === b || rb.includes(b) || b.includes(rb) || clubCore(rb) === clubCore(b)) return true;
-        const ta = clubCore(b).split(/[\s-]+/).filter(Boolean);
-        const tb = clubCore(rb).split(/[\s-]+/).filter(Boolean);
+        const qb = clubBase(against);
+        if (!rb || !qb) return false;
+        if (!clubNumbersCompatible(against, name || '')) return false;
+        if (rb === qb || clubCore(rb) === clubCore(qb)) return true;
+        if (initialsMatch(rb, qb)) return true;
+        // Teilstring ("sv wacker" in "sv wacker burghausen") nur, wenn der kürzere Kern zwei
+        // Namensteile hat oder BEIDE dieselbe Gründungszahl tragen (SV Wacker 09 ≠ Burghausen)
+        if (rb.includes(qb) || qb.includes(rb)) {
+          const shorterCore = clubCore(rb.length <= qb.length ? rb : qb).split(/[\s-]+/).filter(Boolean);
+          if (shorterCore.length >= 2) return true;
+          const na = clubNumbers(against); const nb = clubNumbers(name || '');
+          return na.size > 0 && nb.size > 0;
+        }
+        const ta = clubCore(qb).split(/[\s-]+/).filter(Boolean);
+        // Orts-Token des Vereins darf im TM-Namen vorkommen, ohne zu stören ("Wacker 09 Cottbus")
+        const cityTokens = new Set(clubCore(clubBase(city || '')).split(/[\s-]+/).filter(Boolean));
+        const tb = clubCore(rb).split(/[\s-]+/).filter((t) => t && !cityTokens.has(t));
         if (!ta.length || !tb.length) return false;
         const [short, long] = ta.length <= tb.length ? [ta, new Set(tb)] : [tb, new Set(ta)];
-        return short.every((t) => long.has(t));
+        if (!short.every((t) => long.has(t))) return false;
+        // Nur EIN gemeinsames Wort ("Wacker") reicht nicht: dann müssen beide dieselbe Zahl tragen
+        // (SV Wacker 09 ≠ SV Wacker Burghausen)
+        if (short.length === 1) {
+          const na = clubNumbers(against); const nb = clubNumbers(name || '');
+          return na.size > 0 && nb.size > 0;
+        }
+        return true;
       };
       let throttled = false;
       const search = async (q: string): Promise<any> => {
@@ -453,7 +507,11 @@ export function resolveClubLogoUri(teamName: string): Promise<string | null> {
       };
       // Suchkandidaten: bereinigter Name -> Vereinskern -> ohne letzten
       // Namensteil (Stadt-Suffixe wie "VSG Altglienicke Berlin")
-      const candidates: string[] = [b];
+      const candidates: string[] = [];
+      // Gründungszahl ist bei TM ein starkes Merkmal ("SV Wacker 09" → Cottbus, nicht Burghausen)
+      const nums = Array.from(clubNumbers(teamName)).sort();
+      if (nums.length) candidates.push(`${b} ${nums.join(' ')}`);
+      candidates.push(b);
       const core = clubCore(b);
       if (core && core.length >= 5 && core !== b) candidates.push(core);
       const parts = b.split(' ');
@@ -461,12 +519,31 @@ export function resolveClubLogoUri(teamName: string): Promise<string | null> {
       // Unbekanntes Kürzel vorne weglassen ("USI Lupo Martini" → "Lupo Martini")
       if (parts.length >= 3 && parts[0].length <= 4) candidates.push(parts.slice(1).join(' '));
       let club: any = null;
+      let ok = false;
       for (const q of candidates) {
         const found = await search(q);
-        if (found && plausible(found.club_name)) { club = found; break; }
+        if (found && plausible(found.club_name)) { club = found; ok = true; break; }
         await new Promise((r) => setTimeout(r, 900));
       }
-      const ok = !!club && plausible(club.club_name);
+      // Fallback: fussball.de kürzt Teamnamen ("Vorw. Wacker 3.C-Jun.") oder der Name ist
+      // mehrdeutig ("SV Wacker 09") → Mannschafts-/Vereinsseite liefert vollen Namen + Ort
+      if (!ok && teamId) {
+        const info = await fetchFdeClubInfo(teamId);
+        // Vereinsname zuerst (Teamname kann weiter abgekürzt sein: "Vorw. Wacker 3.C-Jun."), dann Teamname
+        const names = Array.from(new Set([info?.clubName, info?.teamName].filter((n): n is string => !!n)));
+        const cityB = info?.city ? clubBase(info.city) : '';
+        const seen = new Set(candidates);
+        outer: for (const full of names) {
+          const fb = clubBase(full);
+          const more = [cityB ? `${fb} ${cityB}` : '', fb, clubCore(fb)].filter((q) => q && q.length >= 4 && !seen.has(q));
+          for (const q of more) {
+            seen.add(q);
+            const found = await search(q);
+            if (found && plausible(found.club_name, full, info?.city || null)) { club = found; ok = true; break outer; }
+            await new Promise((r) => setTimeout(r, 900));
+          }
+        }
+      }
       if (ok) {
         c[ck] = String(club.tm_club_id);
         saveResolveCache();

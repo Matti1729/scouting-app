@@ -80,18 +80,18 @@ export function ClubLogo({ uri, size = 16 }: { uri: string; size?: number }) {
 
 /** Wappen für einen Teamnamen: erst DB-Lookup (map), dann On-Demand-Auflösung
  *  über die TM-Schnellsuche (gecacht). Rendert nichts, wenn kein Wappen. */
-export function TeamLogo({ name, map, size = 16 }: { name: string; map: Map<string, string>; size?: number }) {
+export function TeamLogo({ name, map, size = 16, teamId }: { name: string; map: Map<string, string>; size?: number; teamId?: string | null }) {
   const direct = clubLogoUriFor(map, name);
   const [resolved, setResolved] = useState<string | null>(null);
   useEffect(() => {
     if (direct) return;
     let cancelled = false;
     setResolved(null);
-    resolveClubLogoUri(name).then((u) => {
+    resolveClubLogoUri(name, teamId).then((u) => {
       if (!cancelled) setResolved(u);
     });
     return () => { cancelled = true; };
-  }, [name, direct]);
+  }, [name, direct, teamId]);
   const uri = direct || resolved;
   if (!uri) return null;
   return <ClubLogo uri={uri} size={size} />;

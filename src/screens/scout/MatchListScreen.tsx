@@ -143,6 +143,9 @@ interface Match {
   selected?: boolean;
   // Original-Partie (fussball.de-Namen), wenn `spiel` vereinheitlicht wurde
   spielRaw?: string;
+  // fussball.de team-ids (Umgebungs-Spiele) für die Wappen-Auflösung über die Vereinsseite
+  homeTeamId?: string | null;
+  awayTeamId?: string | null;
   fussballDeUrl?: string;
   ergebnis?: string;
   isArchived?: boolean;
@@ -667,6 +670,8 @@ export function MatchListScreen({ navigation, route }: any) {
           ort: venueAddress ? `${venue ? `${venue}, ` : ''}${venueAddress}` : venue,
           fussballDeUrl: g.game_url || undefined,
           isAreaGame: true,
+          homeTeamId: g.home_team_id || null,
+          awayTeamId: g.away_team_id || null,
           lat: g.lat ?? homeClub?.lat ?? null,
           lng: g.lng ?? homeClub?.lng ?? null,
           venueAddress,
@@ -2685,14 +2690,14 @@ export function MatchListScreen({ navigation, route }: any) {
                             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                               <View style={isMobile ? { flex: 1, minWidth: 0 } : { flexShrink: 1, minWidth: 0 }}>
                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                                  <TeamLogo name={isDfbEvent ? 'Deutschland' : home} map={clubLogoMap} />
+                                  <TeamLogo name={isDfbEvent ? 'Deutschland' : home} map={clubLogoMap} teamId={item.homeTeamId} />
                                   <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
                                     {home}
                                   </Text>
                                 </View>
                                 {away ? (
                                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                                    <TeamLogo name={away} map={clubLogoMap} />
+                                    <TeamLogo name={away} map={clubLogoMap} teamId={item.awayTeamId} />
                                     <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
                                       {away}
                                     </Text>

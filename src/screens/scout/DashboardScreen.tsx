@@ -51,6 +51,8 @@ interface TodayGame {
   isDfb?: boolean;
   matchDate?: string | null;
   matchDateEnd?: string | null;
+  homeTeamId?: string | null;
+  awayTeamId?: string | null;
 }
 
 const WEEKDAYS = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
@@ -247,7 +249,7 @@ export function DashboardScreen() {
           .limit(30),
         supabase
           .from('area_games')
-          .select('match_key, league_key, kickoff_time, home_name, away_name, wettbewerb, venue, venue_address, game_url')
+          .select('match_key, league_key, kickoff_time, home_name, away_name, home_team_id, away_team_id, wettbewerb, venue, venue_address, game_url')
           .eq('kickoff_date', today)
           .order('kickoff_time')
           .limit(60),
@@ -286,6 +288,8 @@ export function DashboardScreen() {
           ort: g.venue_address ? `${g.venue ? `${g.venue}, ` : ''}${g.venue_address}` : g.venue || null,
           fussballDeUrl: g.game_url || null,
           isOwn: false,
+          homeTeamId: g.home_team_id || null,
+          awayTeamId: g.away_team_id || null,
         }))
         .filter((g) => !ownNames.has(g.begegnung));
       const all = [...own, ...area].sort((a, b) => (a.zeit || '99').localeCompare(b.zeit || '99'));
@@ -568,14 +572,14 @@ export function DashboardScreen() {
                       {/* Desktop: Punkt dicht hinter den Namen (Block schrumpft auf Inhalt); mobil rechtsbündig */}
                       <View style={isMobile ? { flex: 1, minWidth: 0 } : { flexShrink: 1, minWidth: 0 }}>
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
-                          <TeamLogo name={g.away || !g.isDfb ? g.home : 'Deutschland'} map={clubLogoMap} />
+                          <TeamLogo name={g.away || !g.isDfb ? g.home : 'Deutschland'} map={clubLogoMap} teamId={g.homeTeamId} />
                           <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
                             {g.isDfb ? g.home : canonicalClubName(clubLogoMap, g.home)}
                           </Text>
                         </View>
                         {g.away ? (
                           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 2 }}>
-                            <TeamLogo name={g.away} map={clubLogoMap} />
+                            <TeamLogo name={g.away} map={clubLogoMap} teamId={g.awayTeamId} />
                             <Text style={{ color: RETRO.text, fontSize: 13, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>
                               {canonicalClubName(clubLogoMap, g.away)}
                             </Text>
