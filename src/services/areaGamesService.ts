@@ -646,6 +646,26 @@ export function buildKmhClubIndex(players: KmhPlayer[]): KmhClubIndex {
   return byClub;
 }
 
+// Allgemeine Vereins-Wörter, die allein keinen Verein kennzeichnen
+const CLUB_GENERIC = new Set(['fc', 'sv', 'sc', 'tsv', 'vfb', 'vfl', 'sg', 'fsv', 'ssv', 'spvgg', 'tsg', 'bsc', 'ksc',
+  'sportfreunde', 'spfr', 'borussia', 'bor', 'eintracht', 'fortuna', 'union', 'rot', 'weiss', 'weiß', 'blau', 'gelb',
+  'e', 'v', 'ev', 'club', 'fußball', 'fussball', 'verein', 'sport', 'und', 'von', 'de', 'der']);
+function clubTokens(club: string): Set<string> {
+  return new Set(clubBase(club).replace(/[-']/g, ' ').split(' ').filter((t) => t.length >= 2 && !CLUB_GENERIC.has(t)));
+}
+/** Verein aus dem DFB-Kader passt zum Verein in der Spielerübersicht (mind. ein
+ *  kennzeichnendes Wort gemeinsam, z. B. "dresden"). Fehlt eine Seite: nur Name zählt. */
+function dfbClubMatches(kmhClub: string, dfbClub: string | null): boolean {
+  if (!kmhClub || !dfbClub || /vereinslos/i.test(kmhClub)) return true;
+  const a = clubTokens(kmhClub);
+  const b = clubTokens(dfbClub);
+  if (!a.size || !b.size) return true;
+  for (const t of a) if (b.has(t)) return true;
+  // RB Leipzig ↔ RasenBallsport, Kürzel wie "M'gladbach": Teilstring ab 5 Zeichen
+  for (const t of a) for (const u of b) if (t.length >= 5 && u.length >= 5 && (t.includes(u) || u.includes(t))) return true;
+  return false;
+}
+
 /** DFB-Termine (Lehrgänge/Länderspiele): unsere Spieler aus der Kaderliste des
  *  Termins (scouting_lineups, per Name mit der Spielerübersicht abgeglichen).
  *  Ergebnis: match_id -> Spielernamen (wie in der KMH-Spielerübersicht). */
@@ -653,18 +673,19 @@ export async function loadDfbKmhIndex(matchIds: string[], players: KmhPlayer[]):
   const out = new Map<string, string[]>();
   const kmh = players
     .filter((p) => p.name && (!p.category || /fu(ß|ss)ball/i.test(p.category)))
-    .map((p) => ({ name: p.name, norm: normalizePlayerName(p.name) }));
+    .map((p) => ({ name: p.name, norm: normalizePlayerName(p.name), club: p.club }));
   if (!matchIds.length || !kmh.length) return out;
   for (let i = 0; i < matchIds.length; i += 100) {
     const { data, error } = await supabase
       .from('scouting_lineups')
-      .select('match_id, vorname, name')
+      .select('match_id, vorname, name, club')
       .in('match_id', matchIds.slice(i, i + 100))
       .limit(5000);
     if (error) { console.error('DFB-Kader laden fehlgeschlagen:', error); continue; }
     for (const r of (data || []) as any[]) {
       const norm = normalizePlayerName(`${r.vorname || ''} ${r.name || ''}`);
-      const hit = kmh.find((p) => p.norm === norm || namesCompatible(p.norm, norm));
+      const hit = kmh.find((p) =>
+        (p.norm === norm || namesCompatible(p.norm, norm)) && dfbClubMatches(p.club, r.club));
       if (!hit) continue;
       const cur = out.get(r.match_id) || [];
       if (!cur.includes(hit.name)) cur.push(hit.name);
