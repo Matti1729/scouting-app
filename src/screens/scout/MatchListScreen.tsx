@@ -54,8 +54,10 @@ import {
   AreaLeague,
   loadKmhPlayers,
   buildKmhClubIndex,
+  loadDfbKmhIndex,
   kmhClubKey,
   KmhClubIndex,
+  KmhPlayer,
 } from '../../services/areaGamesService';
 import { GamesMapView, GameMapFeature } from '../../components/GamesMapView';
 import { Image } from 'react-native';
@@ -541,13 +543,25 @@ export function MatchListScreen({ navigation, route }: any) {
   }, []);
   const clubLogoUri = (teamName: string): string | null => clubLogoUriFor(clubLogoMap, teamName);
   // Unsere eigenen Spieler (KMH-Spielerübersicht): Zuordnung über hinterlegten Verein + Altersklasse
+  const [kmhPlayers, setKmhPlayers] = useState<KmhPlayer[]>([]);
   const [kmhIndex, setKmhIndex] = useState<KmhClubIndex>(new Map());
   useEffect(() => {
-    loadKmhPlayers().then((players) => setKmhIndex(buildKmhClubIndex(players))).catch(() => {});
+    loadKmhPlayers().then((players) => { setKmhPlayers(players); setKmhIndex(buildKmhClubIndex(players)); }).catch(() => {});
   }, []);
+  // DFB-Termine: unsere Spieler aus der Kaderliste des Lehrgangs/Länderspiels
+  const [dfbKmhIndex, setDfbKmhIndex] = useState<Map<string, string[]>>(new Map());
+  const dfbMatchIdsKey = useMemo(
+    () => matches.filter((m) => m.source === 'dfb').map((m) => m.id).sort().join(','),
+    [matches],
+  );
+  useEffect(() => {
+    if (!dfbMatchIdsKey || !kmhPlayers.length) return;
+    loadDfbKmhIndex(dfbMatchIdsKey.split(','), kmhPlayers).then(setDfbKmhIndex).catch(() => {});
+  }, [dfbMatchIdsKey, kmhPlayers]);
   /** Namen unserer Spieler in diesem Spiel (Heim zuerst, dann Gast) */
   const kmhPlayersFor = (m: Match): string[] => {
-    if (kmhIndex.size === 0 || m.source === 'dfb') return [];
+    if (m.source === 'dfb') return dfbKmhIndex.get(m.id) || [];
+    if (kmhIndex.size === 0) return [];
     const out: string[] = [];
     const age = m.mannschaft || 'Herren';
     for (const spiel of [m.spielRaw, m.spiel]) {

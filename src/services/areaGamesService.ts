@@ -2,6 +2,7 @@
 // Beide Apps teilen dieselbe Supabase-Datenbank — die KMH-Seite synct täglich
 // fussball.de-Spielpläne inkl. Geokoordinaten (sync-area-games), wir lesen nur.
 import { supabase } from '../config/supabase';
+import { normalizePlayerName, namesCompatible } from './beraterService';
 
 export interface AreaLeague {
   league_key: string;
@@ -643,4 +644,32 @@ export function buildKmhClubIndex(players: KmhPlayer[]): KmhClubIndex {
     byClub.set(key, cur);
   }
   return byClub;
+}
+
+/** DFB-Termine (Lehrgänge/Länderspiele): unsere Spieler aus der Kaderliste des
+ *  Termins (scouting_lineups, per Name mit der Spielerübersicht abgeglichen).
+ *  Ergebnis: match_id -> Spielernamen (wie in der KMH-Spielerübersicht). */
+export async function loadDfbKmhIndex(matchIds: string[], players: KmhPlayer[]): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  const kmh = players
+    .filter((p) => p.name && (!p.category || /fu(ß|ss)ball/i.test(p.category)))
+    .map((p) => ({ name: p.name, norm: normalizePlayerName(p.name) }));
+  if (!matchIds.length || !kmh.length) return out;
+  for (let i = 0; i < matchIds.length; i += 100) {
+    const { data, error } = await supabase
+      .from('scouting_lineups')
+      .select('match_id, vorname, name')
+      .in('match_id', matchIds.slice(i, i + 100))
+      .limit(5000);
+    if (error) { console.error('DFB-Kader laden fehlgeschlagen:', error); continue; }
+    for (const r of (data || []) as any[]) {
+      const norm = normalizePlayerName(`${r.vorname || ''} ${r.name || ''}`);
+      const hit = kmh.find((p) => p.norm === norm || namesCompatible(p.norm, norm));
+      if (!hit) continue;
+      const cur = out.get(r.match_id) || [];
+      if (!cur.includes(hit.name)) cur.push(hit.name);
+      out.set(r.match_id, cur);
+    }
+  }
+  return out;
 }
