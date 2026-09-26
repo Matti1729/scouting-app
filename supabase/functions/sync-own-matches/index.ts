@@ -39,10 +39,15 @@ type OwnMatch = {
   fussball_de_url: string;
   change_note: string | null;
   location: string | null;
+  lat: number | null;
+  lng: number | null;
 };
 
 // venue: Spielort wie die App ihn beim Hinzufügen speichert ("Platz, Adresse"), nur aus area_games
-type Current = { date: string; time: string | null; home: string; away: string; cancelled: boolean; venue?: string | null };
+type Current = {
+  date: string; time: string | null; home: string; away: string; cancelled: boolean; venue?: string | null;
+  lat?: number | null; lng?: number | null; // nur aus area_games (bereits geokodiert)
+};
 
 /** "U19 SC Freiburg" -> "SC Freiburg"; U20+ = II (wie stripAge in areaGamesService) */
 function stripAge(name: string): string {
@@ -87,13 +92,13 @@ function gameId(url: string): string | null {
 async function fromArea(sb: SupabaseClient, id: string): Promise<Current | null> {
   const { data } = await sb
     .from("area_games")
-    .select("kickoff_date, kickoff_time, home_name, away_name, venue, venue_address")
+    .select("kickoff_date, kickoff_time, home_name, away_name, venue, venue_address, lat, lng")
     .eq("match_key", id)
     .limit(1);
   const g = data?.[0];
   if (!g) return null;
   const venue = g.venue_address ? `${g.venue ? `${g.venue}, ` : ""}${g.venue_address}` : g.venue || null;
-  return { date: g.kickoff_date, time: g.kickoff_time || null, home: g.home_name, away: g.away_name, cancelled: false, venue };
+  return { date: g.kickoff_date, time: g.kickoff_time || null, home: g.home_name, away: g.away_name, cancelled: false, venue, lat: g.lat, lng: g.lng };
 }
 
 type PageInfo = Current & { teamIds: string[] };
@@ -241,6 +246,36 @@ function diff(m: OwnMatch, c: Current): { patch: Record<string, unknown>; notes:
   return { patch: { ...patch, change_note: note, changed_at: new Date().toISOString(), change_seen_at: null }, notes };
 }
 
+// Koordinaten für die Karte in "Meine Spiele": Photon, Fallback Nominatim wie sync-area-games
+// (voller String -> Straße + PLZ/Ort -> PLZ-Zentroid; max. 1 Anfrage/Sekunde)
+async function nominatim(q: string): Promise<{ lat: number; lng: number } | null> {
+  const r = await fetch(`https://nominatim.openstreetmap.org/search?${q}&format=json&limit=1`, {
+    headers: { "User-Agent": "KMH-App/1.0 (kontakt@warubi-sports.com)", "Accept-Language": "de" },
+  });
+  await new Promise((res) => setTimeout(res, 1100));
+  if (!r.ok) throw new Error(`Nominatim HTTP ${r.status}`);
+  const d = await r.json();
+  return d?.[0] ? { lat: Number(d[0].lat), lng: Number(d[0].lon) } : null;
+}
+// Photon (komoot, OSM-Daten): Nominatim blockt die Supabase-Server (HTTP 403), Photon nicht
+async function photon(q: string): Promise<{ lat: number; lng: number } | null> {
+  const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=1&lang=de`, {
+    headers: { "User-Agent": "KMH-App/1.0 (kontakt@warubi-sports.com)" },
+  });
+  if (!r.ok) return null;
+  const c = (await r.json())?.features?.[0]?.geometry?.coordinates;
+  return Array.isArray(c) ? { lat: Number(c[1]), lng: Number(c[0]) } : null;
+}
+async function geocodeVenue(location: string): Promise<{ lat: number; lng: number } | null> {
+  const parts = location.split(",").map((p) => p.trim()).filter(Boolean);
+  const tail = parts.slice(-2).join(", ");
+  const viaPhoton = await photon(tail).catch(() => null);
+  if (viaPhoton) return viaPhoton;
+  return (await nominatim(`q=${encodeURIComponent(tail)}&countrycodes=de`))
+    || (await nominatim(`q=${encodeURIComponent(tail.replace(/\bStr\b\.?/g, "Straße"))}&countrycodes=de`))
+    || (location.match(/\b(\d{5})\b/) ? await nominatim(`postalcode=${location.match(/\b(\d{5})\b/)![1]}&country=de`) : null);
+}
+
 async function notifyMatti(sb: SupabaseClient, text: string): Promise<string | null> {
   if (!TELEGRAM_BOT_TOKEN) return "TELEGRAM_BOT_TOKEN fehlt";
   const { data } = await sb.from("advisor_telegram_links").select("telegram_chat_id").eq("advisor_id", MATTI_ADVISOR_ID);
@@ -288,7 +323,7 @@ serve(async (req) => {
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     const { data: own, error } = await sb
       .from("scouting_matches")
-      .select("id, home_team, away_team, match_date, match_time, fussball_de_url, change_note, location")
+      .select("id, home_team, away_team, match_date, match_time, fussball_de_url, change_note, location, lat, lng")
       .is("source", null)
       .eq("is_archived", false)
       .not("fussball_de_url", "is", null)
@@ -309,8 +344,19 @@ serve(async (req) => {
         log.push(`${m.id}: ${(e as Error).message}`);
       }
       if (!cur) continue;
-      const d = diff(m, cur);
-      if (!d) continue;
+      const d = diff(m, cur) || { patch: {} as Record<string, unknown>, notes: [] as string[] };
+      // Koordinaten fehlen oder Ort hat sich geändert -> aus area_games bzw. per Geocoding
+      const loc = (d.patch.location as string | null | undefined) ?? m.location;
+      if (loc && (m.lat == null || d.patch.location)) {
+        const fromAreaCoords = cur.lat != null && cur.lng != null && (!d.patch.location || d.patch.location === cur.venue);
+        let geoErr = "";
+        const coords = fromAreaCoords
+          ? { lat: cur.lat!, lng: cur.lng! }
+          : await geocodeVenue(loc).catch((e) => { geoErr = (e as Error).message; return null; });
+        if (coords) { d.patch.lat = coords.lat; d.patch.lng = coords.lng; }
+        else log.push(`${m.id}: keine Koordinaten für "${loc}"${geoErr ? ` (${geoErr})` : ""}`);
+      }
+      if (!Object.keys(d.patch).length) continue;
       const home = (d.patch.home_team as string) || m.home_team;
       const away = (d.patch.away_team as string) || m.away_team || "";
       changes.push({ id: m.id, spiel: away ? `${home} – ${away}` : home, notes: d.notes, patch: d.patch });

@@ -102,6 +102,7 @@ import {
   MatchChangeInfo,
 } from '../../services/matchChangeService';
 import { Ionicons } from '@expo/vector-icons';
+import { downloadIcs } from '../../utils/calendarExport';
 import { loadBeraterStatusForLineup, BeraterStatusResult, loadReportCountsForLineup, isPlaceholderName } from '../../services/beraterService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
 import { fetchSearchPlayer, StipendiumSearchPlayer, ageFromBirthDate } from '../../services/stipendiumService';
@@ -635,6 +636,7 @@ export function MatchListScreen({ navigation, route }: any) {
   // Tabs: Anstehend (Umgebung + eigene) | Meine Spiele (eigene, kommend) | Archiv (eigene, vergangen)
   const [viewTab, setViewTab] = useState<'anstehend' | 'meine' | 'archiv'>('anstehend');
   const showArchive = viewTab !== 'anstehend'; // eigene-Spiele-Pool (Meine/Archiv) statt Umgebungs-Pool
+  const showMap = viewTab !== 'archiv'; // Karte bei Anstehend UND Meine Spiele (Archiv: nur Liste)
 
   // Aktionsmenü (mobile "..." Menü)
   const [actionMenuVisible, setActionMenuVisible] = useState(false);
@@ -1288,65 +1290,18 @@ export function MatchListScreen({ navigation, route }: any) {
     }
   };
 
-  // Kalender-Export (ICS Format)
+  // Kalender-Export (.ics, siehe utils/calendarExport): feste UID je Spiel, Zeiten in
+  // Europe/Berlin, unsere Spieler + fussball.de-Link in der Beschreibung
+  const exportGamesToCalendar = (games: Match[], filename: string) =>
+    downloadIcs(games.map((g) => ({ ...g, players: kmhPlayersFor(g) })), filename);
+
   const exportSelectedToCalendar = () => {
     const selectedGames = matches.filter(m => selectedMatches.includes(m.id));
     if (selectedGames.length === 0) {
       showAlert('Hinweis', 'Bitte wähle mindestens ein Spiel aus.');
       return;
     }
-
-    // ICS Datei erstellen (Format wie KMH-App "Spiele unserer Spieler" mit \r\n)
-    let icsContent = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Scouting-App//Spielplan//DE\r\nCALSCALE:GREGORIAN\r\nMETHOD:PUBLISH\r\n`;
-
-    selectedGames.forEach(game => {
-      // Datum parsen - unterstützt ISO (2026-01-31) und Deutsch (31.01.26)
-      const startDate = parseDateString(game.datum);
-      if (!startDate) return;
-
-      const dateStr = startDate.getFullYear().toString() +
-        (startDate.getMonth() + 1).toString().padStart(2, '0') +
-        startDate.getDate().toString().padStart(2, '0');
-
-      // Ende-Datum (für mehrtägige Termine)
-      let endDateStr = dateStr;
-      if (game.datumEnde) {
-        const endDate = parseDateString(game.datumEnde);
-        if (endDate) {
-          endDateStr = endDate.getFullYear().toString() +
-            (endDate.getMonth() + 1).toString().padStart(2, '0') +
-            endDate.getDate().toString().padStart(2, '0');
-        }
-      }
-
-      // Zeit formatieren: HH:MM -> HHMMSS
-      let timeStr = '120000'; // Default 12:00
-      if (game.zeit && game.zeit !== '-') {
-        const timeParts = game.zeit.split(':');
-        timeStr = timeParts[0].padStart(2, '0') + (timeParts[1] || '00').padStart(2, '0') + '00';
-      }
-
-      // Ende: 2 Stunden nach Start (wie KMH-App)
-      const startHour = parseInt(timeStr.substring(0, 2));
-      const endHour = (startHour + 2) % 24;
-      const endTimeStr = endHour.toString().padStart(2, '0') + timeStr.substring(2);
-
-      icsContent += `BEGIN:VEVENT\r\nDTSTART:${dateStr}T${timeStr}\r\nDTEND:${endDateStr}T${endTimeStr}\r\nSUMMARY:${game.spiel}\r\nDESCRIPTION:${game.art}${game.mannschaft ? ' - ' + game.mannschaft : ''}\r\nLOCATION:${game.ort || ''}\r\nEND:VEVENT\r\n`;
-    });
-
-    icsContent += 'END:VCALENDAR';
-
-    // Download (Web)
-    const blob = new Blob([icsContent], { type: 'text/calendar;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `spiele_${new Date().toISOString().split('T')[0]}.ics`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
+    void exportGamesToCalendar(selectedGames, `spiele_${new Date().toISOString().split('T')[0]}.ics`);
     showAlert('Erfolg', `${selectedGames.length} Spiele wurden exportiert.`);
 
     // Auswahl zurücksetzen
@@ -2459,10 +2414,15 @@ export function MatchListScreen({ navigation, route }: any) {
 
   // Karten-Marker: ein Pin je Spielort, Popup mit den Spielen + Maps-Link
   const mapFeatures = useMemo<GameMapFeature[]>(() => {
-    if (showArchive) return [];
+    if (!showMap) return [];
+    // Eigene Spiele haben oft (noch) keine Koordinaten: vom gleichen Umgebungs-Spiel übernehmen
+    const areaCoords = new Map<string, { lat: number; lng: number }>();
+    for (const a of areaMatches) if (a.fussballDeUrl && a.lat != null && a.lng != null) areaCoords.set(a.fussballDeUrl, { lat: a.lat, lng: a.lng });
     const esc = (s: string) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     const byLoc: Record<string, { lat: number; lng: number; color: string; blocks: string[]; addrs: Map<string, string>; keys: string[] }> = {};
-    for (const m of filteredMatches) {
+    for (const m0 of filteredMatches) {
+      const fb = m0.lat == null && m0.fussballDeUrl ? areaCoords.get(m0.fussballDeUrl) : undefined;
+      const m = fb ? { ...m0, ...fb } : m0;
       if (m.lat == null || m.lng == null) continue;
       const k = `${m.lat.toFixed(4)},${m.lng.toFixed(4)}`;
       if (!byLoc[k]) byLoc[k] = { lat: m.lat, lng: m.lng, color: m.markerColor || '#3b82f6', blocks: [], addrs: new Map(), keys: [] };
@@ -2484,7 +2444,7 @@ export function MatchListScreen({ navigation, route }: any) {
         properties: { color: v.color, keys: v.keys, title: v.blocks.slice(0, 8).join('') + (v.blocks.length > 8 ? '<div>…</div>' : '') + addrLinks },
       };
     });
-  }, [showArchive, filteredMatches]);
+  }, [showMap, filteredMatches, areaMatches]);
 
   // Desktop: Tabellen-Zeile
   const renderMatchRow = ({ item }: { item: Match }) => {
@@ -2921,6 +2881,15 @@ export function MatchListScreen({ navigation, route }: any) {
                 </TouchableOpacity>
               );
             })()}
+            {viewTab === 'meine' && filteredMatches.length > 0 && (
+              <TouchableOpacity
+                style={[HARD_SHADOW, { backgroundColor: RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 25, alignItems: 'center', justifyContent: 'center' }]}
+                onPress={() => void exportGamesToCalendar(filteredMatches, 'meine-spiele.ics')}
+                activeOpacity={0.7}
+              >
+                <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Kalender</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={[HARD_SHADOW, { backgroundColor: RETRO.headerBg, borderRadius: 2, minHeight: 25, minWidth: 25, alignItems: 'center', justifyContent: 'center' }]}
               onPress={() => setAddMatchModalVisible(true)}
@@ -2946,7 +2915,7 @@ export function MatchListScreen({ navigation, route }: any) {
                 {`${viewTab === 'archiv' ? 'ARCHIV' : viewTab === 'meine' ? 'MEINE SPIELE' : 'SPIELE'} (${filteredMatches.length})`}
               </Text>
             </TouchableOpacity>
-            {!showArchive && (
+            {showMap && (
               <TouchableOpacity
                 style={[
                   { flex: 1, paddingVertical: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: RETRO.face },
@@ -3122,6 +3091,16 @@ export function MatchListScreen({ navigation, route }: any) {
             >
               <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>+ Event anlegen</Text>
             </TouchableOpacity>
+
+            {/* Meine Spiele als .ics in den Kalender (Apple/Google) */}
+            {viewTab === 'meine' && filteredMatches.length > 0 && (
+              <TouchableOpacity
+                style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, backgroundColor: RETRO.white }]}
+                onPress={() => void exportGamesToCalendar(filteredMatches, 'meine-spiele.ics')}
+              >
+                <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{`In Kalender (${filteredMatches.length})`}</Text>
+              </TouchableOpacity>
+            )}
 
             {/* Kalender-Export Button (nur wenn Spiele ausgewählt) */}
             {selectedMatches.length > 0 && (
@@ -3362,6 +3341,15 @@ export function MatchListScreen({ navigation, route }: any) {
                           <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Aufstellung & Scouting</Text>
                         </TouchableOpacity>
                       )}
+                      {/* Einzelnes eigenes Spiel in den Kalender */}
+                      {ownMatch && (
+                        <TouchableOpacity
+                          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
+                          onPress={() => void exportGamesToCalendar([ownMatch], `spiel-${ownMatch.datum}.ics`)}
+                        >
+                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>In Kalender</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   ) : (
                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -3509,8 +3497,8 @@ export function MatchListScreen({ navigation, route }: any) {
               {renderGamesList({ marginTop: 12, flex: 1, minHeight: 0 })}
             </View>
           </View>
-          {/* Karte rechts (nur Anstehend): gleiche Chip-Optik wie die Liste */}
-          {!showArchive && (
+          {/* Karte rechts (Anstehend + Meine Spiele): gleiche Chip-Optik wie die Liste */}
+          {showMap && (
             <View style={{ flex: 1.2, marginTop: 10 }}>
               <View style={[HARD_SHADOW_LG, { flex: 1 }]}>
                 <View style={[RETRO_CHIP as any, { zIndex: 10 }]}>
@@ -3526,7 +3514,7 @@ export function MatchListScreen({ navigation, route }: any) {
       ) : (
         /* Mobile: gleiche Retro-Zeilen wie am Desktop; Liste ODER Karte (Segmente oben) */
         <View style={{ flex: 1 }}>
-          {mobileView === 'liste' || showArchive ? (
+          {mobileView === 'liste' || !showMap ? (
             <View style={[HARD_SHADOW, { flex: 1, backgroundColor: RETRO.panel }]}>
               {renderGamesList({ flex: 1, minHeight: 0 })}
             </View>
