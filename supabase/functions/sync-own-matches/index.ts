@@ -12,8 +12,13 @@
 // "Gegner steht fest", "Abgesagt") + changed_at setzen, change_seen_at leeren (die App
 // zeigt den Hinweis, bis das Spiel geöffnet wird) und Matti per Telegram informieren.
 //
-// Aufruf: pg_cron ohne Body. Mit Service-Role-Bearer: {"dry_run":true} liefert nur die
-// erkannten Änderungen.
+// Spielort: gleicher Ort, wenn die Adresse übereinstimmt; sonst "Neuer Spielort: …".
+// Leerer Ort wird still nachgetragen.
+//
+// Aufruf (pg_cron): 07:00 ohne Body = alle eigenen Spiele über area_games;
+// 12:00 {"mode":"gameday"} = nur Spiele von heute/morgen, frisch von fussball.de
+// (Spielseite + Mannschafts-Spielplan mit Klartext-Uhrzeit). Mit Service-Role-Bearer
+// zusätzlich "dry_run": true -> nur die erkannten Änderungen.
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -91,24 +96,110 @@ async function fromArea(sb: SupabaseClient, id: string): Promise<Current | null>
   return { date: g.kickoff_date, time: g.kickoff_time || null, home: g.home_name, away: g.away_name, cancelled: false, venue };
 }
 
-async function fromPage(url: string): Promise<Current | null> {
+type PageInfo = Current & { teamIds: string[] };
+
+async function fromPage(url: string): Promise<PageInfo | null> {
   const resp = await fetch(url, { headers: { "User-Agent": UA } });
   if (!resp.ok) return null;
   const html = await resp.text();
+  // Spielstätte: Google-Maps-Link auf der Spielseite (wie fetchGameVenue in sync-area-games)
+  const vm = html.match(/google\.de\/maps\?q=([^"&]+)"[^>]*>\s*([\s\S]{0,200}?)</);
+  const address = vm ? decodeURIComponent(vm[1].replace(/\+/g, " ")).replace(/\s+/g, " ").trim() : null;
+  const place = vm ? vm[2].replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim().replace(/\s*,$/, "") : null;
+  const venue = address ? `${place ? `${place}, ` : ""}${address}` : place || null;
   const title = (html.match(/<title>([\s\S]*?)<\/title>/i) || [])[1]?.replace(/\s+/g, " ").trim() || "";
   const m = title.match(/^(.*?) - (.*?) Ergebnis:.* - (\d{2})\.(\d{2})\.(\d{4})\s*$/);
   if (!m) return null;
   const stage = (html.match(/class="stage-body"[\s\S]{0,3000}/) || [""])[0];
   return {
     date: `${m[5]}-${m[4]}-${m[3]}`,
-    time: null, // auf der Spielseite obfuskiert
+    time: null, // auf der Spielseite obfuskiert -> Mannschafts-Spielplan (fromMatchplan)
     home: m[1].trim(),
     away: m[2].trim(),
     cancelled: /absetzung|abgesetzt|abgesagt|annulliert|nichtantritt/i.test(stage),
+    venue,
+    teamIds: [...stage.matchAll(/\/team-id\/([A-Z0-9]{20,})/g)].map((x) => x[1]),
   };
 }
 
+// "25.10.25" / "25.10.2025" -> "2025-10-25"
+function isoDate(d: string): string {
+  const m = d.match(/(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+  if (!m) return "";
+  const y = m[3].length === 2 ? `20${m[3]}` : m[3];
+  return `${y}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+}
+const plain = (h: string) => h.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+
+/**
+ * Anstoß aus dem Mannschafts-Spielplan (ajax.team.matchplan, Klartext-Uhrzeit), wie
+ * parseMatchplan in KMH-App sync-area-games: Überschriftszeilen tragen Datum/Uhrzeit,
+ * verlegte Spiele den neuen Termin als Klartext im Score-Feld, abgesetzte "Absetzung".
+ */
+async function fromMatchplan(teamId: string, id: string): Promise<{ date: string; time: string | null; cancelled: boolean } | null> {
+  const resp = await fetch(`https://www.fussball.de/ajax.team.matchplan/-/mode/PAGE/team-id/${teamId}`, {
+    headers: { "User-Agent": UA, Accept: "text/html", "Accept-Language": "de-DE,de;q=0.9" },
+  });
+  if (!resp.ok) return null;
+  const html = await resp.text();
+  let lastDate = "", lastTime = "";
+  let found: { date: string; time: string | null; cancelled: boolean } | null = null;
+  for (const tr of html.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/gi)) {
+    const attrs = tr[1] || "", inner = tr[2] || "";
+    if (/class="[^"]*(?:row-competition|row-headline)/.test(attrs)) {
+      const txt = plain(inner);
+      const d = txt.match(/\d{1,2}\.\d{1,2}\.\d{2,4}/);
+      const t = txt.match(/(\d{1,2}):(\d{2})/);
+      if (d) lastDate = isoDate(d[0]);
+      lastTime = t ? `${t[1].padStart(2, "0")}:${t[2]}` : "";
+      continue;
+    }
+    if (!inner.includes(`/spiel/${id}`) && !inner.includes(id)) continue;
+    const st = inner.match(/class="[^"]*info-text[^"]*"[^>]*>\s*([^<]+?)\s*</i)?.[1] || "";
+    const moved = st.match(/(\d{1,2}\.\d{1,2}\.\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/);
+    const cand = {
+      date: moved ? isoDate(moved[1]) : lastDate,
+      time: moved?.[2] ? `${moved[2].padStart(2, "0")}:${moved[3]}` : lastTime || null,
+      cancelled: /absetz|abgesagt|ausfall|nichtantritt|annulliert/i.test(st),
+    };
+    // Verlegte Spiele stehen doppelt (alter Termin mit Hinweis + neuer Termin): Zeile mit
+    // Verlegungs-Termin bzw. ohne Hinweis gewinnt
+    if (!found || moved || !st) found = cand;
+  }
+  return found;
+}
+
+/** Spieltag-Check: frisch von fussball.de (Spielseite + Spielplan der Heim-, sonst Gastmannschaft) */
+async function fromFresh(url: string, id: string): Promise<Current | null> {
+  const page = await fromPage(url);
+  if (!page) return null;
+  for (const teamId of page.teamIds) {
+    const mp = await fromMatchplan(teamId, id);
+    if (mp) return { ...page, date: mp.date || page.date, time: mp.time, cancelled: page.cancelled || mp.cancelled };
+  }
+  return page;
+}
+
 const fmtDate = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}.`;
+
+const normPlace = (x: string) => x.toLowerCase().replace(/str\.|strasse/g, "straße").replace(/[^a-z0-9äöüß]+/g, " ").replace(/\s+/g, " ").trim();
+/** Adressteil "Stuttgarter Str. 93, 76337 Waldbronn" (letzte 2 Teile) als Vergleichsschlüssel */
+function venueKey(v: string): string {
+  const parts = v.split(",").map((p) => p.trim()).filter(Boolean);
+  return normPlace(parts.slice(-2).join(" "));
+}
+function sameVenue(stored: string, fresh: string): boolean {
+  const a = normPlace(stored);
+  const k = venueKey(fresh);
+  return !!k && (a.includes(k) || k.includes(venueKey(stored)));
+}
+/** "Kunstrasenplatz, TSV 05 Reichenbach, Stuttgarter Str. 93, 76337 Waldbronn" -> "TSV 05 Reichenbach, Waldbronn" */
+function shortVenue(v: string): string {
+  const parts = v.split(",").map((p) => p.trim()).filter(Boolean);
+  const city = (parts[parts.length - 1] || "").replace(/^\d{4,5}\s*/, "");
+  const name = parts.find((p, i) => i < parts.length - 2 && !/platz\.?\s*\d*$/i.test(p)) || parts[0] || "";
+  return [name, city].filter((x, i, a) => x && a.indexOf(x) === i).join(", ");
+}
 
 function diff(m: OwnMatch, c: Current): { patch: Record<string, unknown>; notes: string[] } | null {
   const patch: Record<string, unknown> = {};
@@ -135,7 +226,16 @@ function diff(m: OwnMatch, c: Current): { patch: Record<string, unknown>; notes:
     // Ort stand nur als Platzhalter drin ("Gewinner aus Spiel …") -> echten Spielort setzen
     if (isPlaceholder(m.location)) patch.location = c.venue || null;
   }
-  if (!notes.length) return null;
+  // Spielort: gleicher Ort, wenn die Adresse (Straße + PLZ) im gespeicherten Ort steckt
+  if (c.venue && !patch.location && !isPlaceholder(m.location)) {
+    if (!m.location) {
+      patch.location = c.venue; // bisher leer: still nachtragen, keine "Änderung"
+    } else if (!sameVenue(m.location, c.venue)) {
+      patch.location = c.venue;
+      notes.push(`Neuer Spielort: ${shortVenue(c.venue)}`);
+    }
+  }
+  if (!notes.length) return Object.keys(patch).length ? { patch, notes } : null;
   const note = notes.join(" · ");
   if (note === m.change_note && !Object.keys(patch).length) return null; // schon gemeldet
   return { patch: { ...patch, change_note: note, changed_at: new Date().toISOString(), change_seen_at: null }, notes };
@@ -181,6 +281,10 @@ serve(async (req) => {
     const dryRun = body.dry_run === true && (await isServiceRole(req.headers.get("Authorization")));
     const sb = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
+    // mode "gameday" (mittags): nur Spiele von heute/morgen, frisch von fussball.de
+    const gameday = body.mode === "gameday";
+    const berlin = (offsetDays: number) =>
+      new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Berlin" }).format(new Date(Date.now() + offsetDays * 86400000));
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     const { data: own, error } = await sb
       .from("scouting_matches")
@@ -190,15 +294,17 @@ serve(async (req) => {
       .not("fussball_de_url", "is", null)
       .gte("match_date", yesterday);
     if (error) throw new Error(`scouting_matches: ${error.message}`);
+    const todayB = berlin(0), tomorrowB = berlin(1);
+    const pool = ((own || []) as OwnMatch[]).filter((m) => !gameday || m.match_date === todayB || m.match_date === tomorrowB);
 
     const changes: { id: string; spiel: string; notes: string[]; patch: Record<string, unknown> }[] = [];
     const log: string[] = [];
-    for (const m of (own || []) as OwnMatch[]) {
+    for (const m of pool) {
       const id = gameId(m.fussball_de_url);
       if (!id) continue;
       let cur: Current | null = null;
       try {
-        cur = (await fromArea(sb, id)) || (await fromPage(m.fussball_de_url));
+        cur = gameday ? await fromFresh(m.fussball_de_url, id) : (await fromArea(sb, id)) || (await fromPage(m.fussball_de_url));
       } catch (e) {
         log.push(`${m.id}: ${(e as Error).message}`);
       }
@@ -209,17 +315,19 @@ serve(async (req) => {
       const away = (d.patch.away_team as string) || m.away_team || "";
       changes.push({ id: m.id, spiel: away ? `${home} – ${away}` : home, notes: d.notes, patch: d.patch });
     }
-    if (dryRun) return json({ ok: true, checked: own?.length || 0, changes, log });
+    if (dryRun) return json({ ok: true, mode: gameday ? "gameday" : "daily", checked: pool.length, changes, log });
 
     for (const c of changes) {
       const { error: ue } = await sb.from("scouting_matches").update(c.patch).eq("id", c.id);
       if (ue) { log.push(`Update ${c.id}: ${ue.message}`); continue; }
+      if (!c.notes.length) continue; // nur Spielort still nachgetragen
       const date = (c.patch.match_date as string) || "";
       const when = date ? ` → ${fmtDate(date)}${c.patch.match_time ? ` ${c.patch.match_time}` : ""}` : "";
-      const err = await notifyMatti(sb, `📅 <b>Meine Spiele: ${esc(c.notes.join(" · "))}</b>\n${esc(c.spiel)}${esc(when)}`);
+      const where = c.patch.location && c.notes.some((n) => n.startsWith("Neuer Spielort")) ? `\n📍 ${c.patch.location}` : "";
+      const err = await notifyMatti(sb, `📅 <b>Meine Spiele: ${esc(c.notes.join(" · "))}</b>\n${esc(c.spiel)}${esc(when)}${esc(where)}`);
       if (err) log.push(`Telegram ${c.id}: ${err}`);
     }
-    return json({ ok: true, checked: own?.length || 0, changed: changes.length, log });
+    return json({ ok: true, mode: gameday ? "gameday" : "daily", checked: pool.length, changed: changes.length, log });
   } catch (e) {
     console.error("sync-own-matches:", e);
     return json({ ok: false, error: (e as Error).message }, 500);
