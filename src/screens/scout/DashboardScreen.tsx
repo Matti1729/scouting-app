@@ -28,7 +28,7 @@ import { areaAge, areaArt, shortVenueName, stripAge, loadClubLogoMap, clubLogoUr
 import { createMatch, deleteMatch } from '../../services/matchService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
 import { TeamLogo, CompactMatchTeams } from '../../components/ClubLogo';
-import { PulseDot } from '../../components/PulseDot';
+import { PulseDot, ATTENDING_COLOR } from '../../components/PulseDot';
 import { fetchSearchPlayer, StipendiumSearchPlayer, positionCode, ageFromBirthDate, agentDisplayName } from '../../services/stipendiumService';
 import { BLUE_GRADIENT } from '../../theme/retro';
 import { supabase } from '../../config/supabase';
@@ -1478,10 +1478,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#ffffff',
   },
-  // Orange nach dem Übernehmen ("Ich bin beim Spiel"), Standard-Buttongröße
+  // Nach dem Übernehmen ("Ich bin beim Spiel"): gleiche Farbe wie der pulsierende Punkt
   detailAddedBadge: {
     alignSelf: 'flex-end',
-    backgroundColor: '#e8930c',
+    backgroundColor: ATTENDING_COLOR,
     paddingVertical: 5,
     paddingHorizontal: 10,
     minHeight: 24,

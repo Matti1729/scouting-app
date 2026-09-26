@@ -3,7 +3,9 @@ import { Animated, Easing } from 'react-native';
 
 // Pulsierender oranger Punkt: "Bei diesem Spiel bin ich" (in "Meine Spiele" übernommen).
 // Sitzt hinter der Nennung der Partie, nicht in der Kopfzeile.
-export function PulseDot({ size = 10, color = '#e8930c' }: { size?: number; color?: string }) {
+// "Ich bin beim Spiel": Rosé statt Orange (Orange = Junioren-Punkte auf der Karte)
+export const ATTENDING_COLOR = '#e11d48';
+export function PulseDot({ size = 10, color = ATTENDING_COLOR }: { size?: number; color?: string }) {
   const scale = useRef(new Animated.Value(1)).current;
   const ring = useRef(new Animated.Value(0)).current;
   useEffect(() => {

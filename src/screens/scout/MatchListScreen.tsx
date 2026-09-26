@@ -111,7 +111,7 @@ import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
 import { RetroHeader } from '../../components/RetroHeader';
 import { TeamLogo, CompactMatchTeams } from '../../components/ClubLogo';
-import { PulseDot } from '../../components/PulseDot';
+import { PulseDot, ATTENDING_COLOR } from '../../components/PulseDot';
 import { TableRow } from '../../components/table/TableRow';
 
 // Dropdown Optionen
@@ -364,7 +364,7 @@ const MapLegend = ({ showHorizon }: { showHorizon: boolean }) => (
     </View>
     {showHorizon ? (
       <Text style={{ fontSize: 10, fontFamily: MONO, color: RETRO.textMuted }}>
-        Spiele ca. 8 Wochen im Voraus · täglich aktualisiert
+        Spiele ca. 4 Wochen im Voraus · täglich aktualisiert
       </Text>
     ) : null}
   </View>
@@ -3301,7 +3301,7 @@ export function MatchListScreen({ navigation, route }: any) {
                       {!isPastGame && (
                       <TouchableOpacity
                         style={[HARD_SHADOW, {
-                          backgroundColor: '#e8930c', paddingVertical: 5, paddingHorizontal: 10,
+                          backgroundColor: ATTENDING_COLOR, paddingVertical: 5, paddingHorizontal: 10,
                           minHeight: 24, alignItems: 'center', justifyContent: 'center',
                         }]}
                         onPress={() => setConfirmRemoveArea(true)}
