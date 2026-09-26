@@ -370,6 +370,16 @@ const MapLegend = ({ showHorizon }: { showHorizon: boolean }) => (
   </View>
 );
 
+// Retro-Kästchen (Auswahl für den Kalender-Download in "Meine Spiele")
+const SelectBox = ({ checked }: { checked: boolean }) => (
+  <View style={{
+    width: 18, height: 18, borderRadius: 2, borderWidth: 1.5, borderColor: RETRO.text,
+    backgroundColor: checked ? RETRO.text : RETRO.white, alignItems: 'center', justifyContent: 'center',
+  }}>
+    {checked ? <Text style={{ fontSize: 11, fontWeight: '800', color: RETRO.yellow, lineHeight: 13 }}>✓</Text> : null}
+  </View>
+);
+
 const isDfbSynced = (m: Match): boolean =>
   m.source === 'dfb' || m.art === 'Nationalmannschaft' || m.art === 'Hallenturnier';
 
@@ -677,6 +687,7 @@ export function MatchListScreen({ navigation, route }: any) {
   // Archiv: aktuellste zuerst, Anstehend/Meine Spiele: nächste zuerst
   useEffect(() => {
     setSortDirection(viewTab === 'archiv' ? 'desc' : 'asc');
+    setSelectedMatches([]); // Kalender-Auswahl gilt nur im Tab "Meine Spiele"
   }, [viewTab]);
 
   // Mobil: Umschalter Liste/Karte + eingeklapptes Filter-Panel
@@ -1331,7 +1342,6 @@ export function MatchListScreen({ navigation, route }: any) {
       return;
     }
     void exportGamesToCalendar(selectedGames, `spiele_${new Date().toISOString().split('T')[0]}.ics`);
-    showAlert('Erfolg', `${selectedGames.length} Spiele wurden exportiert.`);
 
     // Auswahl zurücksetzen
     setSelectedMatches([]);
@@ -2327,6 +2337,38 @@ export function MatchListScreen({ navigation, route }: any) {
   // Spiele-Liste (Desktop + Mobile): im Web als einfacher ScrollView mit
   // portionsweisem Nachladen (die FlatList-Virtualisierung misst dort die
   // Zeilen nicht und blieb bei 10 Zeilen stehen); nativ als FlatList.
+  // "Meine Spiele": Kalender-Leiste über der Liste (Kästchen je Spiel, Auswahl oder alle als .ics)
+  const calendarBar = viewTab === 'meine' && filteredMatches.length > 0 ? (() => {
+    const visibleIds = filteredMatches.map((m) => m.id);
+    const selCount = visibleIds.filter((id) => selectedMatches.includes(id)).length;
+    const allSel = selCount === visibleIds.length;
+    return (
+      <View style={{
+        flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+        paddingVertical: 8, paddingHorizontal: 12, backgroundColor: RETRO.white,
+        borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder,
+      }}>
+        <TouchableOpacity onPress={toggleSelectAll} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 'auto' }} activeOpacity={0.7}>
+          <SelectBox checked={allSel} />
+          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Alle auswählen</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          disabled={selCount === 0}
+          onPress={exportSelectedToCalendar}
+          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, backgroundColor: RETRO.face, opacity: selCount === 0 ? 0.5 : 1 }]}
+        >
+          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{`Auswahl herunterladen (${selCount})`}</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          onPress={() => void exportGamesToCalendar(filteredMatches, 'meine-spiele.ics')}
+          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, backgroundColor: RETRO.face }]}
+        >
+          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Alle herunterladen</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  })() : null;
+
   const renderGamesList = (style: any) => {
     const empty = (
       <View style={styles.emptyState}>
@@ -2342,6 +2384,7 @@ export function MatchListScreen({ navigation, route }: any) {
           onScroll={(e) => handleListScroll(e, filteredMatches.length)}
           scrollEventThrottle={100}
         >
+          {calendarBar}
           {listData.length === 0
             ? empty
             : listData.map((item) => <React.Fragment key={item.id}>{renderGameRow({ item })}</React.Fragment>)}
@@ -2357,6 +2400,7 @@ export function MatchListScreen({ navigation, route }: any) {
         initialNumToRender={LIST_PAGE}
         onEndReached={() => setListVisibleCount((c) => Math.min(c + LIST_PAGE, filteredMatches.length))}
         onEndReachedThreshold={1}
+        ListHeaderComponent={calendarBar}
         ListEmptyComponent={empty}
       />
     );
@@ -2797,6 +2841,16 @@ export function MatchListScreen({ navigation, route }: any) {
                                   <PulseDot />
                                 </View>
                               ) : null}
+                              {/* Meine Spiele: Kästchen für den Kalender-Download (eigener Klickbereich) */}
+                              {viewTab === 'meine' && !item.isAreaGame ? (
+                                <Pressable
+                                  onPress={(e: any) => { e?.stopPropagation?.(); toggleMatchSelection(item.id); }}
+                                  hitSlop={10}
+                                  style={{ marginLeft: 'auto', paddingLeft: 10, paddingRight: 4 }}
+                                >
+                                  <SelectBox checked={selectedMatches.includes(item.id)} />
+                                </Pressable>
+                              ) : null}
                             </View>
                           );
                         })()}
@@ -2910,15 +2964,6 @@ export function MatchListScreen({ navigation, route }: any) {
                 </TouchableOpacity>
               );
             })()}
-            {viewTab === 'meine' && filteredMatches.length > 0 && (
-              <TouchableOpacity
-                style={[HARD_SHADOW, { backgroundColor: RETRO.white, borderRadius: 2, paddingVertical: 5, paddingHorizontal: 10, minHeight: 25, alignItems: 'center', justifyContent: 'center' }]}
-                onPress={() => void exportGamesToCalendar(filteredMatches, 'meine-spiele.ics')}
-                activeOpacity={0.7}
-              >
-                <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Kalender</Text>
-              </TouchableOpacity>
-            )}
             <TouchableOpacity
               style={[HARD_SHADOW, { backgroundColor: RETRO.headerBg, borderRadius: 2, minHeight: 25, minWidth: 25, alignItems: 'center', justifyContent: 'center' }]}
               onPress={() => setAddMatchModalVisible(true)}
@@ -3120,28 +3165,6 @@ export function MatchListScreen({ navigation, route }: any) {
             >
               <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>+ Event anlegen</Text>
             </TouchableOpacity>
-
-            {/* Meine Spiele als .ics in den Kalender (Apple/Google) */}
-            {viewTab === 'meine' && filteredMatches.length > 0 && (
-              <TouchableOpacity
-                style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, backgroundColor: RETRO.white }]}
-                onPress={() => void exportGamesToCalendar(filteredMatches, 'meine-spiele.ics')}
-              >
-                <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{`In Kalender (${filteredMatches.length})`}</Text>
-              </TouchableOpacity>
-            )}
-
-            {/* Kalender-Export Button (nur wenn Spiele ausgewählt) */}
-            {selectedMatches.length > 0 && (
-              <TouchableOpacity
-                style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, backgroundColor: '#b7cdb7' }]}
-                onPress={exportSelectedToCalendar}
-              >
-                <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>
-                  {selectedMatches.length} exportieren
-                </Text>
-              </TouchableOpacity>
-            )}
           </View>
         </View>
         </>
@@ -3369,15 +3392,6 @@ export function MatchListScreen({ navigation, route }: any) {
                           }}
                         >
                           <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Aufstellung & Scouting</Text>
-                        </TouchableOpacity>
-                      )}
-                      {/* Einzelnes eigenes Spiel in den Kalender */}
-                      {ownMatch && (
-                        <TouchableOpacity
-                          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, alignItems: 'center', justifyContent: 'center' }]}
-                          onPress={() => void exportGamesToCalendar([ownMatch], `spiel-${ownMatch.datum}.ics`)}
-                        >
-                          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>In Kalender</Text>
                         </TouchableOpacity>
                       )}
                     </View>
