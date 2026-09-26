@@ -56,7 +56,10 @@ import {
   buildKmhClubIndex,
   loadDfbKmhIndex,
   kmhClubKey,
+  loadKmhClubIds,
+  teamAge,
   KmhClubIndex,
+  KmhClubIds,
   KmhPlayer,
 } from '../../services/areaGamesService';
 import { GamesMapView, GameMapFeature } from '../../components/GamesMapView';
@@ -149,6 +152,9 @@ interface Match {
   selected?: boolean;
   // Original-Partie (fussball.de-Namen), wenn `spiel` vereinheitlicht wurde
   spielRaw?: string;
+  // Altersklasse je Team aus den fussball.de-Namen (Umgebungs-Spiele): "RB Leipzig U16"
+  // in der "U17 Regionalliga" ist die U16 — für die KMH-Spieler-Tags
+  teamAges?: [string | null, string | null];
   // fussball.de team-ids (Umgebungs-Spiele) für die Wappen-Auflösung über die Vereinsseite
   homeTeamId?: string | null;
   awayTeamId?: string | null;
@@ -545,8 +551,11 @@ export function MatchListScreen({ navigation, route }: any) {
   // Unsere eigenen Spieler (KMH-Spielerübersicht): Zuordnung über hinterlegten Verein + Altersklasse
   const [kmhPlayers, setKmhPlayers] = useState<KmhPlayer[]>([]);
   const [kmhIndex, setKmhIndex] = useState<KmhClubIndex>(new Map());
+  const [kmhClubIds, setKmhClubIds] = useState<KmhClubIds>(new Map());
   useEffect(() => {
-    loadKmhPlayers().then((players) => { setKmhPlayers(players); setKmhIndex(buildKmhClubIndex(players)); }).catch(() => {});
+    Promise.all([loadKmhPlayers(), loadKmhClubIds()])
+      .then(([players, ids]) => { setKmhPlayers(players); setKmhClubIds(ids); setKmhIndex(buildKmhClubIndex(players, ids)); })
+      .catch(() => {});
   }, []);
   // DFB-Termine: unsere Spieler aus der Kaderliste des Lehrgangs/Länderspiels
   const [dfbKmhIndex, setDfbKmhIndex] = useState<Map<string, string[]>>(new Map());
@@ -568,9 +577,11 @@ export function MatchListScreen({ navigation, route }: any) {
       if (!spiel) continue;
       const [h, ...rest] = spiel.split(' - ');
       if (!rest.length) continue;
-      for (const team of [h, rest.join(' - ')]) {
-        for (const n of kmhIndex.get(kmhClubKey(team, age)) || []) if (!out.includes(n)) out.push(n);
-      }
+      const teams = [h, rest.join(' - ')];
+      teams.forEach((team, i) => {
+        const teamAgeHere = m.teamAges?.[i] || age;
+        for (const n of kmhIndex.get(kmhClubKey(team, teamAgeHere, kmhClubIds)) || []) if (!out.includes(n)) out.push(n);
+      });
     }
     return out;
   };
@@ -715,6 +726,7 @@ export function MatchListScreen({ navigation, route }: any) {
           zeit: g.kickoff_time || '',
           mannschaft: areaAge(g, leagueName(g.league_key)),
           spiel: `${stripAge(g.home_name)} - ${stripAge(g.away_name)}`,
+          teamAges: [teamAge(g.home_name), teamAge(g.away_name)],
           art: areaArt(g),
           ort: venueAddress ? `${venue ? `${venue}, ` : ''}${venueAddress}` : venue,
           fussballDeUrl: g.game_url || undefined,

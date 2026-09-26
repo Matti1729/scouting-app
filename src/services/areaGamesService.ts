@@ -621,16 +621,79 @@ function kmhIsSecond(club: string): boolean {
   const c = (club || '').replace(/\s*\([^)]*\)/g, '').trim();
   return /\b(II|III|U[\s-]?2[0-9])\b/i.test(c) || /\s[23]$/.test(c);
 }
-/** Schlüssel für den Vereins-Abgleich: Altersklasse | Reserve-Flag | Vereinsbasis */
-export function kmhClubKey(teamName: string, age: string): string {
-  const base = clubBase(teamName.replace(/\bJugend\b/gi, ''));
-  return `${age}|${kmhIsSecond(teamName) ? 1 : 0}|${base}`;
+/** Altersklasse aus dem Teamnamen ("RasenBallsport Leipzig U16" -> "U16"), sonst null.
+ *  Geht vor der Altersklasse des Wettbewerbs (U16-Team in der "U17 Regionalliga"). */
+export function teamAge(teamName: string): string | null {
+  const m = (teamName || '').match(/\bU[\s-]?(\d{2})\b/i);
+  if (!m) return null;
+  return parseInt(m[1], 10) >= 20 ? 'Herren' : 'U' + m[1];
+}
+
+/**
+ * Vereins-Identität über berater_clubs (Transfermarkt-ID): gleicht unterschiedliche
+ * Schreibweisen ab ("Dynamo Dresden U19" = "SG Dynamo Dresden", "Arminia Bielefeld" =
+ * "DSC Arminia Bielefeld", "VSG Altglienicke" = "VSG Altglienicke Berlin").
+ * TM führt U19/U17/II mit eigenen IDs, deshalb je Vereinskern die ID der ersten
+ * Mannschaft (Altersklasse + Reserve stecken ohnehin im kmhClubKey).
+ * Gleiche Logik in KMH-App supabase/functions/matchday-notify (Telegram-Spieltag).
+ */
+export type KmhClubIds = Map<string, { id: string; name: string }>;
+
+export async function loadKmhClubIds(): Promise<KmhClubIds> {
+  const { data, error } = await supabase
+    .from('berater_clubs')
+    .select('club_name, tm_club_id')
+    .not('tm_club_id', 'is', null)
+    .limit(5000);
+  const m: KmhClubIds = new Map();
+  if (error) { console.error('berater_clubs laden fehlgeschlagen:', error); return m; }
+  const rows = ((data || []) as any[])
+    .map((c) => ({ name: String(c.club_name), id: String(c.tm_club_id), b: clubBase(c.club_name) }))
+    .filter((r) => r.b);
+  const isFirstTeam = (name: string) => !/\bU[\s-]?\d{2}\b/i.test(name) && !kmhIsSecond(name);
+  const coreId = new Map<string, { id: string; name: string; first: boolean }>();
+  for (const r of rows) {
+    const core = clubCore(r.b);
+    if (!core) continue;
+    const cur = coreId.get(core);
+    const first = isFirstTeam(r.name);
+    if (!cur || (first && !cur.first)) coreId.set(core, { id: r.id, name: r.name, first });
+  }
+  for (const r of rows) {
+    const core = clubCore(r.b);
+    const canon = (core && coreId.get(core)) || r;
+    if (!m.has(r.b)) m.set(r.b, { id: canon.id, name: r.name });
+    if (core && !m.has(`core:${core}`)) m.set(`core:${core}`, { id: canon.id, name: canon.name });
+  }
+  return m;
+}
+
+// fussball.de hängt teils die Stadt an ("VSG Altglienicke Berlin"), TM nicht
+const CITY_SUFFIX = /\s(berlin|münchen|hamburg|köln|bremen|hannover|potsdam)$/;
+
+function kmhClubIdentity(ids: KmhClubIds | undefined, teamName: string): string {
+  const b = clubBase(teamName.replace(/\bJugend\b/gi, ''));
+  if (!ids || ids.size === 0) return b;
+  const pick = (key: string) => {
+    const v = ids.get(key);
+    return v && clubNumbersCompatible(teamName, v.name) ? `tm${v.id}` : undefined;
+  };
+  const tryBase = (x: string) => pick(x) || pick(`core:${clubCore(x)}`);
+  let id = tryBase(b);
+  if (!id && /ae|oe|ue/.test(b)) id = tryBase(b.replace(/ae/g, 'ä').replace(/oe/g, 'ö').replace(/ue/g, 'ü'));
+  if (!id && CITY_SUFFIX.test(b)) id = tryBase(b.replace(CITY_SUFFIX, ''));
+  return id || b;
+}
+
+/** Schlüssel für den Vereins-Abgleich: Altersklasse | Reserve-Flag | Vereins-Identität */
+export function kmhClubKey(teamName: string, age: string, ids?: KmhClubIds): string {
+  return `${age}|${kmhIsSecond(teamName) ? 1 : 0}|${kmhClubIdentity(ids, teamName)}`;
 }
 
 /** kmhClubKey(Verein, Altersklasse) -> Spielernamen */
 export type KmhClubIndex = Map<string, string[]>;
 
-export function buildKmhClubIndex(players: KmhPlayer[]): KmhClubIndex {
+export function buildKmhClubIndex(players: KmhPlayer[], ids?: KmhClubIds): KmhClubIndex {
   const byClub: KmhClubIndex = new Map();
   for (const p of players) {
     if (!p.name || !p.club || /vereinslos/i.test(p.club)) continue;
@@ -638,7 +701,7 @@ export function buildKmhClubIndex(players: KmhPlayer[]): KmhClubIndex {
     // haben keine Spiele in dieser Übersicht und würden sonst falsch am Männer-Team hängen)
     if (p.category && !/fu(ß|ss)ball/i.test(p.category)) continue;
     if (/frauen|women|juniorinnen/i.test(`${p.club} ${p.league}`)) continue;
-    const key = kmhClubKey(p.club, kmhAge(p.club, p.league));
+    const key = kmhClubKey(p.club, kmhAge(p.club, p.league), ids);
     const cur = byClub.get(key) || [];
     if (!cur.includes(p.name)) cur.push(p.name);
     byClub.set(key, cur);
