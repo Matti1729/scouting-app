@@ -3222,7 +3222,8 @@ export function MatchListScreen({ navigation, route }: any) {
                   </TouchableOpacity>
                 </View>
 
-                {areaDetail.changeNote ? infoRow('Änderung', (
+                {/* Nur beim ersten Öffnen nach der Änderung (danach ist change_seen_at gesetzt) */}
+                {areaDetail.changeNote && !areaDetail.changeSeen ? infoRow('Änderung', (
                   <Text style={{ fontSize: 14, fontWeight: '600', flex: 1, textAlign: 'right', color: CHANGE_TAG.text }}>
                     {areaDetail.changeNote}
                   </Text>
