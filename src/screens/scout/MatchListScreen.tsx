@@ -2352,18 +2352,17 @@ export function MatchListScreen({ navigation, route }: any) {
           <SelectBox checked={allSel} />
           <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Alle auswählen</Text>
         </TouchableOpacity>
+        {/* Ein Export-Symbol: lädt die angehakten Spiele als .ics (alle über "Alle auswählen") */}
         <TouchableOpacity
           disabled={selCount === 0}
           onPress={exportSelectedToCalendar}
-          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, backgroundColor: RETRO.face, opacity: selCount === 0 ? 0.5 : 1 }]}
+          accessibilityLabel="Ausgewählte Spiele in den Kalender exportieren"
+          style={[RETRO_BTN, HARD_SHADOW, {
+            minHeight: 24, minWidth: 30, paddingVertical: 3, paddingHorizontal: 7,
+            alignItems: 'center', justifyContent: 'center', backgroundColor: RETRO.face, opacity: selCount === 0 ? 0.4 : 1,
+          }]}
         >
-          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>{`Auswahl herunterladen (${selCount})`}</Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          onPress={() => void exportGamesToCalendar(filteredMatches, 'meine-spiele.ics')}
-          style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, backgroundColor: RETRO.face }]}
-        >
-          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Alle herunterladen</Text>
+          <Ionicons name="share-outline" size={16} color={RETRO.text} />
         </TouchableOpacity>
       </View>
     );
