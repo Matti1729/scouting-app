@@ -332,6 +332,8 @@ const isEventFinished = (startDate: string, endDate: string | null): boolean => 
 // eigenen Tabelle, zählen aber erst mit attending = true zu "Meine Spiele".
 // Tag "einer unserer Spieler" (KMH-Dunkelgrün auf hellem Grün, Retro-Kante)
 const KMH_TAG = { bg: '#dff3e4', border: '#1f6b35', text: '#0f3d2a' };
+// Karten-Punkte (auch in der Legende): Herren blau, Junioren orange, DFB dunkelgrün
+const MAP_COLOR = { herren: '#3b82f6', jugend: '#f59e0b', dfb: '#14532d' };
 // Hinweis "Verlegt / Gegner steht fest / Abgesagt" (Amber wie der fussball.de-Abgleich)
 const CHANGE_TAG = { bg: '#fef3c7', text: '#92400e' };
 const KmhPlayerTag = ({ name }: { name: string }) => (
@@ -340,6 +342,31 @@ const KmhPlayerTag = ({ name }: { name: string }) => (
     paddingHorizontal: 6, paddingVertical: 2,
   }}>
     <Text style={{ fontSize: 11, fontWeight: '600', color: KMH_TAG.text }} numberOfLines={1}>{name}</Text>
+  </View>
+);
+
+// Legende unten links auf der Karte (Anstehend + Meine Spiele)
+const MapLegend = ({ showHorizon }: { showHorizon: boolean }) => (
+  <View
+    pointerEvents="none"
+    style={[HARD_SHADOW, {
+      position: 'absolute', left: 10, bottom: 10, backgroundColor: RETRO.white,
+      paddingVertical: 6, paddingHorizontal: 8, gap: 3,
+    }]}
+  >
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+      {([['herren', 'Herren'], ['jugend', 'Junioren'], ['dfb', 'DFB-Termin']] as const).map(([k, label]) => (
+        <View key={k} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+          <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: MAP_COLOR[k], borderWidth: 1, borderColor: '#ffffff' }} />
+          <Text style={{ fontSize: 10, fontFamily: MONO, color: RETRO.text }}>{label}</Text>
+        </View>
+      ))}
+    </View>
+    {showHorizon ? (
+      <Text style={{ fontSize: 10, fontFamily: MONO, color: RETRO.textMuted }}>
+        Spiele ca. 8 Wochen im Voraus · täglich aktualisiert
+      </Text>
+    ) : null}
   </View>
 );
 
@@ -374,7 +401,9 @@ const dbMatchToMatch = (dbMatch: DbMatch): Match => ({
   lat: dbMatch.lat ?? null,
   lng: dbMatch.lng ?? null,
   venueAddress: dbMatch.location || null,
-  markerColor: dbMatch.source === 'dfb' ? '#14532d' : undefined,
+  markerColor: dbMatch.source === 'dfb'
+    ? MAP_COLOR.dfb
+    : /^U\s?1\d/i.test(dbMatch.age_group || '') ? MAP_COLOR.jugend : MAP_COLOR.herren,
 });
 
 // dfb.de-Seite des Jahrgangs (U15–U21 Männer), z. B. .../u-16/spiele-und-termine
@@ -725,7 +754,7 @@ export function MatchListScreen({ navigation, route }: any) {
     const leagueName = (key: string) => leagues.find((l) => l.league_key === key)?.name || '';
     const groupColor = (key: string) => {
       const g = leagues.find((l) => l.league_key === key)?.marker_group;
-      return g === 'jugend' ? '#f59e0b' : g === 'gemischt' ? '#a855f7' : '#3b82f6';
+      return g === 'jugend' ? MAP_COLOR.jugend : g === 'gemischt' ? '#a855f7' : MAP_COLOR.herren;
     };
     // Heimverein nachschlagen (per fussball.de-Team-ID, sonst Liga+Name):
     // liefert Spielstätte/Koordinaten, wenn das Spiel selbst keine hat.
@@ -3507,6 +3536,7 @@ export function MatchListScreen({ navigation, route }: any) {
                 </View>
                 <View style={{ flex: 1, overflow: 'hidden' }}>
                   <GamesMapView features={mapFeatures} hoverKey={hoveredMapKey} />
+                  <MapLegend showHorizon={viewTab === 'anstehend'} />
                 </View>
               </View>
             </View>
@@ -3522,6 +3552,7 @@ export function MatchListScreen({ navigation, route }: any) {
           ) : (
             <View style={[HARD_SHADOW_LG, { flex: 1, overflow: 'hidden' }]}>
               <GamesMapView features={mapFeatures} hoverKey={hoveredMapKey} />
+              <MapLegend showHorizon={viewTab === 'anstehend'} />
             </View>
           )}
         </View>
