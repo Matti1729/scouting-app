@@ -167,6 +167,9 @@ interface Match {
   dfbUrl?: string | null;
   // DFB-Termin zu "Meine Spiele" hinzugefügt ("Ich bin beim Spiel")
   attending?: boolean;
+  // Automatisch übernommene fussball.de-Änderung (sync-own-matches) + schon angesehen?
+  changeNote?: string | null;
+  changeSeen?: boolean;
   // DFB-Termin: Kader-Überschrift + Datencenter-Spielseite (Aufstellung)
   kaderTitle?: string | null;
   dfbMatchUrl?: string | null;
@@ -328,6 +331,8 @@ const isEventFinished = (startDate: string, endDate: string | null): boolean => 
 // eigenen Tabelle, zählen aber erst mit attending = true zu "Meine Spiele".
 // Tag "einer unserer Spieler" (KMH-Dunkelgrün auf hellem Grün, Retro-Kante)
 const KMH_TAG = { bg: '#dff3e4', border: '#1f6b35', text: '#0f3d2a' };
+// Hinweis "Verlegt / Gegner steht fest / Abgesagt" (Amber wie der fussball.de-Abgleich)
+const CHANGE_TAG = { bg: '#fef3c7', text: '#92400e' };
 const KmhPlayerTag = ({ name }: { name: string }) => (
   <View style={{
     backgroundColor: KMH_TAG.bg, borderWidth: 1.5, borderColor: KMH_TAG.border, borderRadius: 3,
@@ -360,6 +365,8 @@ const dbMatchToMatch = (dbMatch: DbMatch): Match => ({
   source: dbMatch.source || null,
   dfbUrl: dbMatch.source === 'dfb' ? dfbTerminePageUrl(dbMatch.age_group) : null,
   attending: !!dbMatch.attending,
+  changeNote: dbMatch.change_note || null,
+  changeSeen: !!dbMatch.change_seen_at,
   kaderTitle: dbMatch.kader_title || null,
   dfbMatchUrl: dbMatch.dfb_match_url || null,
   // DFB-Termine: Spielort auf der Karte (dunkelgrüner Marker)
@@ -587,6 +594,17 @@ export function MatchListScreen({ navigation, route }: any) {
   };
   // Detail-Modal für Umgebungs-Spiele (+ "Zu Meine Spiele hinzufügen")
   const [areaDetail, setAreaDetail] = useState<Match | null>(null);
+  // Änderungshinweis (sync-own-matches) gilt als gelesen, sobald das Spiel geöffnet wird;
+  // im offenen Modal bleibt er sichtbar, in der Liste verschwindet er
+  useEffect(() => {
+    const m = areaDetail;
+    if (!m || m.isAreaGame || !m.changeNote || m.changeSeen) return;
+    updateMatch(m.id, { change_seen_at: new Date().toISOString() } as any)
+      .then((res) => {
+        if (res.success) setMatches((prev) => prev.map((x) => (x.id === m.id ? { ...x, changeSeen: true } : x)));
+      })
+      .catch(() => {});
+  }, [areaDetail?.id]);
 
   // Vom Dashboard: "openMatchId" öffnet das Spiel-Popup, sobald die Daten da sind
   const pendingOpenRef = useRef<string | null>(null);
@@ -2768,6 +2786,16 @@ export function MatchListScreen({ navigation, route }: any) {
                                     </Text>
                                   </View>
                                 ) : null}
+                                {/* Automatisch übernommene Änderung (verlegt / Gegner steht fest / abgesagt), bis das Spiel geöffnet wurde */}
+                                {item.changeNote && !item.changeSeen ? (
+                                  <View style={{ flexDirection: 'row', marginTop: 4 }}>
+                                    <View style={{ backgroundColor: CHANGE_TAG.bg, borderRadius: 3, paddingHorizontal: 6, paddingVertical: 2, ...HARD_SHADOW }}>
+                                      <Text style={{ fontSize: 11, fontWeight: '600', color: CHANGE_TAG.text }} numberOfLines={1}>
+                                        {item.changeNote}
+                                      </Text>
+                                    </View>
+                                  </View>
+                                ) : null}
                                 {/* Unsere Spieler: immer in eigener Zeile unter der Partie (Zeile sonst zu voll) */}
                                 {hasKmh ? (
                                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4, marginTop: 4 }}>
@@ -3215,6 +3243,11 @@ export function MatchListScreen({ navigation, route }: any) {
                   </TouchableOpacity>
                 </View>
 
+                {areaDetail.changeNote ? infoRow('Änderung', (
+                  <Text style={{ fontSize: 14, fontWeight: '600', flex: 1, textAlign: 'right', color: CHANGE_TAG.text }}>
+                    {areaDetail.changeNote}
+                  </Text>
+                )) : null}
                 {infoRow('Datum', (
                   <View style={{ flex: 1, flexDirection: 'row', alignItems: 'baseline', justifyContent: 'flex-end', gap: 8 }}>
                     {areaDetail.datum === new Date().toISOString().slice(0, 10) ? (

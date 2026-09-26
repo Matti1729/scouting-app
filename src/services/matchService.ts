@@ -33,6 +33,11 @@ export interface DbMatch {
   // Koordinaten (DFB-Termine, von dfb-sync geokodiert)
   lat?: number | null;
   lng?: number | null;
+  // Abgleich "Meine Spiele" mit fussball.de (Edge Function sync-own-matches):
+  // "Verlegt · vorher 07.10. 18:30" / "Gegner steht fest" / "Abgesagt"; Hinweis bis geöffnet
+  change_note?: string | null;
+  changed_at?: string | null;
+  change_seen_at?: string | null;
 }
 
 export interface DbLineup {
