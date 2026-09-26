@@ -2348,10 +2348,6 @@ export function MatchListScreen({ navigation, route }: any) {
         paddingVertical: 8, paddingHorizontal: 12, backgroundColor: RETRO.white,
         borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder,
       }}>
-        <TouchableOpacity onPress={toggleSelectAll} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginRight: 'auto' }} activeOpacity={0.7}>
-          <SelectBox checked={allSel} />
-          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Alle auswählen</Text>
-        </TouchableOpacity>
         {/* Ein Export-Symbol: lädt die angehakten Spiele als .ics (alle über "Alle auswählen") */}
         <TouchableOpacity
           disabled={selCount === 0}
@@ -2359,10 +2355,15 @@ export function MatchListScreen({ navigation, route }: any) {
           accessibilityLabel="Ausgewählte Spiele in den Kalender exportieren"
           style={[RETRO_BTN, HARD_SHADOW, {
             minHeight: 24, minWidth: 30, paddingVertical: 3, paddingHorizontal: 7,
-            alignItems: 'center', justifyContent: 'center', backgroundColor: RETRO.face, opacity: selCount === 0 ? 0.4 : 1,
+            alignItems: 'center', justifyContent: 'center', backgroundColor: RETRO.face, opacity: selCount === 0 ? 0.4 : 1, marginRight: 'auto',
           }]}
         >
           <Ionicons name="share-outline" size={16} color={RETRO.text} />
+        </TouchableOpacity>
+        {/* "Alle auswählen" rechts: Kästchen genau über den Kästchen der Spielzeilen (paddingRight wie dort) */}
+        <TouchableOpacity onPress={toggleSelectAll} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingRight: 4 }} activeOpacity={0.7}>
+          <Text style={{ fontSize: 11, fontWeight: '600', color: RETRO.text }}>Alle auswählen</Text>
+          <SelectBox checked={allSel} />
         </TouchableOpacity>
       </View>
     );
