@@ -2,6 +2,7 @@
 // "Zum Kalender hinzufügen", Android (Google Kalender) importiert sie.
 // - feste UID je Spiel: erneuter Import aktualisiert den Termin statt ihn zu doppeln
 // - Zeiten in Europe/Berlin (mit VTIMEZONE), Spiele ohne Uhrzeit / mehrtägige Termine ganztägig
+// - Titel "U19 · Heim – Gast", Notizen "Wettbewerb: …" + "Spieler: …" (nur wenn einer von uns spielt)
 // - Dauer 2 Stunden, Erinnerung 1 Stunde vorher
 import { Platform, Share } from 'react-native';
 
@@ -16,6 +17,7 @@ export interface CalendarGame {
   ort?: string | null;
   fussballDeUrl?: string | null;
   players?: string[]; // unsere Spieler in diesem Spiel
+  wettbewerb?: string | null; // "U19 Nachwuchsliga Gr. E", "Verbandspokal", sonst Spielart
 }
 
 const VTIMEZONE_BERLIN = [
@@ -76,7 +78,7 @@ export function buildIcs(games: CalendarGame[]): string {
     'PRODID:-//KMH Scouting//Meine Spiele//DE',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
-    'X-WR-CALNAME:Meine Spiele (Scouting)',
+    // Kein X-WR-CALNAME: beim Import wählt Matti "Arbeit/Termine" (Name würde einen neuen Kalender vorschlagen)
     ...VTIMEZONE_BERLIN,
   ];
   for (const g of games) {
@@ -86,11 +88,11 @@ export function buildIcs(games: CalendarGame[]): string {
     const time = (g.zeit || '').match(/^(\d{1,2}):(\d{2})/);
     const [home, ...rest] = (g.spiel || '').split(' - ');
     const title = rest.length ? `${home} – ${rest.join(' - ')}` : g.spiel;
-    const summary = [g.mannschaft && g.mannschaft !== 'Herren' ? g.mannschaft : '', title].filter(Boolean).join(' · ');
+    // Titel: Altersklasse + Partie; Notizen: Wettbewerb + unsere Spieler (Matti, 2026-09-27)
+    const summary = [g.mannschaft || 'Herren', title].filter(Boolean).join(' · ');
     const desc = [
-      [g.mannschaft, g.art].filter(Boolean).join(' · '),
-      g.players?.length ? `Unsere Spieler: ${g.players.join(', ')}` : '',
-      g.fussballDeUrl || '',
+      `Wettbewerb: ${g.wettbewerb || g.art || '–'}`,
+      g.players?.length ? `Spieler: ${g.players.join(', ')}` : '',
     ].filter(Boolean).join('\n');
 
     lines.push('BEGIN:VEVENT', `UID:${g.id}@kmh-scouting`, `DTSTAMP:${stamp}`);

@@ -176,6 +176,8 @@ interface Match {
   dfbMatchUrl?: string | null;
   // Spiele "in der Umgebung" (aus der KMH-Datenbank, read-only)
   isAreaGame?: boolean;
+  // Wettbewerb für Kalender-Notizen ("U19 Nachwuchsliga Gr. E", "Verbandspokal"), nur Umgebungs-Spiele
+  wettbewerb?: string | null;
   lat?: number | null;
   lng?: number | null;
   venueAddress?: string | null;
@@ -379,6 +381,15 @@ const SelectBox = ({ checked }: { checked: boolean }) => (
     {checked ? <Text style={{ fontSize: 11, fontWeight: '800', color: RETRO.yellow, lineHeight: 13 }}>✓</Text> : null}
   </View>
 );
+
+/** Wettbewerbs-Label: Sammel-Schlüssel ("U15 Ligen") -> fussball.de-Wettbewerb; Pokal/Testspiel -> Wettbewerb; sonst Liga */
+function competitionLabel(leagueName: string, wettbewerb: string | null): string {
+  const raw = (wettbewerb || '').trim();
+  const w = /freundschaft/i.test(raw) ? 'Testspiel' : raw;
+  if (/ligen$/i.test(leagueName)) return w || leagueName;
+  if (w && !/liga|bundesliga/i.test(w)) return w;
+  return leagueName || w;
+}
 
 const isDfbSynced = (m: Match): boolean =>
   m.source === 'dfb' || m.art === 'Nationalmannschaft' || m.art === 'Hallenturnier';
@@ -788,6 +799,7 @@ export function MatchListScreen({ navigation, route }: any) {
           spiel: `${stripAge(g.home_name)} - ${stripAge(g.away_name)}`,
           teamAges: [teamAge(g.home_name), teamAge(g.away_name)],
           art: areaArt(g),
+          wettbewerb: competitionLabel(leagueName(g.league_key), g.wettbewerb),
           ort: venueAddress ? `${venue ? `${venue}, ` : ''}${venueAddress}` : venue,
           fussballDeUrl: g.game_url || undefined,
           isAreaGame: true,
@@ -1332,8 +1344,18 @@ export function MatchListScreen({ navigation, route }: any) {
 
   // Kalender-Export (.ics, siehe utils/calendarExport): feste UID je Spiel, Zeiten in
   // Europe/Berlin, unsere Spieler + fussball.de-Link in der Beschreibung
-  const exportGamesToCalendar = (games: Match[], filename: string) =>
-    downloadIcs(games.map((g) => ({ ...g, players: kmhPlayersFor(g) })), filename);
+  const exportGamesToCalendar = (games: Match[], filename: string) => {
+    // Wettbewerb eigener Spiele vom gleichen Umgebungs-Spiel (gleicher fussball.de-Link)
+    const compByUrl = new Map(areaMatches.filter((a) => a.fussballDeUrl && a.wettbewerb).map((a) => [a.fussballDeUrl as string, a.wettbewerb as string]));
+    return downloadIcs(
+      games.map((g) => ({
+        ...g,
+        wettbewerb: g.wettbewerb || (g.fussballDeUrl ? compByUrl.get(g.fussballDeUrl) : null) || g.art,
+        players: kmhPlayersFor(g),
+      })),
+      filename,
+    );
+  };
 
   const exportSelectedToCalendar = () => {
     const selectedGames = matches.filter(m => selectedMatches.includes(m.id));
