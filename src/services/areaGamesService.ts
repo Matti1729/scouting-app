@@ -176,6 +176,20 @@ export function clubNumbersCompatible(a: string, b: string): boolean {
   return false;
 }
 
+/**
+ * Kern-Treffer mit nur EINEM Namensteil ("hertha") zusätzlich absichern: trägt der
+ * fussball.de-Name eine Gründungszahl, muss der gespeicherte Verein sie auch tragen.
+ * Sonst landet "FC Hertha 03" (Zehlendorf) auf "Hertha BSC" (Matti 2026-09-29).
+ */
+function coreMatchOk(teamName: string, storedName: string, key: string): boolean {
+  if (!key.startsWith('core:') || key.slice(5).split(' ').length > 1) return true;
+  const na = clubNumbers(teamName);
+  if (!na.size) return true;
+  const nb = clubNumbers(storedName);
+  for (const n of na) if (nb.has(n)) return true;
+  return false;
+}
+
 /** Vereins-Kern ohne Rechtsform-Präfixe ("fc würzburger kickers" -> "würzburger kickers")
  *  — Fallback, wenn fussball.de und Transfermarkt den Verein unterschiedlich führen */
 function clubCore(base: string): string {
@@ -212,7 +226,7 @@ export function canonicalClubName(map: Map<string, string>, teamName: string): s
     const disp = map.get(`canon:${key}`);
     if (!disp) return undefined;
     const storedName = map.get(`name:${key}`);
-    return storedName && !clubNumbersCompatible(teamName, storedName) ? undefined : disp;
+    return storedName && (!clubNumbersCompatible(teamName, storedName) || !coreMatchOk(teamName, storedName, key)) ? undefined : disp;
   };
   let disp = pick(b) || pick(`core:${clubCore(b)}`);
   if (!disp && /ae|oe|ue/.test(b)) {
@@ -378,7 +392,7 @@ export function clubLogoUriFor(map: Map<string, string>, teamName: string): stri
     const id = map.get(key);
     if (!id) return undefined;
     const storedName = map.get(`name:${key}`);
-    return storedName && !clubNumbersCompatible(teamName, storedName) ? undefined : id;
+    return storedName && (!clubNumbersCompatible(teamName, storedName) || !coreMatchOk(teamName, storedName, key)) ? undefined : id;
   };
   let clubId = pick(b) || pick(`core:${clubCore(b)}`);
   if (!clubId && /ae|oe|ue/.test(b)) {
@@ -676,7 +690,7 @@ function kmhClubIdentity(ids: KmhClubIds | undefined, teamName: string): string 
   if (!ids || ids.size === 0) return b;
   const pick = (key: string) => {
     const v = ids.get(key);
-    return v && clubNumbersCompatible(teamName, v.name) ? `tm${v.id}` : undefined;
+    return v && clubNumbersCompatible(teamName, v.name) && coreMatchOk(teamName, v.name, key) ? `tm${v.id}` : undefined;
   };
   const tryBase = (x: string) => pick(x) || pick(`core:${clubCore(x)}`);
   let id = tryBase(b);
