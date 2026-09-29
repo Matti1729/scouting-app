@@ -39,9 +39,8 @@ const POPUP_CSS =
   + '.mp-icon{flex:none;width:32px;height:32px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;border:0;padding:0;background:transparent;color:#5b6470;cursor:pointer;text-decoration:none}'
   + '.mp-route{background:#eef3fd;color:#1d5fd6}'
   + '.mp-icon:focus-visible,.mp-chip:focus-visible,.mp-row:focus-visible,.mp-brow:focus-visible{outline:2px solid #1d5fd6;outline-offset:-2px}'
-  + '.mp-count{padding:0 16px 6px;font-family:ui-monospace,Menlo,monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#5b6470}'
   + '.mp-list{list-style:none;margin:0;padding:0}'
-  + '.mp-scroll{max-height:280px;overflow-y:auto;overscroll-behavior:contain;border-radius:0 0 12px 12px}'
+  + '.mp-scroll{max-height:220px;overflow-y:auto;overscroll-behavior:contain;border-radius:0 0 12px 12px}'
   + '.mp-single{padding-bottom:14px}'
   + '.mp-row{display:grid;grid-template-columns:62px 42px minmax(0,1fr);gap:12px;align-items:center;padding:9px 16px;border-top:1px solid #eef0f2;cursor:pointer}'
   + '.mp-row:hover,.mp-brow:hover{background:#f7f8f9}'
@@ -54,7 +53,7 @@ const POPUP_CSS =
   + '.mp-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 12px}'
   + '.mp-chip{font:inherit;font-size:11px;font-weight:600;padding:5px 10px;border-radius:999px;border:1px solid #d5d9de;background:#fff;color:#1f2328;cursor:pointer}'
   + '.mp-chip.on{background:#1f2328;border-color:#1f2328;color:#fff}'
-  + '.mp-blist{max-height:340px;overflow-y:auto;overscroll-behavior:contain;border-top:1px solid #eef0f2}'
+  + '.mp-blist{max-height:280px;overflow-y:auto;overscroll-behavior:contain;border-top:1px solid #eef0f2}'
   + '.mp-dayh{position:sticky;top:0;z-index:1;background:#f7f8f9;padding:8px 16px 4px;font-family:ui-monospace,Menlo,monospace;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#5b6470}'
   + '.mp-brow{display:grid;grid-template-columns:40px 42px minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 16px;border-bottom:1px solid #f0f1f3;cursor:pointer}'
   + '.mp-btime{font-size:13px;font-weight:700}'
@@ -90,7 +89,7 @@ function renderA(v){var ms=v.matches||[],n=ms.length;
     +'<span class="mp-age" title="'+esc(m.age)+'">'+esc(m.age)+'</span>'
     +'<div class="mp-min"><div class="mp-teams" title="'+esc(pairing(m,' – '))+'">'+esc(pairing(m,' – '))+'</div><div class="mp-type">'+esc(m.type)+'</div></div></li>';}).join('');
   if(n<=1)return '<div class="mp">'+head(v,null,true)+'<ul class="mp-list mp-single">'+rows+'</ul></div>';
-  return '<div class="mp">'+head(v,null,true)+'<div class="mp-count">'+n+' Spiele an diesem Ort</div><ul class="mp-list mp-scroll">'+rows+'</ul></div>';}
+  return '<div class="mp">'+head(v,null,true)+'<ul class="mp-list mp-scroll">'+rows+'</ul></div>';}
 function baseClub(h){return (h||'').replace(/\s+(II|III|2|3)$/,'').trim();}
 function homeClubOf(ms){var c={},best=null,bn=0,tie=false;ms.forEach(function(m){if(!m.away)return;var b=baseClub(m.home);if(!b)return;c[b]=(c[b]||0)+1;});
   for(var k in c){if(c[k]>bn){best=k;bn=c[k];tie=false;}else if(c[k]===bn)tie=true;}return tie?null:best;}
