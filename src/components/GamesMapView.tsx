@@ -42,10 +42,10 @@ const POPUP_CSS =
   + '.mp-list{list-style:none;margin:0;padding:0}'
   + '.mp-scroll{max-height:220px;overflow-y:auto;overscroll-behavior:contain;border-radius:0 0 12px 12px}'
   + '.mp-single{padding-bottom:14px}'
-  + '.mp-row{display:grid;grid-template-columns:70px minmax(0,1fr);gap:12px;align-items:start;padding:9px 16px;border-top:1px solid #eef0f2;cursor:pointer}'
+  + '.mp-row{display:flex;align-items:stretch;border-top:1px solid #c6c2ba;cursor:pointer}'
   + '.mp-row:hover,.mp-brow:hover{background:#f7f8f9}'
-  + '.mp-day{font-family:ui-monospace,Menlo,monospace;font-size:10px;font-weight:700;white-space:nowrap}'
-  + '.mp-time{font-size:13px;font-weight:700;margin-top:1px}'
+  + '.mp-day{font-family:ui-monospace,Menlo,monospace;font-size:10px;font-weight:700;white-space:nowrap;color:#14141e;opacity:.75}'
+  + '.mp-time{font-size:14px;font-weight:800;margin-top:1px;color:#14141e}'
   + '.mp-age{display:block;width:42px;box-sizing:border-box;padding:3px 0;border-radius:6px;background:#eef3fd;color:#1d4fb8;font-size:10px;font-weight:700;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
   + '.mp-min{min-width:0}'
   + '.mp-teams{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
@@ -57,8 +57,10 @@ const POPUP_CSS =
   + '.mp-team span{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
   + '.mp-type{font-size:10px;color:#5b6470;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}'
   // Heute: Datumsblock grün wie in der Spiele-Liste (#22c55e)
-  + '.mp-dcell{padding:4px 6px;margin:-4px 0}'
+  // Datumsblock exakt wie in der Spiele-Liste: 86px, gelb (heute grün), zentriert
+  + '.mp-dcell{flex:none;width:86px;box-sizing:border-box;padding:8px 4px;background:#f2c230;border-right:1px solid #c6c2ba;display:flex;flex-direction:column;align-items:center;justify-content:center}'
   + '.mp-dcell.today{background:#22c55e}'
+  + '.mp-row .mp-min{flex:1;padding:8px 12px}'
   + '.mp-dayh.today{background:#22c55e;color:#1f2328}'
   + '.mp-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 12px}'
   + '.mp-chip{font:inherit;font-size:11px;font-weight:600;padding:5px 10px;border-radius:999px;border:1px solid #d5d9de;background:#fff;color:#1f2328;cursor:pointer}'
@@ -97,7 +99,7 @@ function teamLine(name,logo){return '<div class="mp-team">'+(logo?'<img src="'+e
 function pairing(m,sep){return m.away?m.home+sep+m.away:m.home;}
 function renderA(v){var ms=v.matches||[],n=ms.length;
   var rows=ms.map(function(m){var d=dt(m.date);
-    return '<li class="mp-row" tabindex="0" data-key="'+esc(m.id)+'"><div class="mp-dcell'+(m.date===TODAY?' today':'')+'"><div class="mp-day">'+(d?WD_S[d.d.getDay()]+' '+d.dm:'')+'</div><div class="mp-time">'+esc(m.time)+'</div></div>'
+    return '<li class="mp-row" tabindex="0" data-key="'+esc(m.id)+'"><div class="mp-dcell'+(m.date===TODAY?' today':'')+'"><div class="mp-day">'+(m.date===TODAY?'Heute':(d?d.dm+m.date.slice(2,4):''))+'</div><div class="mp-time">'+esc(m.time||'–')+'</div></div>'
     +'<div class="mp-min"><div class="mp-type">'+esc([m.age,m.type].filter(Boolean).join(' '))+'</div><div class="mp-dash"></div>'
     +teamLine(m.home,m.homeLogo)+(m.away?teamLine(m.away,m.awayLogo):'')+'</div></li>';}).join('');
   if(n<=1)return '<div class="mp">'+head(v,null,true)+'<ul class="mp-list mp-single">'+rows+'</ul></div>';
