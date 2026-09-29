@@ -66,6 +66,7 @@ export interface DbLineup {
   dfb_games?: number | null;
   dfb_goals?: number | null;
   dfb_profile_url?: string | null;
+  dfb_on_call?: boolean | null; // DFB-Kader: Abschnitt "auf Abruf"
 }
 
 // Input-Typen (ohne auto-generierte Felder)

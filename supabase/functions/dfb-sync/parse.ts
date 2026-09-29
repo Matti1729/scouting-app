@@ -49,6 +49,7 @@ export interface DfbKaderPlayer {
   games: number | null;
   goals: number | null;
   birthDate: string | null;   // "04.02.2010" falls bekannt
+  onCall?: boolean;           // Abschnitt "auf Abruf" (nicht im eigentlichen Kader)
 }
 
 export const AGES = [15, 16, 17, 18, 19, 20, 21] as const;
@@ -345,6 +346,7 @@ export function parsePeopleListHtml(html: string): DfbKaderPlayer[] {
       name,
       club: club || null,
       isGoalkeeper: /torh|torwart|goalkeeper/i.test(section),
+      onCall: /abruf/i.test(section),
       profileUrl: link ? link[1] : null,
       games: games && /^\d+$/.test(games) ? +games : null,
       goals: goals && /^\d+$/.test(goals) ? +goals : null,
@@ -384,6 +386,7 @@ export function parseKaderPdfItems(items: PdfTextItem[]): DfbKaderPlayer[] {
     const line = r.items.map((i) => i.str).join(' ').replace(/\s+/g, ' ').trim();
     if (/^TORH/i.test(line)) { section = 'tw'; continue; }
     if (/^FELDSPIELER/i.test(line)) { section = 'fs'; continue; }
+    if (/^AUF ABRUF/i.test(line)) { section = 'abruf'; continue; }
     if (/^(KADER|NUMMER|TRAINER|BETREUER|STAFF)/i.test(line)) continue;
     if (!section) continue;
     let nummer: string | null = null, nachname = '', vorname = '', verein = '';
@@ -422,6 +425,7 @@ export function parseKaderPdfItems(items: PdfTextItem[]): DfbKaderPlayer[] {
       name: nachname,
       club: verein || null,
       isGoalkeeper: section === 'tw',
+      onCall: section === 'abruf',
       profileUrl: null,
       games: null,
       goals: null,
@@ -434,7 +438,7 @@ export function parseKaderPdfItems(items: PdfTextItem[]): DfbKaderPlayer[] {
 /** Stabiler Hash über den Kader-Inhalt (Änderungserkennung) */
 export async function kaderHash(players: DfbKaderPlayer[]): Promise<string> {
   const norm = players
-    .map((p) => `${p.name}|${p.vorname}|${p.club || ''}|${p.nummer || ''}|${p.isGoalkeeper ? 1 : 0}`)
+    .map((p) => `${p.name}|${p.vorname}|${p.club || ''}|${p.nummer || ''}|${p.isGoalkeeper ? 1 : 0}${p.onCall ? '|abruf' : ''}`)
     .sort()
     .join('\n');
   const buf = await crypto.subtle.digest('SHA-1', new TextEncoder().encode(norm));

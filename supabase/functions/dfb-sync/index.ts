@@ -88,7 +88,7 @@ async function syncLineup(
 ): Promise<{ inserted: number; updated: number; deleted: number }> {
   const { data: existing, error } = await sb
     .from('scouting_lineups')
-    .select('id, name, vorname, source, club, nummer, is_goalkeeper, jahrgang, birth_date, dfb_games, dfb_goals, dfb_profile_url')
+    .select('id, name, vorname, source, club, nummer, is_goalkeeper, jahrgang, birth_date, dfb_games, dfb_goals, dfb_profile_url, dfb_on_call')
     .eq('match_id', matchId)
   if (error) throw error
   const byKey = new Map<string, any>()
@@ -109,6 +109,7 @@ async function syncLineup(
       // Rückennummer nur aus dem Kader übernehmen, wenn noch keine (Aufstellung) gesetzt ist
       if (p.nummer && (ex.nummer || null) !== p.nummer) patch.nummer = p.nummer
       if (p.isGoalkeeper !== !!ex.is_goalkeeper) patch.is_goalkeeper = p.isGoalkeeper
+      if (!!p.onCall !== !!ex.dfb_on_call) patch.dfb_on_call = !!p.onCall
       if (!ex.jahrgang && jahrgang) patch.jahrgang = jahrgang
       if (!ex.birth_date && birth) patch.birth_date = birth
       if (p.games != null && ex.dfb_games !== p.games) patch.dfb_games = p.games
@@ -131,6 +132,7 @@ async function syncLineup(
         jahrgang,
         birth_date: birth,
         is_goalkeeper: p.isGoalkeeper,
+        dfb_on_call: !!p.onCall,
         club: p.club,
         source: 'dfb',
         dfb_games: p.games,

@@ -3465,8 +3465,10 @@ export function MatchListScreen({ navigation, route }: any) {
       {/* DFB-Kaderliste: exakt wie auf dfb.de (Funktion · Name · Geburtstag · Verein · Spiele · Tore) */}
       {kaderView && (() => {
         const { match: km, rows, loading } = kaderView;
-        const gks = rows.filter((r) => r.is_goalkeeper);
-        const field = rows.filter((r) => !r.is_goalkeeper);
+        // "auf Abruf" wie auf dfb.de als eigener Abschnitt unter dem Kader
+        const gks = rows.filter((r) => r.is_goalkeeper && !r.dfb_on_call);
+        const field = rows.filter((r) => !r.is_goalkeeper && !r.dfb_on_call);
+        const onCall = rows.filter((r) => r.dfb_on_call);
         const fmtBirth = (d: string | null) => {
           if (!d) return '—';
           const m = d.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -3540,6 +3542,7 @@ export function MatchListScreen({ navigation, route }: any) {
                     <>
                       {section('Torwart', gks)}
                       {section('Feldspieler', field)}
+                      {section('Auf Abruf', onCall)}
                     </>
                   )}
                 </ScrollView>
