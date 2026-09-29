@@ -42,7 +42,7 @@ const POPUP_CSS =
   + '.mp-list{list-style:none;margin:0;padding:0}'
   + '.mp-scroll{max-height:220px;overflow-y:auto;overscroll-behavior:contain;border-radius:0 0 12px 12px}'
   + '.mp-single{padding-bottom:14px}'
-  + '.mp-row{display:grid;grid-template-columns:62px minmax(0,1fr);gap:12px;align-items:center;padding:9px 16px;border-top:1px solid #eef0f2;cursor:pointer}'
+  + '.mp-row{display:grid;grid-template-columns:70px minmax(0,1fr);gap:12px;align-items:center;padding:9px 16px;border-top:1px solid #eef0f2;cursor:pointer}'
   + '.mp-row:hover,.mp-brow:hover{background:#f7f8f9}'
   + '.mp-day{font-family:ui-monospace,Menlo,monospace;font-size:10px;font-weight:700;white-space:nowrap}'
   + '.mp-time{font-size:13px;font-weight:700;margin-top:1px}'
@@ -50,7 +50,10 @@ const POPUP_CSS =
   + '.mp-min{min-width:0}'
   + '.mp-teams{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
   + '.mp-type{font-size:10px;color:#5b6470;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}'
-  + '.mp-today{color:#16a34a}'
+  // Heute: Datumsblock grün wie in der Spiele-Liste (#22c55e)
+  + '.mp-dcell{padding:4px 6px;margin:-4px 0}'
+  + '.mp-dcell.today{background:#22c55e}'
+  + '.mp-dayh.today{background:#22c55e;color:#1f2328}'
   + '.mp-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 16px 12px}'
   + '.mp-chip{font:inherit;font-size:11px;font-weight:600;padding:5px 10px;border-radius:999px;border:1px solid #d5d9de;background:#fff;color:#1f2328;cursor:pointer}'
   + '.mp-chip.on{background:#1f2328;border-color:#1f2328;color:#fff}'
@@ -87,7 +90,7 @@ function head(v,sub,withAddr){var fa=fullAddr(v);
 function pairing(m,sep){return m.away?m.home+sep+m.away:m.home;}
 function renderA(v){var ms=v.matches||[],n=ms.length;
   var rows=ms.map(function(m){var d=dt(m.date);
-    return '<li class="mp-row" tabindex="0" data-key="'+esc(m.id)+'"><div><div class="mp-day'+(m.date===TODAY?' mp-today':'')+'">'+(d?WD_S[d.d.getDay()]+' '+d.dm:'')+'</div><div class="mp-time">'+esc(m.time)+'</div></div>'
+    return '<li class="mp-row" tabindex="0" data-key="'+esc(m.id)+'"><div class="mp-dcell'+(m.date===TODAY?' today':'')+'"><div class="mp-day">'+(d?WD_S[d.d.getDay()]+' '+d.dm:'')+'</div><div class="mp-time">'+esc(m.time)+'</div></div>'
     +'<div class="mp-min"><div class="mp-type">'+esc([m.age,m.type].filter(Boolean).join(' '))+'</div><div class="mp-teams" title="'+esc(pairing(m,' – '))+'">'+esc(pairing(m,' – '))+'</div></div></li>';}).join('');
   if(n<=1)return '<div class="mp">'+head(v,null,true)+'<ul class="mp-list mp-single">'+rows+'</ul></div>';
   return '<div class="mp">'+head(v,null,true)+'<ul class="mp-list mp-scroll">'+rows+'</ul></div>';}
@@ -98,7 +101,7 @@ function ageNum(a){var m=/U\s?(\d+)/i.exec(a||'');return m?+m[1]:999;}
 function tagOf(t){if(/punkt|liga/i.test(t))return '<span class="mp-tag liga">Liga</span>';if(/freundschaft|test/i.test(t))return '<span class="mp-tag test">Test</span>';return t?'<span class="mp-tag">'+esc(t.replace(/spiel$/i,''))+'</span>':'';}
 function listB(v,club,filter){var ms=(v.matches||[]).filter(function(m){return filter==='Alle'||m.age===filter;});
   if(!ms.length)return{html:'<div class="mp-empty">Keine Spiele für diesen Jahrgang.</div>',n:0};
-  var out='',last=null;ms.forEach(function(m){if(m.date!==last){last=m.date;var d=dt(m.date);out+='<div class="mp-dayh'+(m.date===TODAY?' mp-today':'')+'">'+(d?WD_L[d.d.getDay()]+', '+d.dm:'')+'</div>';}
+  var out='',last=null;ms.forEach(function(m){if(m.date!==last){last=m.date;var d=dt(m.date);out+='<div class="mp-dayh'+(m.date===TODAY?' today':'')+'">'+(d?WD_L[d.d.getDay()]+', '+d.dm:'')+'</div>';}
     var txt=m.away?(club&&m.home===club?'vs '+m.away:m.home+' vs '+m.away):m.home;
     out+='<div class="mp-brow" tabindex="0" data-key="'+esc(m.id)+'"><span class="mp-btime">'+esc(m.time)+'</span><span class="mp-age" title="'+esc(m.age)+'">'+esc(m.age)+'</span><span class="mp-bteams" title="'+esc(txt)+'">'+esc(txt)+'</span>'+tagOf(m.type)+'</div>';});
   return{html:out,n:ms.length};}
