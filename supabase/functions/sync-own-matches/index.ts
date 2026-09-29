@@ -400,7 +400,8 @@ serve(async (req) => {
       const { error: ue } = await sb.from("scouting_matches").update(c.patch).eq("id", c.id);
       if (ue) { log.push(`Update ${c.id}: ${ue.message}`); continue; }
       if (!c.notes.length) continue; // nur Spielort still nachgetragen
-      const date = (c.patch.match_date as string) || "";
+      // Neuer Termin; nur Uhrzeit geändert -> "→ 10.10. 17:00" mit unverändertem Datum
+      const date = (c.patch.match_date as string) || (c.patch.match_time ? pool.find((m) => m.id === c.id)?.match_date || "" : "");
       const when = date ? ` → ${fmtDate(date)}${c.patch.match_time ? ` ${c.patch.match_time}` : ""}` : "";
       const where = c.patch.location && c.notes.some((n) => n.startsWith("Neuer Spielort")) ? `\n📍 ${c.patch.location}` : "";
       const err = await notifyMatti(sb, `📅 <b>Meine Spiele: ${esc(c.notes.join(" · "))}</b>\n${esc(c.spiel)}${esc(when)}${esc(where)}`);
