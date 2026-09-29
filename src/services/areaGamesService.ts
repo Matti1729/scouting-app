@@ -98,6 +98,43 @@ export function areaAge(g: AreaGame, leagueName: string): string {
   return 'Herren';
 }
 
+/**
+ * Spielort aus fussball.de-Feldern zerlegen. `venue` enthält teils schon die Adresse
+ * ("Rasenplatz, Fußballpark BVB Hohenbuschei Platz 1, Adi-Preißler-Allee 9, 44309 Dortmund"),
+ * `venue_address` ebenfalls ("Adi-Preißler-Allee 9, 44309 Dortmund") → beim Verketten stand
+ * die Straße doppelt. Teile werden entdoppelt, Platztyp vorne entfernt, Name und Adresse getrennt.
+ */
+export interface ParsedVenue { name: string | null; street: string | null; zip: string | null; city: string | null; full: string | null }
+export function parseVenue(venue?: string | null, address?: string | null): ParsedVenue {
+  const norm = (x: string) => x.toLowerCase().replace(/str\.|strasse/g, 'straße').replace(/[^a-z0-9äöüß]+/g, '');
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  for (const raw of `${venue || ''},${address || ''}`.split(',')) {
+    const p = raw.replace(/\s+/g, ' ').trim();
+    const k = norm(p);
+    if (!p || !k || seen.has(k)) continue;
+    seen.add(k);
+    parts.push(p);
+  }
+  let zip: string | null = null, city: string | null = null, street: string | null = null;
+  const zi = parts.findIndex((p) => /^\d{5}\s+\S/.test(p));
+  if (zi >= 0) {
+    const m = parts[zi].match(/^(\d{5})\s+(.+)$/)!;
+    zip = m[1]; city = m[2];
+  }
+  const nameParts = parts.filter((_, i) => i !== zi);
+  // Straße = letzter Teil mit Hausnummer (vor der PLZ), sonst Teil mit Straßen-Endung
+  const isStreet = (p: string) => /[a-zäöüß]/i.test(p) && (/\d+\s*[a-z]?(\s*[-/]\s*\d+\s*[a-z]?)?$/i.test(p) || /(str\.|straße|weg|allee|gasse|ring|platz)$/i.test(p) && !/(sport|fußball|rasen|kunstrasen|hart|a-|b-)platz$/i.test(p));
+  for (let i = nameParts.length - 1; i >= 0; i--) {
+    if (isStreet(nameParts[i]) && !/platz\s*\d+$/i.test(nameParts[i])) { street = nameParts[i]; nameParts.splice(i, 1); break; }
+  }
+  // Führender Platztyp ("Rasenplatz", "Kunstrasenplatz 2") ist kein Name, wenn noch etwas folgt
+  if (nameParts.length > 1 && /^(kunst)?rasenplatz\.?\s*\d*$|^hartplatz\.?\s*\d*$|^[a-c]-platz$/i.test(nameParts[0])) nameParts.shift();
+  const name = nameParts.join(', ') || null;
+  const full = [name, street, [zip, city].filter(Boolean).join(' ')].filter(Boolean).join(', ') || null;
+  return { name, street, zip, city, full };
+}
+
 /** Langen Ort-String auf den Spielstätten-Namen kürzen:
  *  "Kunstrasenplatz, Sportplatz Herringhausen-Eickum, Am Sportplatz 18, 32051 …"
  *  -> "Sportplatz Herringhausen-Eickum"; "Stadion an der Gellertstraße" bleibt. */

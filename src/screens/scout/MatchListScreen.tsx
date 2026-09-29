@@ -61,8 +61,10 @@ import {
   KmhClubIndex,
   KmhClubIds,
   KmhPlayer,
+  parseVenue,
+  ParsedVenue,
 } from '../../services/areaGamesService';
-import { GamesMapView, GameMapFeature } from '../../components/GamesMapView';
+import { GamesMapView, GameMapFeature, MapPopupData, MapPopupMatch } from '../../components/GamesMapView';
 import { Image } from 'react-native';
 
 import { RETRO, HARD_SHADOW, HARD_SHADOW_LG, BLUE_GRADIENT, RETRO_BTN, RETRO_THEME, MONO, RETRO_CHIP, RETRO_CHIP_TEXT } from '../../theme/retro';
@@ -288,6 +290,13 @@ const parseDateString = (dateStr: string): Date | null => {
     return new Date(year, month, day);
   }
   return null;
+};
+
+// Datum als ISO "YYYY-MM-DD" (lokal, für Sortierung/Popup der Karte)
+const toIsoDate = (dateStr: string): string | null => {
+  if (/^\d{4}-\d{2}-\d{2}/.test(dateStr || '')) return dateStr.slice(0, 10);
+  const d = parseDateString(dateStr);
+  return d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : null;
 };
 
 // Prüfen ob Event aktuell läuft (zwischen Start- und Enddatum)
@@ -800,7 +809,8 @@ export function MatchListScreen({ navigation, route }: any) {
           teamAges: [teamAge(g.home_name), teamAge(g.away_name)],
           art: areaArt(g),
           wettbewerb: competitionLabel(leagueName(g.league_key), g.wettbewerb),
-          ort: venueAddress ? `${venue ? `${venue}, ` : ''}${venueAddress}` : venue,
+          // venue enthält teils schon die Adresse -> entdoppeln (sonst "Allee 9, Allee 9")
+          ort: venueAddress ? parseVenue(venue, venueAddress).full : venue,
           fussballDeUrl: g.game_url || undefined,
           isAreaGame: true,
           homeTeamId: g.home_team_id || null,
@@ -820,7 +830,7 @@ export function MatchListScreen({ navigation, route }: any) {
     for (const g of missing) {
       const r = await resolveGameVenue(g.game_url as string);
       if (!r?.address) continue;
-      const ortText = r.venue ? `${r.venue}, ${r.address}` : r.address;
+      const ortText = parseVenue(r.venue, r.address).full || r.address;
       setAreaMatches((prev) =>
         prev.map((m) =>
           m.id === `area:${g.match_key}` ? { ...m, ort: ortText, venueAddress: r.address } : m
@@ -2507,36 +2517,51 @@ export function MatchListScreen({ navigation, route }: any) {
     );
   };
 
-  // Karten-Marker: ein Pin je Spielort, Popup mit den Spielen + Maps-Link
+  // Zeile im Karten-Popup -> Spiel wie aus der Liste öffnen
+  const openMapMatch = (key: string) => {
+    const m = filteredMatches.find((x) => x.id === key);
+    if (m) void handleMatchPress(m);
+  };
+
+  // Karten-Marker: ein Pin je Spielort; das Popup (GamesMapView, Variante A/B) bekommt
+  // Platzname, Adresse und die Spiele an diesem Ort als JSON
   const mapFeatures = useMemo<GameMapFeature[]>(() => {
     if (!showMap) return [];
     // Eigene Spiele haben oft (noch) keine Koordinaten: vom gleichen Umgebungs-Spiel übernehmen
     const areaCoords = new Map<string, { lat: number; lng: number }>();
     for (const a of areaMatches) if (a.fussballDeUrl && a.lat != null && a.lng != null) areaCoords.set(a.fussballDeUrl, { lat: a.lat, lng: a.lng });
-    const esc = (s: string) => (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const byLoc: Record<string, { lat: number; lng: number; color: string; blocks: string[]; addrs: Map<string, string>; keys: string[] }> = {};
+    const byLoc: Record<string, { lat: number; lng: number; color: string; venue: ParsedVenue | null; matches: MapPopupMatch[]; keys: string[] }> = {};
     for (const m0 of filteredMatches) {
       const fb = m0.lat == null && m0.fussballDeUrl ? areaCoords.get(m0.fussballDeUrl) : undefined;
       const m = fb ? { ...m0, ...fb } : m0;
       if (m.lat == null || m.lng == null) continue;
       const k = `${m.lat.toFixed(4)},${m.lng.toFixed(4)}`;
-      if (!byLoc[k]) byLoc[k] = { lat: m.lat, lng: m.lng, color: m.markerColor || '#3b82f6', blocks: [], addrs: new Map(), keys: [] };
-      byLoc[k].keys.push(m.id);
-      byLoc[k].blocks.push(
-        `<div style="color:#6b7280">${esc(formatDateGerman(m.datum, m.datumEnde))}${m.zeit ? ` · ${esc(m.zeit)} Uhr` : ''} · ${esc(m.mannschaft)} · ${esc(m.art)}</div>`
-        + `<div style="font-weight:600;margin-bottom:4px">${esc(m.spiel)}</div>`
-      );
-      const q = m.venueAddress || m.ort || '';
-      if (q && !byLoc[k].addrs.has(q)) byLoc[k].addrs.set(q, m.ort || q);
+      if (!byLoc[k]) byLoc[k] = { lat: m.lat, lng: m.lng, color: m.markerColor || '#3b82f6', venue: null, matches: [], keys: [] };
+      const loc = byLoc[k];
+      loc.keys.push(m.id);
+      const [home, away] = (m.spiel || '').split(' - ');
+      loc.matches.push({
+        id: m.id,
+        date: toIsoDate(m.datum) || '',
+        time: m.zeit || '',
+        age: m.mannschaft || '',
+        home: (home || '').trim(),
+        away: (away || '').trim(),
+        type: m.art || '',
+      });
+      // Adresse vom ersten Spiel mit vollständiger Angabe (Straße/PLZ)
+      if (!loc.venue?.street) {
+        const pv = parseVenue(m.ort, m.venueAddress && m.venueAddress !== m.ort ? m.venueAddress : null);
+        if (pv.name || pv.street) loc.venue = pv;
+      }
     }
-    return Object.values(byLoc).map(v => {
-      const addrLinks = Array.from(v.addrs.entries()).slice(0, 3).map(([q, txt]) =>
-        `<div><a href="https://www.google.de/maps?q=${encodeURIComponent(q)}" target="_blank" rel="noopener" style="color:#2563eb;text-decoration:none">${esc(txt)}</a></div>`
-      ).join('');
+    return Object.values(byLoc).map((v) => {
+      const matches = v.matches.sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`));
+      const data: MapPopupData = { name: v.venue?.name || null, street: v.venue?.street || null, zip: v.venue?.zip || null, city: v.venue?.city || null, matches };
       return {
         type: 'Feature' as const,
         geometry: { type: 'Point' as const, coordinates: [v.lng, v.lat] as [number, number] },
-        properties: { color: v.color, keys: v.keys, title: v.blocks.slice(0, 8).join('') + (v.blocks.length > 8 ? '<div>…</div>' : '') + addrLinks },
+        properties: { color: v.color, keys: v.keys, title: '', data: JSON.stringify(data) },
       };
     });
   }, [showMap, filteredMatches, areaMatches]);
@@ -3575,7 +3600,7 @@ export function MatchListScreen({ navigation, route }: any) {
                   <Text style={RETRO_CHIP_TEXT}>KARTE</Text>
                 </View>
                 <View style={{ flex: 1, overflow: 'hidden' }}>
-                  <GamesMapView features={mapFeatures} hoverKey={hoveredMapKey} />
+                  <GamesMapView features={mapFeatures} hoverKey={hoveredMapKey} onOpen={openMapMatch} />
                   <MapLegend showHorizon={viewTab === 'anstehend'} />
                 </View>
               </View>
@@ -3591,7 +3616,7 @@ export function MatchListScreen({ navigation, route }: any) {
             </View>
           ) : (
             <View style={[HARD_SHADOW_LG, { flex: 1, overflow: 'hidden' }]}>
-              <GamesMapView features={mapFeatures} hoverKey={hoveredMapKey} />
+              <GamesMapView features={mapFeatures} hoverKey={hoveredMapKey} onOpen={openMapMatch} />
               <MapLegend showHorizon={viewTab === 'anstehend'} />
             </View>
           )}
