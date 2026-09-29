@@ -58,6 +58,15 @@ function sameVenue(location: string | null, venue: string | null, address: strin
   return false;
 }
 
+/** Paarungs-Slug aus dem Link: ".../spiel/hannover-96-ii-u16-vfl-wolfsburg-u16/-/spiel/ID" */
+function pairingSlug(url: string): string | null {
+  const m = url.match(/\/spiel\/([a-z0-9-]+)\/-\/spiel\//i);
+  return m ? m[1] : null;
+}
+const shiftIso = (iso: string, days: number) =>
+  new Date(Date.parse(`${iso}T12:00:00Z`) + days * 86400000).toISOString().slice(0, 10);
+const dayDiff = (a: string, b: string) => (Date.parse(a) - Date.parse(b)) / 86400000;
+
 /**
  * Prüft aktive (nicht archivierte, zukünftige) Spiele mit fussball.de-URL
  * gegen area_games und liefert je Match-ID die erkannten Abweichungen.
@@ -91,6 +100,27 @@ export async function checkMatchChanges(
         .in('match_key', keys.slice(i, i + 100));
       if (error) throw error;
       for (const row of data || []) areaByKey.set(row.match_key, row);
+    }
+
+    // Neu angesetzte Spiele: fussball.de setzt das alte Spiel ab und legt dieselbe Paarung
+    // mit NEUER Spiel-ID an. Ersatz über den Paarungs-Slug im Link finden und umhängen.
+    for (const { match, key, iso } of candidates) {
+      if (areaByKey.has(key) || iso > soon) continue;
+      const slug = pairingSlug(match.fussball_de_url!);
+      if (!slug) continue;
+      const { data } = await supabase
+        .from('area_games')
+        .select('match_key, kickoff_date, kickoff_time, venue, venue_address, game_url')
+        .like('game_url', `%/spiel/${slug}/-/spiel/%`)
+        .gte('kickoff_date', shiftIso(iso, -21))
+        .lte('kickoff_date', shiftIso(iso, 21));
+      const best = (data || [])
+        .filter(r => r.match_key !== key)
+        .sort((a, b) => Math.abs(dayDiff(a.kickoff_date, iso)) - Math.abs(dayDiff(b.kickoff_date, iso)))[0];
+      if (!best) continue;
+      // Link still auf das neue Spiel umstellen; Datum/Zeit/Ort laufen über den normalen Abgleich
+      const res = await updateMatch(match.id, { fussball_de_url: best.game_url });
+      if (res.success) areaByKey.set(key, best);
     }
 
     for (const { match, key, iso } of candidates) {

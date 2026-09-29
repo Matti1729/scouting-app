@@ -101,6 +101,30 @@ async function fromArea(sb: SupabaseClient, id: string): Promise<Current | null>
   return { date: g.kickoff_date, time: g.kickoff_time || null, home: g.home_name, away: g.away_name, cancelled: false, venue, lat: g.lat, lng: g.lng };
 }
 
+/**
+ * Neu angesetztes Spiel: fussball.de setzt das alte Spiel ab und legt dieselbe Paarung mit
+ * NEUER Spiel-ID an (alte ID verschwindet aus area_games). Ersatz über den Paarungs-Slug
+ * im Link (".../spiel/hannover-96-ii-u16-vfl-wolfsburg-u16/-/spiel/ID"), nächster Termin
+ * innerhalb ±21 Tagen.
+ */
+async function findReplacement(sb: SupabaseClient, m: OwnMatch, id: string): Promise<(Current & { url: string }) | null> {
+  const slug = (m.fussball_de_url.match(/\/spiel\/([a-z0-9-]+)\/-\/spiel\//i) || [])[1];
+  if (!slug) return null;
+  const shift = (d: number) => new Date(Date.parse(`${m.match_date}T12:00:00Z`) + d * 86400000).toISOString().slice(0, 10);
+  const { data } = await sb
+    .from("area_games")
+    .select("match_key, game_url, kickoff_date, kickoff_time, home_name, away_name, venue, venue_address, lat, lng")
+    .like("game_url", `%/spiel/${slug}/-/spiel/%`)
+    .neq("match_key", id)
+    .gte("kickoff_date", shift(-21))
+    .lte("kickoff_date", shift(21));
+  const dist = (d: string) => Math.abs(Date.parse(d) - Date.parse(m.match_date));
+  const g = (data || []).sort((a, b) => dist(a.kickoff_date) - dist(b.kickoff_date))[0];
+  if (!g) return null;
+  const venue = g.venue_address ? `${g.venue ? `${g.venue}, ` : ""}${g.venue_address}` : g.venue || null;
+  return { url: g.game_url, date: g.kickoff_date, time: g.kickoff_time || null, home: g.home_name, away: g.away_name, cancelled: false, venue, lat: g.lat, lng: g.lng };
+}
+
 type PageInfo = Current & { teamIds: string[] };
 
 async function fromPage(url: string): Promise<PageInfo | null> {
@@ -338,13 +362,22 @@ serve(async (req) => {
       const id = gameId(m.fussball_de_url);
       if (!id) continue;
       let cur: Current | null = null;
+      let relinked: string | null = null;
       try {
-        cur = gameday ? await fromFresh(m.fussball_de_url, id) : (await fromArea(sb, id)) || (await fromPage(m.fussball_de_url));
+        cur = gameday ? await fromFresh(m.fussball_de_url, id) : await fromArea(sb, id);
+        // Abgesetzt bzw. nicht mehr in area_games: neu angesetztes Ersatzspiel suchen und umhängen
+        if (!cur || cur.cancelled) {
+          const rep = await findReplacement(sb, m, id);
+          if (rep) { relinked = rep.url; cur = rep; }
+        }
+        if (!cur && !gameday) cur = await fromPage(m.fussball_de_url);
       } catch (e) {
         log.push(`${m.id}: ${(e as Error).message}`);
       }
       if (!cur) continue;
       const d = diff(m, cur) || { patch: {} as Record<string, unknown>, notes: [] as string[] };
+      // Gleicher Termin: nur still umhängen; sonst meldet diff() "Verlegt"
+      if (relinked) d.patch.fussball_de_url = relinked;
       // Koordinaten fehlen oder Ort hat sich geändert -> aus area_games bzw. per Geocoding
       const loc = (d.patch.location as string | null | undefined) ?? m.location;
       if (loc && (m.lat == null || d.patch.location)) {
