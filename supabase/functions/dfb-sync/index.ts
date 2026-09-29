@@ -80,12 +80,39 @@ const playerKey = (name: string, vorname: string) => `${normName(name)}|${normNa
  * vorhandene Spieler (gleicher Name) aktualisieren, neue einfügen, nur
  * DFB-stämmige Zeilen entfernen, die nicht mehr im Kader stehen.
  */
+type KaderChanges = { added: string[]; removed: string[]; toKader: string[]; toAbruf: string[] }
+
+/** Kader-Änderung eines anstehenden Lehrgangs/Turniers als Telegram-Text */
+function kaderChangeText(age: string, title: string, c: KaderChanges): string | null {
+  const esc = (x: string) => x.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const block = (head: string, list: string[]) => list.length ? `\n<b>${head}</b>\n${list.map((n) => `• ${esc(n)}`).join('\n')}` : ''
+  const body = block('Neu im Kader', c.added) + block('Nicht mehr dabei', c.removed)
+    + block('Von Abruf in den Kader', c.toKader) + block('Jetzt auf Abruf', c.toAbruf)
+  return body ? `🇩🇪 <b>${age} Kader geändert</b>\n${esc(title)}${body}` : null
+}
+
+/** Hinweis an Matti (Telegram, wie sync-own-matches) */
+async function notifyMatti(sb: SupabaseClient, text: string): Promise<string | null> {
+  const token = Deno.env.get('TELEGRAM_BOT_TOKEN')
+  if (!token) return 'TELEGRAM_BOT_TOKEN fehlt'
+  const { data } = await sb.from('advisor_telegram_links').select('telegram_chat_id').eq('advisor_id', '892d4dbc-3c5b-4908-9735-ac0ca3794dfc')
+  for (const l of data || []) {
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: Number(l.telegram_chat_id), text, parse_mode: 'HTML', disable_web_page_preview: true }),
+    })
+    if (!r.ok) return `Telegram HTTP ${r.status}`
+  }
+  return null
+}
+
 async function syncLineup(
   sb: SupabaseClient,
   matchId: string,
   players: DfbKaderPlayer[],
   jahrgang: string | null,
-): Promise<{ inserted: number; updated: number; deleted: number }> {
+): Promise<{ inserted: number; updated: number; deleted: number; changes: KaderChanges }> {
   const { data: existing, error } = await sb
     .from('scouting_lineups')
     .select('id, name, vorname, source, club, nummer, is_goalkeeper, jahrgang, birth_date, dfb_games, dfb_goals, dfb_profile_url, dfb_on_call')
@@ -93,15 +120,29 @@ async function syncLineup(
   if (error) throw error
   const byKey = new Map<string, any>()
   for (const row of existing || []) byKey.set(playerKey(row.name, row.vorname || ''), row)
+  // Die App kürzt Vornamen beim Transfermarkt-Abgleich ("Jasper Fynn" -> "Jasper"): dann über
+  // das DFB-Profil bzw. Nachname + ersten Vornamen zuordnen, sonst Löschen + Neuanlage je Lauf
+  const byProfile = new Map<string, any>()
+  const byLoose = new Map<string, any>()
+  const looseKey = (name: string, vorname: string) => `${normName(name)}|${normName((vorname || '').split(/\s+/)[0] || '')}`
+  for (const row of existing || []) {
+    if (row.dfb_profile_url) byProfile.set(row.dfb_profile_url, row)
+    byLoose.set(looseKey(row.name, row.vorname || ''), row)
+  }
+  const matchedIds = new Set<string>()
 
   const seen = new Set<string>()
   const inserts: any[] = []
   let updated = 0
+  const changes: KaderChanges = { added: [], removed: [], toKader: [], toAbruf: [] }
+  const label = (vorname: string | null, name: string, club: string | null) =>
+    `${[vorname, name].filter(Boolean).join(' ')}${club ? ` (${club})` : ''}`
   for (const p of players) {
     const key = playerKey(p.name, p.vorname)
     if (seen.has(key)) continue
     seen.add(key)
-    const ex = byKey.get(key)
+    const ex = byKey.get(key) || (p.profileUrl ? byProfile.get(p.profileUrl) : undefined) || byLoose.get(looseKey(p.name, p.vorname))
+    if (ex) matchedIds.add(ex.id)
     const birth = p.birthDate ? p.birthDate.split('.').reverse().join('-') : null
     if (ex) {
       const patch: any = {}
@@ -109,7 +150,10 @@ async function syncLineup(
       // Rückennummer nur aus dem Kader übernehmen, wenn noch keine (Aufstellung) gesetzt ist
       if (p.nummer && (ex.nummer || null) !== p.nummer) patch.nummer = p.nummer
       if (p.isGoalkeeper !== !!ex.is_goalkeeper) patch.is_goalkeeper = p.isGoalkeeper
-      if (!!p.onCall !== !!ex.dfb_on_call) patch.dfb_on_call = !!p.onCall
+      if (!!p.onCall !== !!ex.dfb_on_call) {
+        patch.dfb_on_call = !!p.onCall
+        ;(p.onCall ? changes.toAbruf : changes.toKader).push(label(p.vorname, p.name, p.club))
+      }
       if (!ex.jahrgang && jahrgang) patch.jahrgang = jahrgang
       if (!ex.birth_date && birth) patch.birth_date = birth
       if (p.games != null && ex.dfb_games !== p.games) patch.dfb_games = p.games
@@ -122,6 +166,7 @@ async function syncLineup(
         updated++
       }
     } else {
+      changes.added.push(`${label(p.vorname, p.name, p.club)}${p.onCall ? ' · auf Abruf' : ''}`)
       inserts.push({
         match_id: matchId,
         team: 'home',
@@ -146,13 +191,16 @@ async function syncLineup(
     if (ie) throw ie
   }
   const toDelete = (existing || [])
-    .filter((r) => r.source === 'dfb' && !seen.has(playerKey(r.name, r.vorname || '')))
+    .filter((r) => r.source === 'dfb' && !matchedIds.has(r.id))
     .map((r) => r.id)
+  for (const r of existing || []) {
+    if (r.source === 'dfb' && !matchedIds.has(r.id)) changes.removed.push(label(r.vorname, r.name, r.club))
+  }
   if (toDelete.length) {
     const { error: de } = await sb.from('scouting_lineups').delete().in('id', toDelete)
     if (de) throw de
   }
-  return { inserted: inserts.length, updated, deleted: toDelete.length }
+  return { inserted: inserts.length, updated, deleted: toDelete.length, changes }
 }
 
 // ---------------------------------------------------------------------------
@@ -399,6 +447,8 @@ serve(async (req) => {
   const existingByKey = new Map<string, any>()
   for (const r of existingRows || []) if (r.source_key) existingByKey.set(r.source_key, r)
   const seenKeys = new Set<string>()
+  const kaderNotices: string[] = []
+  const notifiedSources = new Set<string>()
 
   for (const age of ages) {
     try {
@@ -485,6 +535,13 @@ serve(async (req) => {
                 stats.kaderUnchanged++
               } else {
                 const r = await syncLineup(sb, matchId, players, tp.jahrgang)
+                // Kader eines anstehenden Termins (bis 14 Tage vorher, auch während er läuft) hat sich
+                // geändert -> Matti informieren; erste Zuordnung ist keine Änderung, gleiche Quelle nur 1x
+                const soon = new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10)
+                if (ex?.kader_hash && (t.end || t.start) >= today && t.start <= soon && !notifiedSources.has(src.url)) {
+                  const text = kaderChangeText(`U${age}`, src.title, r.changes)
+                  if (text) { notifiedSources.add(src.url); kaderNotices.push(text) }
+                }
                 stats.lineups.inserted += r.inserted
                 stats.lineups.updated += r.updated
                 stats.lineups.deleted += r.deleted
@@ -555,5 +612,10 @@ serve(async (req) => {
     }
   }
 
-  return json(stats)
+  for (const text of kaderNotices) {
+    const err = await notifyMatti(sb, text)
+    if (err) stats.errors.push(`Telegram: ${err}`)
+  }
+
+  return json({ ...stats, kaderNotices: kaderNotices.length })
 })
