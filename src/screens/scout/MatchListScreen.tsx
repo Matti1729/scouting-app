@@ -63,6 +63,7 @@ import {
   KmhPlayer,
   parseVenue,
   ParsedVenue,
+  knownClubLogoUri,
 } from '../../services/areaGamesService';
 import { GamesMapView, GameMapFeature, MapPopupData, MapPopupMatch } from '../../components/GamesMapView';
 import { Image } from 'react-native';
@@ -2548,6 +2549,9 @@ export function MatchListScreen({ navigation, route }: any) {
         home: (home || '').trim(),
         away: (away || '').trim(),
         type: m.art || '',
+        // Wappen wie in der Liste (DFB-Lehrgang ohne Gegner: DFB-Wappen)
+        homeLogo: knownClubLogoUri(clubLogoMap, !away && m.source === 'dfb' ? 'Deutschland' : (home || '').trim()),
+        awayLogo: away ? knownClubLogoUri(clubLogoMap, away.trim()) : null,
       });
       // Adresse vom ersten Spiel mit vollständiger Angabe (Straße/PLZ)
       if (!loc.venue?.street) {
@@ -2564,7 +2568,7 @@ export function MatchListScreen({ navigation, route }: any) {
         properties: { color: v.color, keys: v.keys, title: '', data: JSON.stringify(data) },
       };
     });
-  }, [showMap, filteredMatches, areaMatches]);
+  }, [showMap, filteredMatches, areaMatches, clubLogoMap]);
 
   // Desktop: Tabellen-Zeile
   const renderMatchRow = ({ item }: { item: Match }) => {

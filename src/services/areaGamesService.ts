@@ -513,6 +513,16 @@ function saveResolveCache(): void {
 }
 const clubWappenUrl = (id: string) => `https://tmssl.akamaized.net/images/wappen/head/${id}.png`;
 
+/** Wappen ohne Netzabfrage: Map-Treffer, sonst bereits aufgelöster Cache-Eintrag (fürs Karten-Popup) */
+export function knownClubLogoUri(map: Map<string, string>, teamName: string): string | null {
+  const direct = clubLogoUriFor(map, teamName);
+  if (direct) return direct;
+  const b = clubBase(teamName);
+  if (!b) return null;
+  const hit = loadResolveCache()[[b, ...Array.from(clubNumbers(teamName)).sort()].join(' ')];
+  return hit && hit !== 'none' ? clubWappenUrl(hit) : null;
+}
+
 export function resolveClubLogoUri(teamName: string, teamId?: string | null): Promise<string | null> {
   const b = clubBase(teamName);
   if (!b) return Promise.resolve(null);

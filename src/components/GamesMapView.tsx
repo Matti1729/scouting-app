@@ -13,7 +13,7 @@ export interface GameMapFeature {
 }
 
 /** Popup-Daten je Spielort (Adressteile jeweils nur einmal) */
-export interface MapPopupMatch { id: string; date: string; time: string; age: string; home: string; away: string; type: string }
+export interface MapPopupMatch { id: string; date: string; time: string; age: string; home: string; away: string; type: string; homeLogo?: string | null; awayLogo?: string | null }
 export interface MapPopupData { name: string | null; street: string | null; zip: string | null; city: string | null; matches: MapPopupMatch[] }
 
 /**
@@ -42,13 +42,19 @@ const POPUP_CSS =
   + '.mp-list{list-style:none;margin:0;padding:0}'
   + '.mp-scroll{max-height:220px;overflow-y:auto;overscroll-behavior:contain;border-radius:0 0 12px 12px}'
   + '.mp-single{padding-bottom:14px}'
-  + '.mp-row{display:grid;grid-template-columns:70px minmax(0,1fr);gap:12px;align-items:center;padding:9px 16px;border-top:1px solid #eef0f2;cursor:pointer}'
+  + '.mp-row{display:grid;grid-template-columns:70px minmax(0,1fr);gap:12px;align-items:start;padding:9px 16px;border-top:1px solid #eef0f2;cursor:pointer}'
   + '.mp-row:hover,.mp-brow:hover{background:#f7f8f9}'
   + '.mp-day{font-family:ui-monospace,Menlo,monospace;font-size:10px;font-weight:700;white-space:nowrap}'
   + '.mp-time{font-size:13px;font-weight:700;margin-top:1px}'
   + '.mp-age{display:block;width:42px;box-sizing:border-box;padding:3px 0;border-radius:6px;background:#eef3fd;color:#1d4fb8;font-size:10px;font-weight:700;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
   + '.mp-min{min-width:0}'
   + '.mp-teams{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
+  // Wie die Liste: AK + Art, kurzer Strich, Heim oben / Gast unten mit Wappen
+  + '.mp-dash{width:28px;height:1px;background:rgba(198,194,186,.9);margin-top:3px}'
+  + '.mp-team{display:flex;align-items:center;gap:6px;min-width:0;margin-top:2px}'
+  + '.mp-dash+.mp-team{margin-top:3px}'
+  + '.mp-team img,.mp-team .mp-nologo{flex:none;width:16px;height:16px;object-fit:contain}'
+  + '.mp-team span{font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
   + '.mp-type{font-size:10px;color:#5b6470;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px}'
   // Heute: Datumsblock grün wie in der Spiele-Liste (#22c55e)
   + '.mp-dcell{padding:4px 6px;margin:-4px 0}'
@@ -87,11 +93,13 @@ function head(v,sub,withAddr){var fa=fullAddr(v);
   +(withAddr&&addrLine(v)?'<div class="mp-addr">'+esc(addrLine(v))+'</div>':'')+'</div>'
   +'<a class="mp-icon mp-route" href="'+esc(routeUrl(v))+'" target="_blank" rel="noopener" aria-label="Route planen: '+esc(fa)+'" title="'+esc(fa)+'">'+ICON_ROUTE+'</a>'
   +'<button type="button" class="mp-icon mp-close" aria-label="Schließen">'+ICON_X+'</button></header>';}
+function teamLine(name,logo){return '<div class="mp-team">'+(logo?'<img src="'+esc(logo)+'" alt="" loading="lazy" onerror="this.style.visibility=\'hidden\'">':'<span class="mp-nologo"></span>')+'<span title="'+esc(name)+'">'+esc(name)+'</span></div>';}
 function pairing(m,sep){return m.away?m.home+sep+m.away:m.home;}
 function renderA(v){var ms=v.matches||[],n=ms.length;
   var rows=ms.map(function(m){var d=dt(m.date);
     return '<li class="mp-row" tabindex="0" data-key="'+esc(m.id)+'"><div class="mp-dcell'+(m.date===TODAY?' today':'')+'"><div class="mp-day">'+(d?WD_S[d.d.getDay()]+' '+d.dm:'')+'</div><div class="mp-time">'+esc(m.time)+'</div></div>'
-    +'<div class="mp-min"><div class="mp-type">'+esc([m.age,m.type].filter(Boolean).join(' '))+'</div><div class="mp-teams" title="'+esc(pairing(m,' – '))+'">'+esc(pairing(m,' – '))+'</div></div></li>';}).join('');
+    +'<div class="mp-min"><div class="mp-type">'+esc([m.age,m.type].filter(Boolean).join(' '))+'</div><div class="mp-dash"></div>'
+    +teamLine(m.home,m.homeLogo)+(m.away?teamLine(m.away,m.awayLogo):'')+'</div></li>';}).join('');
   if(n<=1)return '<div class="mp">'+head(v,null,true)+'<ul class="mp-list mp-single">'+rows+'</ul></div>';
   return '<div class="mp">'+head(v,null,true)+'<ul class="mp-list mp-scroll">'+rows+'</ul></div>';}
 function baseClub(h){return (h||'').replace(/\s+(II|III|2|3)$/,'').trim();}
