@@ -3255,12 +3255,13 @@ export function MatchListScreen({ navigation, route }: any) {
                         </TouchableOpacity>
                       ) : <View style={{ width: 20 }} />}
                       <View style={{ flex: 1, minWidth: 0, flexDirection: 'row', justifyContent: 'center' }}>
-                        <CompactMatchTeams matchName={areaDetail.spiel} size={24} textStyle={{ fontSize: 14, fontWeight: '700', color: RETRO.text }} sepStyle={{ fontSize: 14, fontWeight: '700', color: RETRO.text }} />
+                        <CompactMatchTeams matchName={(areaDetail.source === 'dfb' ? areaDetail.spiel : canonicalSpiel(clubLogoMap, areaDetail.spiel))} size={24} textStyle={{ fontSize: 14, fontWeight: '700', color: RETRO.text }} sepStyle={{ fontSize: 14, fontWeight: '700', color: RETRO.text }} />
                       </View>
                     </>
                   ) : (
                   <Text style={{ fontSize: 16, fontWeight: '700', color: RETRO.text, flex: 1 }} numberOfLines={2}>
-                    {areaDetail.spiel}
+                    {/* Titel wie in der Liste (einheitliche Vereinsnamen) */}
+                    {(areaDetail.source === 'dfb' ? areaDetail.spiel : canonicalSpiel(clubLogoMap, areaDetail.spiel))}
                   </Text>
                   )}
                   {areaDetail.fussballDeUrl && !isMobile ? (

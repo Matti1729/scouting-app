@@ -182,12 +182,23 @@ export function clubNumbersCompatible(a: string, b: string): boolean {
  * Sonst landet "FC Hertha 03" (Zehlendorf) auf "Hertha BSC" (Matti 2026-09-29).
  */
 function coreMatchOk(teamName: string, storedName: string, key: string): boolean {
-  if (!key.startsWith('core:') || key.slice(5).split(' ').length > 1) return true;
+  if (!key.startsWith('core:')) return true;
+  const core = key.slice(5);
+  if (core.split(' ').length > 1) return true;
   const na = clubNumbers(teamName);
-  if (!na.size) return true;
-  const nb = clubNumbers(storedName);
-  for (const n of na) if (nb.has(n)) return true;
-  return false;
+  if (na.size) {
+    const nb = clubNumbers(storedName);
+    if (![...na].some((n) => nb.has(n))) return false;
+  }
+  // Übrige Namensteile (Rechtsform/Zusatz) dürfen sich nicht widersprechen:
+  // "TSG Kaiserslautern" ≠ "1. FC Kaiserslautern", aber "Würzburger Kickers" = "FC Würzburger Kickers"
+  const extra = (n: string) => clubBase(stripAge(n)).split(' ')
+    .map((t) => (t === 'spfr' || t === 'sf' ? 'sportfreunde' : t))
+    .filter((t) => t && t !== core);
+  const ea = extra(teamName);
+  const eb = extra(storedName);
+  if (!ea.length || !eb.length) return true;
+  return ea.every((t) => eb.includes(t)) || eb.every((t) => ea.includes(t));
 }
 
 /** Vereins-Kern ohne Rechtsform-Präfixe ("fc würzburger kickers" -> "würzburger kickers")
