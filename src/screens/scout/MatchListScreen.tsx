@@ -2521,7 +2521,8 @@ export function MatchListScreen({ navigation, route }: any) {
   // Zeile im Karten-Popup -> Spiel wie aus der Liste öffnen
   const openMapMatch = (key: string) => {
     const m = filteredMatches.find((x) => x.id === key);
-    if (m) void handleMatchPress(m);
+    // Genau wie ein Klick auf die Listenzeile: Spiel-Modal (Archiv: Aufstellungs-Modal)
+    if (m) { if (viewTab === 'archiv' && !m.isAreaGame) void handleMatchPress(m); else setAreaDetail(m); }
   };
 
   // Karten-Marker: ein Pin je Spielort; das Popup (GamesMapView, Variante A/B) bekommt
@@ -2544,6 +2545,8 @@ export function MatchListScreen({ navigation, route }: any) {
       loc.matches.push({
         id: m.id,
         date: toIsoDate(m.datum) || '',
+        // Mehrtägig (DFB-Lehrgang/Turnier): Beginn – Ende wie im Datumsblock der Liste
+        dateEnd: m.datumEnde && m.datumEnde !== m.datum ? toIsoDate(m.datumEnde) : null,
         time: m.zeit || '',
         age: m.mannschaft || '',
         home: (home || '').trim(),

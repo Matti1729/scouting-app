@@ -13,7 +13,7 @@ export interface GameMapFeature {
 }
 
 /** Popup-Daten je Spielort (Adressteile jeweils nur einmal) */
-export interface MapPopupMatch { id: string; date: string; time: string; age: string; home: string; away: string; type: string; homeLogo?: string | null; awayLogo?: string | null }
+export interface MapPopupMatch { id: string; date: string; dateEnd?: string | null; time: string; age: string; home: string; away: string; type: string; homeLogo?: string | null; awayLogo?: string | null }
 export interface MapPopupData { name: string | null; street: string | null; zip: string | null; city: string | null; matches: MapPopupMatch[] }
 
 /**
@@ -45,6 +45,8 @@ const POPUP_CSS =
   + '.mp-row{display:flex;align-items:stretch;border-top:1px solid #c6c2ba;cursor:pointer}'
   + '.mp-row:hover,.mp-brow:hover{background:#f7f8f9}'
   + '.mp-day{font-family:ui-monospace,Menlo,monospace;font-size:10px;font-weight:700;white-space:nowrap;color:#14141e;opacity:.75}'
+  // Mehrtägig wie in der Liste: Beginn / - / Ende, Daten fett und voll deckend
+  + '.mp-range .mp-day{opacity:1;margin-top:1px}.mp-range .mp-day:first-child{margin-top:0}.mp-range .mp-sep{font-weight:400;opacity:.75}'
   + '.mp-time{font-size:14px;font-weight:800;margin-top:1px;color:#14141e}'
   + '.mp-age{display:block;width:42px;box-sizing:border-box;padding:3px 0;border-radius:6px;background:#eef3fd;color:#1d4fb8;font-size:10px;font-weight:700;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'
   + '.mp-min{min-width:0}'
@@ -85,6 +87,9 @@ var curPopup=null;
 var TODAY=(function(){var t=new Date();return t.getFullYear()+'-'+('0'+(t.getMonth()+1)).slice(-2)+'-'+('0'+t.getDate()).slice(-2);})();
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
 function dt(iso){var m=/^(\d{4})-(\d{2})-(\d{2})/.exec(iso||'');if(!m)return null;return{d:new Date(+m[1],+m[2]-1,+m[3]),dm:m[3]+'.'+m[2]+'.'};}
+// Heute oder laufender mehrtägiger Termin -> grüner Block (wie isEventActive in der Liste)
+function isToday(m){return m.dateEnd?(m.date<=TODAY&&TODAY<=m.dateEnd):m.date===TODAY;}
+function ddmmyy(iso){var d=dt(iso);return d?d.dm+iso.slice(2,4):'';}
 function zipCity(v){return [v.zip,v.city].filter(Boolean).join(' ');}
 function addrLine(v){return [v.street,zipCity(v)].filter(Boolean).join(' · ');}
 function fullAddr(v){return [v.name,v.street,zipCity(v)].filter(Boolean).join(', ');}
@@ -99,7 +104,8 @@ function teamLine(name,logo){return '<div class="mp-team">'+(logo?'<img src="'+e
 function pairing(m,sep){return m.away?m.home+sep+m.away:m.home;}
 function renderA(v){var ms=v.matches||[],n=ms.length;
   var rows=ms.map(function(m){var d=dt(m.date);
-    return '<li class="mp-row" tabindex="0" data-key="'+esc(m.id)+'"><div class="mp-dcell'+(m.date===TODAY?' today':'')+'"><div class="mp-day">'+(m.date===TODAY?'Heute':(d?d.dm+m.date.slice(2,4):''))+'</div><div class="mp-time">'+esc(m.time||'–')+'</div></div>'
+    return '<li class="mp-row" tabindex="0" data-key="'+esc(m.id)+'"><div class="mp-dcell'+(m.dateEnd?' mp-range':'')+(isToday(m)?' today':'')+'">'+(m.dateEnd?'<div class="mp-day">'+ddmmyy(m.date)+'</div><div class="mp-day mp-sep">-</div><div class="mp-day">'+ddmmyy(m.dateEnd)+'</div>'
+      :'<div class="mp-day">'+(m.date===TODAY?'Heute':ddmmyy(m.date))+'</div><div class="mp-time">'+esc(m.time||'–')+'</div>')+'</div>'
     +'<div class="mp-min"><div class="mp-type">'+esc([m.age,m.type].filter(Boolean).join(' '))+'</div><div class="mp-dash"></div>'
     +teamLine(m.home,m.homeLogo)+(m.away?teamLine(m.away,m.awayLogo):'')+'</div></li>';}).join('');
   if(n<=1)return '<div class="mp">'+head(v,null,true)+'<ul class="mp-list mp-single">'+rows+'</ul></div>';
