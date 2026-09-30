@@ -1,248 +1,274 @@
+// Login/Registrierung der Scouting-App im gleichen 19b-Layout wie die KMH-App
+// (Entwurf claude.ai/artifact/WkyeALcK5S3N9gXHSPhvuY). Alle Schritte laufen in diesem
+// Screen (die Scouting-App hat vor dem Login keinen eigenen Stack):
+// Login -> Einladungscode -> Registrieren -> Code aus der Mail
+// Login -> Passwort vergessen -> Code -> Neues Passwort
 import React, { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, Alert, Platform, ActivityIndicator, Modal, Pressable } from 'react-native';
+import { View, Text, TextInput, StyleSheet, Modal, Pressable, Platform, ScrollView } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../contexts/AuthContext';
-import { useTheme } from '../../contexts/ThemeContext';
 import { supabase } from '../../config/supabase';
+import { useIsMobile } from '../../hooks/useIsMobile';
+import {
+  PD, FONT, usePlayerDarkFont, AuthBrand, AuthBlock, AuthCard, AuthField, AuthCodeField,
+  AuthButton, AuthGhostButton, AuthLink, AuthError, AuthInfo,
+} from '../../components/AuthUI';
 
-const showAlert = (title: string, message: string) => {
-  if (Platform.OS === 'web') {
-    window.alert(`${title}\n\n${message}`);
-  } else {
-    Alert.alert(title, message, [{ text: 'OK' }]);
-  }
-};
+type Mode = 'login' | 'register' | 'verify' | 'forgot' | 'recoveryCode' | 'newPassword';
+
+const codeErrorText = (msg: string) => /expired|invalid/i.test(msg)
+  ? 'Der Code ist falsch oder abgelaufen. Prüfe die Eingabe oder fordere einen neuen Code an.'
+  : msg;
 
 export function LoginScreen() {
-  const { signIn, signUpWithInvitation } = useAuth();
-  const { colors } = useTheme();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const { signIn, signUpWithInvitation, verifySignupCode, resendSignupCode, requestPasswordReset, verifyRecoveryCode, finishRecovery, cancelRecovery } = useAuth();
+  const isMobile = useIsMobile();
+  usePlayerDarkFont();
+
+  const [mode, setMode] = useState<Mode>('login');
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Einladungs-Code-Modal (identisch zum KMH-Ablauf)
+  // Login
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+
+  // Einladungscode-Dialog
   const [showCodeModal, setShowCodeModal] = useState(false);
   const [inviteCode, setInviteCode] = useState('');
   const [codeError, setCodeError] = useState<string | null>(null);
   const [codeLoading, setCodeLoading] = useState(false);
 
-  // Registrierungs-Formular (nach gültigem Code)
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  // Registrierung
   const [verifiedCode, setVerifiedCode] = useState('');
   const [regFirst, setRegFirst] = useState('');
   const [regLast, setRegLast] = useState('');
   const [regEmail, setRegEmail] = useState('');
   const [regPassword, setRegPassword] = useState('');
   const [regConfirm, setRegConfirm] = useState('');
-  const [showRegPassword, setShowRegPassword] = useState(false);
-  const [regLoading, setRegLoading] = useState(false);
+
+  // Code aus der Mail / Passwort vergessen
+  const [codeEmail, setCodeEmail] = useState('');
+  const [mailCode, setMailCode] = useState('');
+  const [resent, setResent] = useState(false);
+  const [newPw, setNewPw] = useState('');
+  const [newPw2, setNewPw2] = useState('');
+
+  const go = (m: Mode) => { setError(null); setMode(m); };
+  const toLogin = () => { setMailCode(''); setResent(false); go('login'); };
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      showAlert('Fehler', 'Bitte alle Felder ausfüllen');
+    setError(null);
+    if (!email || !password) { setError('Bitte E-Mail und Passwort eingeben.'); return; }
+    setLoading(true);
+    const { error: err } = await signIn(email.trim(), password);
+    setLoading(false);
+    if (!err) return;
+    if (/email not confirmed/i.test(err.message)) {
+      // Konto existiert, E-Mail noch nicht bestätigt -> neuen Code schicken, Code-Eingabe öffnen
+      await resendSignupCode(email.trim());
+      setCodeEmail(email.trim()); setMailCode(''); go('verify');
       return;
     }
-    setLoading(true);
-    const { error } = await signIn(email, password);
-    setLoading(false);
-    if (error) showAlert('Fehler', error.message);
+    setError(/invalid login credentials/i.test(err.message) ? 'E-Mail oder Passwort ist falsch.' : err.message);
   };
 
-  // Einladungs-Code prüfen: gültig + Scouting-Zugang → zur Registrierung.
+  // Einladungs-Code prüfen: gültig + Scouting-Zugang -> Registrierung
   const handleInviteCode = async () => {
-    if (!inviteCode.trim()) {
-      setCodeError('Bitte gib einen Einladungscode ein.');
-      return;
-    }
+    if (!inviteCode.trim()) { setCodeError('Bitte gib einen Einladungscode ein.'); return; }
     setCodeLoading(true);
     const code = inviteCode.trim();
     const { data: inv } = await supabase.rpc('verify_staff_invitation', { p_code: code });
     setCodeLoading(false);
-
-    if (!inv) {
-      setCodeError('Der eingegebene Einladungscode ist ungültig.');
-      return;
-    }
-    if (!inv.access_scouting) {
-      setCodeError('Dieser Code gilt nicht für die Scouting-App.');
-      return;
-    }
+    if (!inv) { setCodeError('Der eingegebene Einladungscode ist ungültig.'); return; }
+    if (!inv.access_scouting) { setCodeError('Dieser Code gilt nicht für die Scouting-App.'); return; }
     setVerifiedCode(code);
     setRegFirst(inv.first_name || '');
     setRegLast(inv.last_name || '');
     setRegEmail(inv.email || '');
     setShowCodeModal(false);
-    setMode('register');
+    go('register');
   };
 
   const handleRegister = async () => {
-    if (!regFirst || !regLast || !regEmail || !regPassword || !regConfirm) {
-      showAlert('Fehler', 'Bitte alle Felder ausfüllen');
+    setError(null);
+    if (!regFirst.trim() || !regLast.trim() || !regEmail.trim() || !regPassword || !regConfirm) { setError('Bitte alle Felder ausfüllen.'); return; }
+    if (regPassword.length < 6) { setError('Das Passwort muss mindestens 6 Zeichen lang sein.'); return; }
+    if (regPassword !== regConfirm) { setError('Die Passwörter stimmen nicht überein.'); return; }
+    setLoading(true);
+    const { error: err, needsConfirmation } = await signUpWithInvitation(regEmail.trim(), regPassword, regFirst.trim(), regLast.trim(), verifiedCode);
+    setLoading(false);
+    if (err) {
+      setError(/sending confirmation email/i.test(err.message) ? 'Die Bestätigungs-Mail konnte nicht verschickt werden. Bitte versuche es später erneut.' : err.message);
       return;
     }
-    if (regPassword.length < 6) {
-      showAlert('Fehler', 'Das Passwort muss mindestens 6 Zeichen haben');
-      return;
-    }
-    if (regPassword !== regConfirm) {
-      showAlert('Fehler', 'Die Passwörter stimmen nicht überein');
-      return;
-    }
-    setRegLoading(true);
-    const { error } = await signUpWithInvitation(regEmail, regPassword, regFirst.trim(), regLast.trim(), verifiedCode);
-    setRegLoading(false);
-    if (error) {
-      showAlert('Fehler', error.message);
-      return;
-    }
-    setMode('login');
-    setEmail(regEmail);
-    setPassword('');
     setRegPassword(''); setRegConfirm('');
-    showAlert('Registrierung erfolgreich!', 'Dein Konto wurde erstellt. Du kannst dich jetzt anmelden.');
+    if (needsConfirmation) { setCodeEmail(regEmail.trim()); setMailCode(''); setResent(false); go('verify'); return; }
+    setEmail(regEmail.trim()); setPassword(''); go('login');
   };
 
-  return (
-    <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={[styles.content, { backgroundColor: colors.background }]}>
-        <Text style={[styles.title, { color: colors.text }]}>Karl M. Herzog</Text>
-        <Text style={[styles.titleSecond, { color: colors.text }]}>Sportmanagement</Text>
+  const handleVerify = async () => {
+    setError(null);
+    if (mailCode.length !== 6) { setError('Bitte gib den 6-stelligen Code aus der E-Mail ein.'); return; }
+    setLoading(true);
+    const { error: err } = mode === 'verify' ? await verifySignupCode(codeEmail, mailCode) : await verifyRecoveryCode(codeEmail, mailCode);
+    setLoading(false);
+    if (err) { setError(codeErrorText(err.message)); return; }
+    if (mode === 'recoveryCode') { setNewPw(''); setNewPw2(''); go('newPassword'); }
+    // verify: Session steht, der Navigator wechselt in die App.
+  };
 
-        {mode === 'login' ? (
-          <>
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
-              placeholder="E-Mail"
-              placeholderTextColor={colors.textSecondary}
-              value={email}
-              onChangeText={setEmail}
-              keyboardType="email-address"
-              autoCapitalize="none"
-            />
+  const handleResend = async () => {
+    setError(null);
+    const { error: err } = mode === 'verify' ? await resendSignupCode(codeEmail) : await requestPasswordReset(codeEmail);
+    if (err) { setError(/rate limit|security purposes/i.test(err.message) ? 'Bitte warte kurz, bevor du einen neuen Code anforderst.' : 'Der Code konnte nicht gesendet werden.'); return; }
+    setResent(true); setMailCode('');
+  };
 
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
-              placeholder="Passwort"
-              placeholderTextColor={colors.textSecondary}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-            />
+  const handleForgot = async () => {
+    setError(null);
+    const e = codeEmail.trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) { setError('Bitte gib eine gültige E-Mail-Adresse ein.'); return; }
+    setLoading(true);
+    const { error: err } = await requestPasswordReset(e);
+    setLoading(false);
+    if (err) { setError(/rate limit|security purposes/i.test(err.message) ? 'Bitte warte kurz, bevor du es erneut versuchst.' : 'Die E-Mail konnte nicht gesendet werden. Bitte versuche es später erneut.'); return; }
+    setMailCode(''); setResent(false); go('recoveryCode');
+  };
 
-            <TouchableOpacity
-              style={[styles.button, { backgroundColor: colors.primary }]}
-              onPress={handleLogin}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator color={colors.primaryText} />
-              ) : (
-                <Text style={[styles.buttonText, { color: colors.primaryText }]}>Anmelden</Text>
-              )}
-            </TouchableOpacity>
+  const handleNewPassword = async () => {
+    setError(null);
+    if (newPw.length < 6) { setError('Das Passwort muss mindestens 6 Zeichen lang sein.'); return; }
+    if (newPw !== newPw2) { setError('Die Passwörter stimmen nicht überein.'); return; }
+    setLoading(true);
+    const { error: err } = await finishRecovery(newPw);
+    setLoading(false);
+    if (err) setError(/same password|different from the old/i.test(err.message) ? 'Das neue Passwort darf nicht dem alten entsprechen.' : err.message);
+  };
 
-            <TouchableOpacity
-              onPress={() => { setShowCodeModal(true); setCodeError(null); setInviteCode(''); }}
-              style={styles.registerLink}
-            >
-              <Text style={[styles.registerLinkText, { color: colors.textSecondary }]}>Mit Einladungscode registrieren</Text>
-            </TouchableOpacity>
-          </>
-        ) : (
-          <>
-            <Text style={[styles.registerTitle, { color: colors.text }]}>Registrierung</Text>
-            <Text style={[styles.registerSubtitle, { color: colors.textSecondary }]}>Erstelle dein Konto für die Scouting-App</Text>
-
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
-              placeholder="Vorname" placeholderTextColor={colors.textSecondary}
-              value={regFirst} onChangeText={setRegFirst}
-            />
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
-              placeholder="Nachname" placeholderTextColor={colors.textSecondary}
-              value={regLast} onChangeText={setRegLast}
-            />
-            <TextInput
-              style={[styles.input, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, color: colors.text }]}
-              placeholder="E-Mail" placeholderTextColor={colors.textSecondary}
-              value={regEmail} onChangeText={setRegEmail}
-              keyboardType="email-address" autoCapitalize="none"
-            />
-            <View style={[styles.passwordContainer, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder }]}>
-              <TextInput
-                style={[styles.passwordInput, { color: colors.text }]}
-                placeholder="Passwort (min. 6 Zeichen)" placeholderTextColor={colors.textSecondary}
-                value={regPassword} onChangeText={setRegPassword}
-                secureTextEntry={!showRegPassword}
-              />
-              <TouchableOpacity style={styles.showButton} onPress={() => setShowRegPassword(!showRegPassword)}>
-                <Text style={[styles.showButtonText, { color: colors.textSecondary }]}>
-                  {showRegPassword ? 'Verbergen' : 'Anzeigen'}
-                </Text>
-              </TouchableOpacity>
-            </View>
-            <View style={[styles.passwordContainer, { backgroundColor: colors.inputBackground, borderColor: colors.inputBorder }]}>
-              <TextInput
-                style={[styles.passwordInput, { color: colors.text }]}
-                placeholder="Passwort wiederholen" placeholderTextColor={colors.textSecondary}
-                value={regConfirm} onChangeText={setRegConfirm}
-                secureTextEntry={!showRegPassword}
-              />
-            </View>
-
-            <TouchableOpacity
-              style={[styles.button, { backgroundColor: colors.primary }]}
-              onPress={handleRegister}
-              disabled={regLoading}
-            >
-              {regLoading ? (
-                <ActivityIndicator color={colors.primaryText} />
-              ) : (
-                <Text style={[styles.buttonText, { color: colors.primaryText }]}>Konto erstellen</Text>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity onPress={() => setMode('login')} style={styles.registerLink}>
-              <Text style={[styles.registerLinkText, { color: colors.textSecondary }]}>← Zurück zur Anmeldung</Text>
-            </TouchableOpacity>
-          </>
+  // --- Schritte nach dem Login (eigene Seite mit Logo + Block) ---
+  if (mode === 'register') {
+    const pair = (a: React.ReactNode, b: React.ReactNode) => isMobile ? <>{a}{b}</> : (
+      <View style={{ flexDirection: 'row', gap: 12 }}><View style={{ flex: 1 }}>{a}</View><View style={{ flex: 1 }}>{b}</View></View>
+    );
+    return (
+      <AuthCard title="Registrieren" subtitle={isMobile ? undefined : 'Dein Scouting-Zugang'} width={480} onClose={toLogin}
+        footer={<><View style={{ flex: 1 }} /><AuthButton label="Konto erstellen" onPress={handleRegister} loading={loading} full={false} /></>}>
+        {pair(
+          <AuthField label="Vorname" value={regFirst} onValue={(t) => { setRegFirst(t); setError(null); }} autoCapitalize="words" />,
+          <AuthField label="Nachname" value={regLast} onValue={(t) => { setRegLast(t); setError(null); }} autoCapitalize="words" />,
         )}
-      </View>
+        <AuthField label="E-Mail" value={regEmail} onValue={(t) => { setRegEmail(t); setError(null); }} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} placeholder="name@beispiel.de" />
+        {pair(
+          <AuthField label="Passwort" value={regPassword} onValue={(t) => { setRegPassword(t); setError(null); }} secure />,
+          <AuthField label="Passwort bestätigen" value={regConfirm} onValue={(t) => { setRegConfirm(t); setError(null); }} secure onSubmitEditing={handleRegister} />,
+        )}
+        <AuthInfo small text="Mindestens 6 Zeichen. Danach schicken wir dir einen Bestätigungscode per E-Mail." />
+        <AuthError text={error} />
+      </AuthCard>
+    );
+  }
 
-      {/* Einladungs-Code-Modal — gleicher Ablauf wie in der KMH-App */}
-      <Modal visible={showCodeModal} transparent animationType="fade" onRequestClose={() => setShowCodeModal(false)}>
-        <View style={styles.modalOverlay}>
-          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setShowCodeModal(false)} />
-          <View style={styles.modalContent}>
-            <View style={styles.modalTitleRow}>
-              <Text style={styles.modalTitle}>Registrierung</Text>
-              <TouchableOpacity onPress={() => setShowCodeModal(false)} style={styles.modalClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-                <Text style={styles.modalCloseText}>✕</Text>
-              </TouchableOpacity>
+  if (mode === 'verify' || mode === 'recoveryCode') {
+    const signup = mode === 'verify';
+    return (
+      <AuthCard title={signup ? 'Fast geschafft' : 'Code eingeben'} onClose={toLogin}
+        footer={
+          <>
+            <AuthLink label={resent ? 'Neuer Code gesendet' : 'Code erneut senden'} onPress={handleResend} />
+            {!signup ? <AuthLink label="Andere Adresse" onPress={() => go('forgot')} /> : null}
+            <View style={{ flex: 1 }} />
+            <AuthButton label="Bestätigen" onPress={handleVerify} loading={loading} disabled={mailCode.length !== 6} full={false} />
+          </>
+        }>
+        <AuthInfo text={signup
+          ? `Wir haben dir einen 6-stelligen Code an ${codeEmail} geschickt. Gib ihn hier ein, dann ist dein Zugang aktiv. Der Code ist 1 Stunde gültig.`
+          : `Wenn es zu ${codeEmail} einen Zugang gibt, haben wir dir einen 6-stelligen Code geschickt. Gib ihn hier ein und wähle danach dein neues Passwort. Der Code ist 1 Stunde gültig.`} />
+        <AuthCodeField value={mailCode} onValue={(t) => { setMailCode(t); setError(null); }} onSubmit={handleVerify} />
+        <AuthError text={error} />
+      </AuthCard>
+    );
+  }
+
+  if (mode === 'forgot') {
+    return (
+      <AuthCard title="Passwort vergessen" onClose={toLogin}
+        footer={<><View style={{ flex: 1 }} /><AuthButton label="Code senden" onPress={handleForgot} loading={loading} full={false} /></>}>
+        <AuthInfo text="Gib die E-Mail-Adresse ein, mit der du dich registriert hast. Wir schicken dir einen Code zum Zurücksetzen." />
+        <AuthField label="E-Mail" value={codeEmail} onValue={(t) => { setCodeEmail(t); setError(null); }} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} onSubmitEditing={handleForgot} autoFocus placeholder="name@beispiel.de" />
+        <AuthError text={error} />
+      </AuthCard>
+    );
+  }
+
+  if (mode === 'newPassword') {
+    return (
+      <AuthCard title="Neues Passwort" subtitle={codeEmail ? `für ${codeEmail}` : undefined}
+        footer={
+          <>
+            <AuthLink label="Abbrechen" onPress={async () => { await cancelRecovery(); toLogin(); }} />
+            <View style={{ flex: 1 }} />
+            <AuthButton label="Passwort speichern" onPress={handleNewPassword} loading={loading} full={false} />
+          </>
+        }>
+        <AuthField label="Neues Passwort" value={newPw} onValue={(t) => { setNewPw(t); setError(null); }} secure autoFocus />
+        <AuthField label="Passwort bestätigen" value={newPw2} onValue={(t) => { setNewPw2(t); setError(null); }} secure onSubmitEditing={handleNewPassword} />
+        <AuthInfo small text="Mindestens 6 Zeichen." />
+        <AuthError text={error} />
+      </AuthCard>
+    );
+  }
+
+  // --- Login ---
+  return (
+    <SafeAreaView style={styles.page}>
+      <ScrollView contentContainerStyle={[styles.scroll, isMobile && { paddingHorizontal: 16 }]} keyboardShouldPersistTaps="handled">
+        <View style={{ width: '100%', maxWidth: 420, gap: isMobile ? 26 : 32 }}>
+          <AuthBrand large />
+
+          <AuthBlock title="Anmelden" subtitle="Scouting">
+            <AuthField label="E-Mail" value={email} onValue={(t) => { setEmail(t); setError(null); }} keyboardType="email-address" autoCapitalize="none" autoCorrect={false} placeholder="name@beispiel.de" />
+            <AuthField label="Passwort" value={password} onValue={(t) => { setPassword(t); setError(null); }} secure onSubmitEditing={handleLogin} />
+            <AuthError text={error} />
+            <AuthButton label="Anmelden" onPress={handleLogin} loading={loading} />
+            <AuthLink label="Passwort vergessen?" onPress={() => { setCodeEmail(email.trim()); go('forgot'); }} />
+          </AuthBlock>
+
+          {/* Gleiche Breite wie der Anmelden-Button: Innenabstand des Blocks (mobil 18, Desktop 20 + 1 Rahmen) */}
+          <View style={{ alignItems: 'center', gap: 12, paddingHorizontal: isMobile ? 18 : 21 }}>
+            <Text style={styles.label}>Noch kein Zugang?</Text>
+            <View style={{ alignSelf: 'stretch' }}>
+              <AuthGhostButton accent label="Mit Einladungscode registrieren" onPress={() => { setShowCodeModal(true); setCodeError(null); setInviteCode(''); }} />
             </View>
-            <Text style={styles.modalSubtitle}>Bitte Einladungscode eingeben</Text>
+          </View>
+        </View>
+      </ScrollView>
 
-            <TextInput
-              style={[styles.modalInput, codeError ? styles.modalInputError : null]}
-              placeholder=""
-              placeholderTextColor="rgba(255,255,255,0.3)"
-              value={inviteCode}
-              onChangeText={(t) => { setInviteCode(t); setCodeError(null); }}
-              autoCapitalize="none"
-              autoCorrect={false}
-              onSubmitEditing={handleInviteCode}
-            />
-
-            {codeError ? <Text style={styles.errorText}>{codeError}</Text> : null}
-
-            <TouchableOpacity
-              style={[styles.modalButton, codeLoading && { opacity: 0.6 }]}
-              onPress={handleInviteCode}
-              disabled={codeLoading}
+      {/* Einladungscode-Dialog, mittig auf Desktop und mobil */}
+      <Modal visible={showCodeModal} transparent animationType="fade" onRequestClose={() => setShowCodeModal(false)}>
+        <View style={styles.backdrop}>
+          <Pressable style={StyleSheet.absoluteFillObject} onPress={() => setShowCodeModal(false)} />
+          <View style={{ width: '100%', maxWidth: 440 }}>
+            <AuthBlock
+              title="Scouting-Zugang"
+              onClose={() => setShowCodeModal(false)}
+              footer={<><View style={{ flex: 1 }} /><AuthButton label="Weiter" onPress={handleInviteCode} loading={codeLoading} full={false} /></>}
             >
-              <Text style={styles.modalButtonText}>{codeLoading ? 'Prüfen…' : 'Weiter'}</Text>
-            </TouchableOpacity>
+              <AuthInfo text="Gib den Einladungscode aus deiner Einladung ein." />
+              <View style={{ gap: 6 }}>
+                <Text style={styles.label}>Einladungscode</Text>
+                <TextInput
+                  style={[styles.codeInput, codeError ? { borderColor: PD.danger } : null]}
+                  value={inviteCode}
+                  onChangeText={(t) => { setInviteCode(t); setCodeError(null); }}
+                  autoCapitalize="characters"
+                  autoCorrect={false}
+                  autoFocus
+                  onSubmitEditing={handleInviteCode}
+                />
+              </View>
+              <AuthError text={codeError} />
+            </AuthBlock>
           </View>
         </View>
       </Modal>
@@ -251,33 +277,13 @@ export function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1 },
-  content: { flex: 1, padding: 24, justifyContent: 'center', maxWidth: 400, width: '100%', alignSelf: 'center' },
-  title: { fontSize: 32, fontWeight: 'bold', textAlign: 'center', marginBottom: 0 },
-  titleSecond: { fontSize: 32, fontWeight: 'bold', textAlign: 'center', marginBottom: 32 },
-  input: { borderWidth: 1, borderRadius: 12, padding: 16, fontSize: 16, marginBottom: 16 },
-  button: { padding: 16, borderRadius: 12, alignItems: 'center', marginBottom: 16 },
-  buttonText: { fontSize: 16, fontWeight: '600' },
-  registerLink: { alignItems: 'center', paddingVertical: 4 },
-  registerLinkText: { fontSize: 14 },
-  registerTitle: { fontSize: 24, fontWeight: 'bold', marginBottom: 4 },
-  registerSubtitle: { fontSize: 14, marginBottom: 20 },
-  passwordContainer: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: 12, marginBottom: 16 },
-  passwordInput: { flex: 1, padding: 16, fontSize: 16 },
-  showButton: { paddingHorizontal: 16, paddingVertical: 16 },
-  showButtonText: { fontSize: 14 },
-
-  // Einladungs-Code-Modal
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 24 },
-  modalContent: { backgroundColor: '#14181f', borderRadius: 16, borderWidth: 1, borderColor: 'rgba(255,255,255,0.15)', width: 360, maxWidth: '94%', padding: 22 },
-  modalTitleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  modalTitle: { color: '#fff', fontSize: 16, fontWeight: '700' },
-  modalClose: { padding: 4 },
-  modalCloseText: { color: 'rgba(255,255,255,0.6)', fontSize: 16 },
-  modalSubtitle: { color: 'rgba(255,255,255,0.6)', fontSize: 13, marginBottom: 14 },
-  modalInput: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.25)', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 10, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16, color: '#fff', letterSpacing: 2 },
-  modalInputError: { borderColor: '#ef4444' },
-  errorText: { color: '#ef4444', fontSize: 13, marginTop: 8 },
-  modalButton: { backgroundColor: '#fff', borderRadius: 10, paddingVertical: 12, alignItems: 'center', marginTop: 14 },
-  modalButtonText: { color: '#000', fontSize: 14, fontWeight: '700' },
+  page: { flex: 1, backgroundColor: PD.bg },
+  scroll: { flexGrow: 1, justifyContent: 'center', alignItems: 'center', paddingVertical: 32, paddingHorizontal: 24 },
+  label: { fontFamily: FONT, fontSize: 12.5, color: PD.muted },
+  backdrop: { flex: 1, backgroundColor: 'rgba(14,15,14,0.78)', alignItems: 'center', justifyContent: 'center', padding: 16 },
+  codeInput: {
+    height: 52, backgroundColor: PD.bg, borderWidth: 1, borderColor: PD.btnBorder, color: PD.text,
+    fontFamily: FONT, fontSize: 20, fontWeight: '600', letterSpacing: 4, textAlign: 'center', paddingHorizontal: 12,
+    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : {}),
+  },
 });
