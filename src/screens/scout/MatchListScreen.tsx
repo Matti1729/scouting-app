@@ -845,8 +845,10 @@ export function MatchListScreen({ navigation, route }: any) {
   const fetchLineupForMatch = async (matchId: string) => {
     const result = await loadLineups(matchId);
     if (result.success && result.data) {
-      const homePlayers = result.data.filter(p => p.team === 'home');
-      const awayPlayers = result.data.filter(p => p.team === 'away');
+      // DFB-Länderspiel: Lehrgangskader ohne Einsatz im Spieltagskader nicht als Bank zeigen
+      const inSquad = result.data.filter(p => !p.dfb_not_in_squad);
+      const homePlayers = inSquad.filter(p => p.team === 'home');
+      const awayPlayers = inSquad.filter(p => p.team === 'away');
 
       setHomeLineup(homePlayers.filter(p => p.is_starter).map(dbLineupToPlayer));
       setHomeSubs(homePlayers.filter(p => !p.is_starter).map(dbLineupToPlayer));

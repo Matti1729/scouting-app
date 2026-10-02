@@ -66,7 +66,8 @@ export interface DbLineup {
   dfb_games?: number | null;
   dfb_goals?: number | null;
   dfb_profile_url?: string | null;
-  dfb_on_call?: boolean | null; // DFB-Kader: Abschnitt "auf Abruf"
+  dfb_on_call?: boolean | null;
+  dfb_not_in_squad?: boolean | null; // DFB-Länderspiel: im Lehrgangskader, aber nicht im Spieltagskader // DFB-Kader: Abschnitt "auf Abruf"
 }
 
 // Input-Typen (ohne auto-generierte Felder)

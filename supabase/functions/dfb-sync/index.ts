@@ -304,7 +304,7 @@ async function importDfbLineup(sb: SupabaseClient, matchId: string) {
 
   const { data: existing, error: le } = await sb
     .from('scouting_lineups')
-    .select('id, name, vorname, team, source, club, nummer, is_starter, is_goalkeeper, dfb_profile_url')
+    .select('id, name, vorname, team, source, club, nummer, is_starter, is_goalkeeper, dfb_profile_url, dfb_not_in_squad')
     .eq('match_id', matchId)
   if (le) throw le
   const rows = existing || []
@@ -333,6 +333,7 @@ async function importDfbLineup(sb: SupabaseClient, matchId: string) {
         if (!!ex.is_goalkeeper !== p.isGoalkeeper) patch.is_goalkeeper = p.isGoalkeeper
         if (p.profileUrl && ex.dfb_profile_url !== p.profileUrl) patch.dfb_profile_url = p.profileUrl
         if (!ex.source) patch.source = 'dfb'
+        if (ex.dfb_not_in_squad) patch.dfb_not_in_squad = false
         if (Object.keys(patch).length) {
           const { error: ue } = await sb.from('scouting_lineups').update(patch).eq('id', ex.id)
           if (ue) throw ue
@@ -360,8 +361,10 @@ async function importDfbLineup(sb: SupabaseClient, matchId: string) {
           if (de) throw de
           stats.deleted++
         }
-      } else if (r.is_starter || r.team !== side) {
-        const { error: ue } = await sb.from('scouting_lineups').update({ is_starter: false, team: side }).eq('id', r.id)
+      } else if (r.is_starter || r.team !== side || !r.dfb_not_in_squad) {
+        // Kader-Spieler ohne Einsatz im Spieltagskader: bleiben für den Kader (Bewertungen stabil),
+        // im Spiel-Modal aber ausgeblendet (Matti: Spieldaten statt ganzem Lehrgangskader)
+        const { error: ue } = await sb.from('scouting_lineups').update({ is_starter: false, team: side, dfb_not_in_squad: true }).eq('id', r.id)
         if (ue) throw ue
         stats.updated++
       }
