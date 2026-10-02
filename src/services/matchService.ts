@@ -360,10 +360,24 @@ export async function replaceLineup(
   players: Omit<LineupInput, 'match_id'>[]
 ): Promise<{ success: boolean; data?: DbLineup[]; error?: string }> {
   try {
-    // Erst alte Aufstellung löschen
-    const clearResult = await clearLineup(matchId);
-    if (!clearResult.success) {
-      return { success: false, error: clearResult.error };
+    // Erst alte Aufstellung löschen. Ausnahme: DFB-Lehrgangskader-Spieler, die nicht im
+    // Spieltagskader stehen (im Modal ausgeblendet, dfb_not_in_squad) – die bleiben erhalten,
+    // außer sie werden jetzt selbst aufgestellt (sonst doppelt).
+    const norm = (x?: string | null) => (x || '').trim().toLowerCase();
+    const incoming = new Set(players.map(p => `${norm(p.name)}|${norm(p.vorname)}`));
+    const { data: hidden, error: he } = await supabase
+      .from('scouting_lineups')
+      .select('id, name, vorname')
+      .eq('match_id', matchId)
+      .eq('dfb_not_in_squad', true);
+    if (he) return { success: false, error: he.message };
+    const keepIds = (hidden || []).filter(h => !incoming.has(`${norm(h.name)}|${norm(h.vorname)}`)).map(h => h.id);
+    let del = supabase.from('scouting_lineups').delete().eq('match_id', matchId);
+    if (keepIds.length) del = del.not('id', 'in', `(${keepIds.join(',')})`);
+    const { error: de } = await del;
+    if (de) {
+      console.error('Error clearing lineup:', de);
+      return { success: false, error: de.message };
     }
 
     // Dann neue einfügen
