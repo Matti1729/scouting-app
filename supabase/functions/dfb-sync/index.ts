@@ -440,7 +440,7 @@ serve(async (req) => {
   // Bestehende DFB-Termine (alle, auch vergangene → Kader-Hash & Update)
   const { data: existingRows, error: exErr } = await sb
     .from('scouting_matches')
-    .select('id, source_key, match_date, kader_hash, kader_title, dfb_match_url, home_team, away_team, match_date_end, match_time, location, age_group, lat, lng, geo_query')
+    .select('id, source_key, attending, match_date, kader_hash, kader_title, dfb_match_url, home_team, away_team, match_date_end, match_time, location, age_group, lat, lng, geo_query')
     .eq('source', 'dfb')
   if (exErr && !dry) return json({ error: exErr.message }, 500)
   if (exErr) stats.errors.push(`DB (dry, ignoriert): ${exErr.message}`)
@@ -469,9 +469,18 @@ serve(async (req) => {
 
       for (const t of tp.termine) {
         stats.termine++
-        seenKeys.add(t.sourceKey)
         const row = terminRow(t)
-        const ex = existingByKey.get(t.sourceKey)
+        // Schlüssel nicht gefunden (Titel/Gegner geändert, z. B. "N.N." -> Gegner): gleicher
+        // Jahrgang + Datum + Art (Spiel/Termin) noch nicht zugeordnet -> dasselbe Spiel weiterführen
+        let ex = existingByKey.get(t.sourceKey)
+        if (!ex) {
+          const cand = (existingRows || []).filter((r) =>
+            r.source_key && !seenKeys.has(r.source_key) && r.age_group === t.age && r.match_date === t.start &&
+            !!r.away_team === t.isGame && !tp.termine.some((o) => o.sourceKey === r.source_key))
+          if (cand.length === 1) ex = cand[0]
+        }
+        seenKeys.add(t.sourceKey)
+        if (ex?.source_key) seenKeys.add(ex.source_key)
 
         // Passende Kader-Quelle: Datencenter (Profil-Links) vor PDF
         const srcs = kaderSources.filter((k) => kaderMatchesTermin(k, t))
@@ -490,7 +499,7 @@ serve(async (req) => {
 
         let matchId: string | null = ex?.id || null
         if (ex) {
-          const changed = ['home_team', 'away_team', 'match_date', 'match_date_end', 'match_time', 'location', 'age_group']
+          const changed = ['home_team', 'away_team', 'match_date', 'match_date_end', 'match_time', 'location', 'age_group', 'source_key']
             .some((k) => (ex[k] ?? null) !== ((row as any)[k] ?? null))
           if (changed) {
             const { error } = await sb.from('scouting_matches')
@@ -587,7 +596,8 @@ serve(async (req) => {
     // Seite fehlerfrei geladen wurde — sonst würde ein Ausfall alles löschen)
     const failedAges = new Set(stats.errors.map((e) => e.match(/^U(\d+):/)?.[1]).filter(Boolean).map(Number))
     const stale = (existingRows || []).filter((r) =>
-      r.source_key && !seenKeys.has(r.source_key) && r.match_date >= today &&
+      // nur echte Zukunft (am Spieltag hängt dfb.de das Ergebnis an) und nie "Meine Spiele"
+      r.source_key && !seenKeys.has(r.source_key) && r.match_date > today && !r.attending &&
       ages.includes(Number(String(r.age_group || '').replace(/^U/, ''))) &&
       !failedAges.has(Number(String(r.age_group || '').replace(/^U/, ''))),
     )

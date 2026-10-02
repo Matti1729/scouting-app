@@ -190,7 +190,10 @@ export function parseTerminePage(age: number, pageData: any): DfbTerminePage {
         awayTeam: ev.away,
         isGame: ev.isGame,
         location,
-        sourceKey: `${ageLabel}|${d.start}|${slug(title)}`,
+        // Spiele über die Paarung, nicht den Titel: dfb.de hängt nach Abpfiff das Ergebnis an
+        // ("Deutschland - Griechenland 3:3") bzw. wechselt "(LSP)"/"(EMQ)" -> sonst neuer Schlüssel,
+        // das alte Spiel (mit "Meine Spiele"/Bewertungen) wurde gelöscht und neu angelegt
+        sourceKey: ev.isGame ? `${ageLabel}|${d.start}|${slug(ev.home)}-${slug(ev.away)}` : `${ageLabel}|${d.start}|${slug(title)}`,
       });
     }
   }
