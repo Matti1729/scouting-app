@@ -121,6 +121,7 @@ import { TableRow } from '../../components/table/TableRow';
 const SPIELART_OPTIONS = [
   { value: 'Punktspiel', label: 'Punktspiel' },
   { value: 'Pokalspiel', label: 'Pokalspiel' },
+  { value: 'Europapokal', label: 'Europapokal' },
   { value: 'Freundschaftsspiel', label: 'Freundschaftsspiel' },
   { value: 'Turnier', label: 'Turnier' },
   { value: 'Hallenturnier', label: 'Hallenturnier' },
@@ -400,6 +401,9 @@ function competitionLabel(leagueName: string, wettbewerb: string | null): string
   if (w && !/liga|bundesliga/i.test(w)) return w;
   return leagueName || w;
 }
+
+/** Spielart-Text: bei Europapokal der Wettbewerb selbst ("Champions League", "UEFA Youth League") */
+const artLabel = (m: Match): string => (m.art === 'Europapokal' && m.wettbewerb ? m.wettbewerb : m.art || '');
 
 const isDfbSynced = (m: Match): boolean =>
   m.source === 'dfb' || m.art === 'Nationalmannschaft' || m.art === 'Hallenturnier';
@@ -2553,7 +2557,7 @@ export function MatchListScreen({ navigation, route }: any) {
         age: m.mannschaft || '',
         home: (home || '').trim(),
         away: (away || '').trim(),
-        type: m.art || '',
+        type: artLabel(m),
         // Wappen wie in der Liste (DFB-Lehrgang ohne Gegner: DFB-Wappen)
         homeLogo: knownClubLogoUri(clubLogoMap, !away && m.source === 'dfb' ? 'Deutschland' : (home || '').trim()),
         awayLogo: away ? knownClubLogoUri(clubLogoMap, away.trim()) : null,
@@ -2635,7 +2639,7 @@ export function MatchListScreen({ navigation, route }: any) {
                 return (
                   <View style={[styles.artBadge, { backgroundColor: badgeStyle.backgroundColor }]}>
                     <Text style={[styles.artBadgeText, { color: badgeStyle.color }]}>
-                      {item.art}
+                      {artLabel(item)}
                     </Text>
                   </View>
                 );
@@ -2706,7 +2710,7 @@ export function MatchListScreen({ navigation, route }: any) {
             )}
             {item.art && (
               <View style={[styles.matchCardBadge, { backgroundColor: isPast ? colors.surfaceSecondary : badgeStyle.backgroundColor }]}>
-                <Text style={[styles.matchCardBadgeText, { color: isPast ? colors.textSecondary : badgeStyle.color }]}>{item.art}</Text>
+                <Text style={[styles.matchCardBadgeText, { color: isPast ? colors.textSecondary : badgeStyle.color }]}>{artLabel(item)}</Text>
               </View>
             )}
           </View>
@@ -2846,7 +2850,7 @@ export function MatchListScreen({ navigation, route }: any) {
                             <Text style={{ fontSize: 10, color: RETRO.textMuted }}>{item.mannschaft}</Text>
                           ) : null}
                           {item.art ? (
-                            <Text style={{ fontSize: 10, color: RETRO.textMuted }}>{item.art}</Text>
+                            <Text style={{ fontSize: 10, color: RETRO.textMuted }}>{artLabel(item)}</Text>
                           ) : null}
                         </View>
                         {/* Kurzer Trennstrich */}

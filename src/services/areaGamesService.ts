@@ -641,6 +641,8 @@ export function resolveClubLogoUri(teamName: string, teamId?: string | null): Pr
 /** Spielart aus dem Wettbewerbsnamen ableiten (fürs ART-Filter/Badge) */
 export function areaArt(g: AreaGame): string {
   const w = g.wettbewerb || '';
+  // UEFA-Wettbewerbe (sync-uefa-games): CL/EL/ECL/Youth League
+  if (/champions league|europa league|conference league|youth league/i.test(w)) return 'Europapokal';
   if (/freundschaft|testspiel|friendly/i.test(w)) return 'Freundschaftsspiel';
   if (/pokal/i.test(w)) return 'Pokalspiel';
   if (/hallen/i.test(w)) return 'Hallenturnier';
