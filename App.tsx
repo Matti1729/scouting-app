@@ -1,10 +1,12 @@
 import React from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import { AuthProvider } from './src/contexts/AuthContext';
 import { AppNavigator } from './src/navigation/AppNavigator';
+import { SwipeBack } from './src/components/SwipeBack';
+import { SwipeDownClose } from './src/components/SwipeDownClose';
 import { Platform } from 'react-native';
 
 // iPhone-Safari zoomt beim Antippen eines Eingabefelds (Schrift < 16 px) ins Bild und bleibt
@@ -24,13 +26,17 @@ if (Platform.OS === 'web' && typeof document !== 'undefined') {
 
 function AppContent() {
   const { isDark } = useTheme();
+  const navRef = useNavigationContainerRef();
 
   return (
     <>
       <StatusBar style={isDark ? 'light' : 'dark'} />
-      <NavigationContainer>
+      <NavigationContainer ref={navRef}>
         <AppNavigator />
       </NavigationContainer>
+      {/* Wischgesten am Handy: vom linken Rand zurück, Fenster am Kopf nach unten wegwischen */}
+      <SwipeBack navRef={navRef} />
+      <SwipeDownClose />
     </>
   );
 }
