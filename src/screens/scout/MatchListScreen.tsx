@@ -3895,6 +3895,7 @@ export function MatchListScreen({ navigation, route }: any) {
                           )
                         )}
                         <LineupList
+                          bottomInset={isMobile && !isEditMode ? 84 : 0}
                           players={isEditMode ? editedHomeLineup : homeLineup}
                           subs={isEditMode ? editedHomeSubs : homeSubs}
                           onPlayerPress={handlePlayerSelect}
@@ -3931,6 +3932,7 @@ export function MatchListScreen({ navigation, route }: any) {
                           )
                         )}
                         <LineupList
+                          bottomInset={isMobile && !isEditMode ? 84 : 0}
                           players={isEditMode ? editedAwayLineup : awayLineup}
                           subs={isEditMode ? editedAwaySubs : awaySubs}
                           onPlayerPress={handlePlayerSelect}
@@ -5249,7 +5251,7 @@ const styles = StyleSheet.create({
     width: '95%',
     maxWidth: 1200,
     maxHeight: '90%',
-    borderRadius: 16,
+    borderRadius: 0, // eckig wie der Retro-Look
     borderWidth: 1,
     overflow: 'hidden',
   },
@@ -5257,8 +5259,8 @@ const styles = StyleSheet.create({
     width: '100%',
     maxWidth: '100%',
     maxHeight: '90%',
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 0, // eckig wie der Retro-Look
+    borderTopRightRadius: 0,
     borderBottomLeftRadius: 0,
     borderBottomRightRadius: 0,
     borderWidth: 0,
@@ -5416,7 +5418,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     bottom: 60,
     right: 10,
-    borderRadius: 12,
+    borderRadius: 0, // eckig wie der Retro-Look
     paddingVertical: 8,
     minWidth: 200,
     shadowColor: '#000',
@@ -5743,7 +5745,7 @@ const styles = StyleSheet.create({
     width: '95%',
     maxWidth: 700,
     maxHeight: '90%',
-    borderRadius: 16,
+    borderRadius: 0, // eckig wie der Retro-Look
     borderWidth: 1,
     overflow: 'hidden',
   },
@@ -5878,7 +5880,7 @@ const styles = StyleSheet.create({
   confirmModal: {
     width: '90%',
     maxWidth: 400,
-    borderRadius: 12,
+    borderRadius: 0, // eckig wie der Retro-Look
     borderWidth: 1,
     padding: 24,
   },
@@ -5914,7 +5916,7 @@ const styles = StyleSheet.create({
   addPlayerModal: {
     width: '90%',
     maxWidth: 450,
-    borderRadius: 12,
+    borderRadius: 0, // eckig wie der Retro-Look
     borderWidth: 1,
   },
   addPlayerHeader: {
@@ -5961,7 +5963,7 @@ const styles = StyleSheet.create({
   playerProfileModal: {
     width: '90%',
     maxWidth: 500,
-    borderRadius: 16,
+    borderRadius: 0, // eckig wie der Retro-Look
     borderWidth: 1,
     overflow: 'hidden',
   },
@@ -6123,7 +6125,7 @@ const styles = StyleSheet.create({
   sourceModalContent: {
     width: '85%',
     maxWidth: 400,
-    borderRadius: 12,
+    borderRadius: 0, // eckig wie der Retro-Look
     padding: 20,
   },
   sourceModalTitle: {

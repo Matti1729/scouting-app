@@ -36,6 +36,8 @@ export interface LineupListProps {
   evalColors?: Map<string, { bg: string; border: string }>;
   /** Berichte-Anzahl je lineup_player_id ("schon X-mal gesehen") */
   reportCounts?: Map<string, number>;
+  /** Abstand unter dem letzten Spieler (mobil: schwebende Knöpfe Notiz/⋮ verdecken sonst die letzten Zeilen) */
+  bottomInset?: number;
 }
 
 const ITEM_HEIGHT = 32;
@@ -51,6 +53,7 @@ export const LineupList = memo<LineupListProps>(({
   evaluatedPlayerIds,
   evalColors,
   reportCounts,
+  bottomInset,
 }) => {
   const { colors } = useTheme();
 
@@ -148,6 +151,7 @@ export const LineupList = memo<LineupListProps>(({
         windowSize={5}
         showsVerticalScrollIndicator={false}
         style={styles.list}
+        contentContainerStyle={bottomInset ? { paddingBottom: bottomInset } : undefined}
       />
     </View>
   );

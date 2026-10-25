@@ -1500,8 +1500,8 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   detailSheet: {
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
+    borderTopLeftRadius: 0,
+    borderTopRightRadius: 0,
     paddingBottom: 0,
     maxHeight: '92%',
     minWidth: '100%',
@@ -1509,7 +1509,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   detailSheetDesktop: {
-    borderRadius: 16,
+    borderRadius: 0,
     minWidth: 0,
     width: '95%',
     maxWidth: 1200,
