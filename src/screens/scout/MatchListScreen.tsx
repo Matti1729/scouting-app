@@ -116,6 +116,7 @@ import { RetroHeader } from '../../components/RetroHeader';
 import { TeamLogo, CompactMatchTeams } from '../../components/ClubLogo';
 import { PulseDot, ATTENDING_COLOR } from '../../components/PulseDot';
 import { TableRow } from '../../components/table/TableRow';
+import { MatchNotesPanel } from '../../components/MatchNotesPanel';
 
 // Dropdown Optionen
 const SPIELART_OPTIONS = [
@@ -570,6 +571,8 @@ export function MatchListScreen({ navigation, route }: any) {
 
   // Mobile Team-Tab State
   const [activeTeam, setActiveTeam] = useState<'home' | 'away'>('home');
+  // Spielnotizen (Diktat + KI-Auswertung) statt Aufstellung im Spiel-Modal
+  const [notesOpen, setNotesOpen] = useState(false);
 
   // Neue Spiel-Formularfelder
   const [newMatchData, setNewMatchData] = useState({
@@ -1428,6 +1431,7 @@ export function MatchListScreen({ navigation, route }: any) {
       return;
     }
     setSelectedMatch(match);
+    setNotesOpen(false);
     setModalVisible(true);
     // Aufstellung aus Supabase laden
     await fetchLineupForMatch(match.id);
@@ -3830,14 +3834,14 @@ export function MatchListScreen({ navigation, route }: any) {
                       <TouchableOpacity
                         style={[
                           styles.teamTab,
-                          activeTeam === 'home' && styles.teamTabActive,
-                          activeTeam === 'home' && { borderBottomColor: colors.primary }
+                          !notesOpen && activeTeam === 'home' && styles.teamTabActive,
+                          !notesOpen && activeTeam === 'home' && { borderBottomColor: colors.primary }
                         ]}
-                        onPress={() => setActiveTeam('home')}
+                        onPress={() => { setNotesOpen(false); setActiveTeam('home'); }}
                       >
                         <Text style={[
                           styles.teamTabText,
-                          { color: activeTeam === 'home' ? colors.primary : colors.textSecondary }
+                          { color: !notesOpen && activeTeam === 'home' ? colors.primary : colors.textSecondary }
                         ]}>
                           {selectedMatch.spiel.split(' - ')[0]}
                         </Text>
@@ -3845,21 +3849,40 @@ export function MatchListScreen({ navigation, route }: any) {
                       <TouchableOpacity
                         style={[
                           styles.teamTab,
-                          activeTeam === 'away' && styles.teamTabActive,
-                          activeTeam === 'away' && { borderBottomColor: colors.primary }
+                          !notesOpen && activeTeam === 'away' && styles.teamTabActive,
+                          !notesOpen && activeTeam === 'away' && { borderBottomColor: colors.primary }
                         ]}
-                        onPress={() => setActiveTeam('away')}
+                        onPress={() => { setNotesOpen(false); setActiveTeam('away'); }}
                       >
                         <Text style={[
                           styles.teamTabText,
-                          { color: activeTeam === 'away' ? colors.primary : colors.textSecondary }
+                          { color: !notesOpen && activeTeam === 'away' ? colors.primary : colors.textSecondary }
                         ]}>
                           {selectedMatch.spiel.split(' - ')[1]}
                         </Text>
                       </TouchableOpacity>
+                      {!isEditMode && (
+                        <TouchableOpacity
+                          style={[styles.teamTab, notesOpen && styles.teamTabActive, notesOpen && { borderBottomColor: colors.primary }, { flex: 0.8 }]}
+                          onPress={() => setNotesOpen(true)}
+                        >
+                          <Text style={[styles.teamTabText, { color: notesOpen ? colors.primary : colors.textSecondary }]}>Notizen</Text>
+                        </TouchableOpacity>
+                      )}
                     </View>
                   )}
 
+                  {notesOpen && !isEditMode ? (
+                    <View style={{ flex: 1, minHeight: 0, paddingHorizontal: isMobile ? 8 : 16, paddingBottom: 8 }}>
+                      <MatchNotesPanel
+                        match={{ id: selectedMatch.id, spiel: selectedMatch.spiel, datum: selectedMatch.datum, mannschaft: selectedMatch.mannschaft }}
+                        homeName={selectedMatch.spiel.split(' - ')[0] || 'Heim'}
+                        awayName={selectedMatch.spiel.split(' - ')[1] || 'Gast'}
+                        isMobile={isMobile}
+                        onApplied={() => { void fetchLineupForMatch(selectedMatch.id); }}
+                      />
+                    </View>
+                  ) : (
                   <View style={[styles.lineupsContainer, isMobile && styles.lineupsContainerMobile]}>
                     {/* Heimmannschaft - Desktop oder wenn auf Mobile activeTeam === 'home' */}
                     {(!isMobile || activeTeam === 'home') && (
@@ -3929,6 +3952,7 @@ export function MatchListScreen({ navigation, route }: any) {
                       </View>
                     )}
                   </View>
+                  )}
                 </View>
 
                 {/* Footer */}
@@ -3962,6 +3986,12 @@ export function MatchListScreen({ navigation, route }: any) {
                   </View>
                 ) : !isMobile ? (
                   <View style={[styles.modalFooter, { borderTopColor: colors.border, justifyContent: 'flex-end', gap: 8 }]}>
+                    <TouchableOpacity
+                      style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 6, paddingHorizontal: 12 }, notesOpen && { backgroundColor: RETRO.text }]}
+                      onPress={() => setNotesOpen((v) => !v)}
+                    >
+                      <Text style={{ fontSize: 13, fontWeight: '600', color: notesOpen ? '#fff' : RETRO.text }}>{notesOpen ? 'Aufstellung' : 'Spielnotizen'}</Text>
+                    </TouchableOpacity>
                     <TouchableOpacity
                       style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 6, paddingHorizontal: 12 }]}
                       onPress={handleLoadLineups}
