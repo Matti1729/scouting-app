@@ -3829,7 +3829,7 @@ export function MatchListScreen({ navigation, route }: any) {
                   )}
 
                   {/* Mobile: Team-Tabs */}
-                  {isMobile && !(selectedMatch.source === 'dfb' && !selectedMatch.spiel.includes(' - ') && !isEditMode) && (
+                  {isMobile && !(notesOpen && !isEditMode) && !(selectedMatch.source === 'dfb' && !selectedMatch.spiel.includes(' - ') && !isEditMode) && (
                     <View style={styles.teamTabsContainer}>
                       <TouchableOpacity
                         style={[
@@ -3861,19 +3861,11 @@ export function MatchListScreen({ navigation, route }: any) {
                           {selectedMatch.spiel.split(' - ')[1]}
                         </Text>
                       </TouchableOpacity>
-                      {!isEditMode && (
-                        <TouchableOpacity
-                          style={[styles.teamTab, notesOpen && styles.teamTabActive, notesOpen && { borderBottomColor: colors.primary }, { flex: 0.8 }]}
-                          onPress={() => setNotesOpen(true)}
-                        >
-                          <Text style={[styles.teamTabText, { color: notesOpen ? colors.primary : colors.textSecondary }]}>Notizen</Text>
-                        </TouchableOpacity>
-                      )}
                     </View>
                   )}
 
                   {notesOpen && !isEditMode ? (
-                    <View style={{ flex: 1, minHeight: 0, paddingHorizontal: isMobile ? 8 : 16, paddingBottom: 8 }}>
+                    <View style={{ flex: 1, minHeight: 0, paddingHorizontal: isMobile ? 8 : 16, paddingBottom: isMobile ? 76 : 8 }}>
                       <MatchNotesPanel
                         match={{ id: selectedMatch.id, spiel: selectedMatch.spiel, datum: selectedMatch.datum, mannschaft: selectedMatch.mannschaft }}
                         homeName={selectedMatch.spiel.split(' - ')[0] || 'Heim'}
@@ -4030,6 +4022,21 @@ export function MatchListScreen({ navigation, route }: any) {
                           <Text style={[styles.mobileMenuItemText, { color: colors.error || '#ef4444' }]}>Spiel löschen</Text>
                         </TouchableOpacity>
                       </View>
+                    )}
+                    {/* Spielnotizen: gelber Knopf links neben ⋮ (Matti 2026-10-25, Variante A) */}
+                    {!actionMenuVisible && (
+                      <TouchableOpacity
+                        onPress={() => setNotesOpen((v) => !v)}
+                        activeOpacity={0.8}
+                        style={[HARD_SHADOW, {
+                          position: 'absolute', right: 74, bottom: 16, height: 48, borderRadius: 24,
+                          paddingLeft: 14, paddingRight: 18, flexDirection: 'row', alignItems: 'center', gap: 8,
+                          backgroundColor: notesOpen ? RETRO.white : RETRO.yellow, borderWidth: 1, borderColor: RETRO.text,
+                        }]}
+                      >
+                        <Ionicons name={notesOpen ? 'list-outline' : 'mic-outline'} size={20} color={RETRO.text} />
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: RETRO.text }}>{notesOpen ? 'Aufstellung' : 'Notiz'}</Text>
+                      </TouchableOpacity>
                     )}
                     <TouchableOpacity
                       style={[styles.mobileMenuButton, { backgroundColor: colors.surface, borderColor: colors.border }]}

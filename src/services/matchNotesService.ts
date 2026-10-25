@@ -17,13 +17,34 @@ export interface NoteDraft {
   reason?: string;
 }
 
-export async function loadMatchNotes(matchId: string): Promise<string> {
-  const { data } = await supabase.from('scouting_matches').select('scouting_notes').eq('id', matchId).maybeSingle();
-  return (data as any)?.scouting_notes || '';
+// Sicherungskopie im Gerät: wird die App geschlossen, bevor das Speichern ankommt (oder ohne Netz im
+// Stadion), geht nichts verloren; beim nächsten Öffnen gewinnt die neuere Fassung und wird nachgespeichert.
+const localKey = (id: string) => `match_notes_${id}`;
+type LocalNotes = { text: string; at: string; synced: boolean };
+function readLocal(id: string): LocalNotes | null {
+  try { const r = globalThis.localStorage?.getItem(localKey(id)); return r ? JSON.parse(r) : null; } catch { return null; }
+}
+export function writeLocalNotes(id: string, text: string, synced: boolean): void {
+  try { globalThis.localStorage?.setItem(localKey(id), JSON.stringify({ text, at: new Date().toISOString(), synced })); } catch { /* optional */ }
 }
 
-export async function saveMatchNotes(matchId: string, text: string): Promise<void> {
-  await supabase.from('scouting_matches').update({ scouting_notes: text, scouting_notes_updated_at: new Date().toISOString() }).eq('id', matchId);
+export async function loadMatchNotes(matchId: string): Promise<string> {
+  const { data } = await supabase.from('scouting_matches').select('scouting_notes, scouting_notes_updated_at').eq('id', matchId).maybeSingle();
+  const dbText = (data as any)?.scouting_notes || '';
+  const dbAt = (data as any)?.scouting_notes_updated_at || '';
+  const local = readLocal(matchId);
+  // Nicht hochgeladene, neuere Fassung im Gerät: die nehmen und gleich speichern
+  if (local && !local.synced && local.text !== dbText && (!dbAt || local.at > dbAt)) {
+    void saveMatchNotes(matchId, local.text);
+    return local.text;
+  }
+  return dbText;
+}
+
+export async function saveMatchNotes(matchId: string, text: string): Promise<boolean> {
+  const { error } = await supabase.from('scouting_matches').update({ scouting_notes: text, scouting_notes_updated_at: new Date().toISOString() }).eq('id', matchId);
+  writeLocalNotes(matchId, text, !error);
+  return !error;
 }
 
 export async function parseMatchNotes(matchId: string, text: string): Promise<{ drafts: NoteDraft[]; unmatched: NoteDraft[] }> {

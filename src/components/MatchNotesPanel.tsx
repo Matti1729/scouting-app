@@ -6,7 +6,7 @@ import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, ScrollView 
 import { RETRO, MONO, HARD_SHADOW } from '../theme/retro';
 import { showAlert } from '../utils/alert';
 import {
-  NoteDraft, loadMatchNotes, saveMatchNotes, parseMatchNotes, applyNoteDraft, draftLines,
+  NoteDraft, loadMatchNotes, saveMatchNotes, writeLocalNotes, parseMatchNotes, applyNoteDraft, draftLines,
 } from '../services/matchNotesService';
 
 type Props = {
@@ -27,26 +27,50 @@ export function MatchNotesPanel({ match, homeName, awayName, isMobile, onApplied
   const [unmatched, setUnmatched] = useState<NoteDraft[]>([]);
   const [applied, setApplied] = useState<Set<number>>(new Set());
   const saveTimer = useRef<any>(null);
+  const pending = useRef<string | null>(null); // noch nicht gespeicherter Text
+
+  // Offenen Stand sofort speichern (Fenster zu, App in den Hintergrund, Seite verlassen)
+  const flush = () => {
+    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+    if (pending.current == null) return;
+    const t = pending.current;
+    pending.current = null;
+    saveMatchNotes(match.id, t).then((ok) => setSaved(ok));
+  };
 
   useEffect(() => {
     let off = false;
     loadMatchNotes(match.id).then((t) => { if (!off) { setText(t); setLoaded(true); } });
-    return () => { off = true; if (saveTimer.current) clearTimeout(saveTimer.current); };
+    const onHide = () => { if (typeof document === 'undefined' || document.visibilityState === 'hidden') flush(); };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pagehide', onHide);
+      document.addEventListener('visibilitychange', onHide);
+    }
+    return () => {
+      off = true;
+      flush();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('pagehide', onHide);
+        document.removeEventListener('visibilitychange', onHide);
+      }
+    };
   }, [match.id]);
 
-  // Automatisch speichern (kurz nach dem letzten Tippen/Diktieren)
+  // Jede Änderung sofort im Gerät sichern, kurz danach in der Datenbank speichern
   const onChange = (t: string) => {
     setText(t);
     setSaved(false);
+    pending.current = t;
+    writeLocalNotes(match.id, t, false);
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => { saveMatchNotes(match.id, t).then(() => setSaved(true)); }, 800);
+    saveTimer.current = setTimeout(flush, 800);
   };
 
   const evaluate = async () => {
     if (!text.trim()) return;
     setBusy(true);
     try {
-      if (!saved) await saveMatchNotes(match.id, text);
+      if (!saved) { pending.current = null; await saveMatchNotes(match.id, text); }
       setSaved(true);
       const r = await parseMatchNotes(match.id, text);
       setDrafts(r.drafts);
