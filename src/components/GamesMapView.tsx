@@ -170,13 +170,15 @@ const MAP_HTML =
   + `map.addSource('games',{type:'geojson',data:{type:'FeatureCollection',features:[]}});`
   + `map.addLayer({id:'games-halo',type:'circle',source:'games',paint:{'circle-radius':10,'circle-color':['get','color'],'circle-opacity':0.25}});`
   + `map.addLayer({id:'games',type:'circle',source:'games',paint:{'circle-radius':5,'circle-color':['get','color'],'circle-stroke-width':1.5,'circle-stroke-color':'#fff'}});`
+  // Unsichtbare Trefferfläche (Radius 22 px): Dots am Handy mit dem Finger treffen (Matti 2026-10-25: musste 3x tippen)
+  + `map.addLayer({id:'games-hit',type:'circle',source:'games',paint:{'circle-radius':22,'circle-color':'#000','circle-opacity':0.001}});`
   // Hover-Hervorhebung (vom Parent per kmh-hover gesteuert): dickerer Dot "ploppt auf".
   + `map.addSource('ghl',{type:'geojson',data:{type:'FeatureCollection',features:[]}});`
   + `map.addLayer({id:'ghl-halo',type:'circle',source:'ghl',paint:{'circle-radius':16,'circle-color':['get','color'],'circle-opacity':0.35}});`
   + `map.addLayer({id:'ghl',type:'circle',source:'ghl',paint:{'circle-radius':8,'circle-color':['get','color'],'circle-stroke-width':2.5,'circle-stroke-color':'#fff'}});`
-  + `map.on('click','games',function(e){var f=e.features&&e.features[0];if(!f)return;var v=null;try{v=JSON.parse(f.properties.data||'null');}catch(x){}if(!v)return;openPopup(map,f.geometry.coordinates,v);});`
-  + `map.on('mouseenter','games',function(){map.getCanvas().style.cursor='pointer';});`
-  + `map.on('mouseleave','games',function(){map.getCanvas().style.cursor='';});`
+  + `map.on('click','games-hit',function(e){var fs=e.features||[];var f=null,bd=1e9;for(var i=0;i<fs.length;i++){var pt=map.project(fs[i].geometry.coordinates);var dd=Math.pow(pt.x-e.point.x,2)+Math.pow(pt.y-e.point.y,2);if(dd<bd){bd=dd;f=fs[i];}}if(!f)return;var v=null;try{v=JSON.parse(f.properties.data||'null');}catch(x){}if(!v)return;openPopup(map,f.geometry.coordinates,v);});`
+  + `map.on('mouseenter','games-hit',function(){map.getCanvas().style.cursor='pointer';});`
+  + `map.on('mouseleave','games-hit',function(){map.getCanvas().style.cursor='';});`
   + `window.addEventListener('message',function(ev){var d=ev&&ev.data;if(!d)return;`
   + `if(d.type==='kmh-games'){lastFeatures=d.features||[];var s=map.getSource('games');if(s)s.setData({type:'FeatureCollection',features:lastFeatures});var h=map.getSource('ghl');if(h)h.setData({type:'FeatureCollection',features:[]});}`
   + `if(d.type==='kmh-hover'){var h2=map.getSource('ghl');if(!h2)return;var hit=null;if(d.key)for(var i=0;i<lastFeatures.length;i++){var kk=lastFeatures[i].properties.keys||[];if(kk.indexOf(d.key)>-1){hit=lastFeatures[i];break;}}h2.setData({type:'FeatureCollection',features:hit?[hit]:[]});}`

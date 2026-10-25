@@ -91,6 +91,12 @@ export function DashboardScreen() {
   const [observed, setObserved] = useState<ObservedPlayer[]>([]);
   const [beraterStats, setBeraterStats] = useState<BeraterStats | null>(null);
   const [todayGames, setTodayGames] = useState<TodayGame[]>([]);
+  // Heute bzw. laufender mehrtägiger Termin -> grüner Datumsblock (wie in der Spiele-Übersicht)
+  const isTodayGame = (g: TodayGame) => {
+    const t = new Date().toISOString().slice(0, 10);
+    const d = (g.matchDate || '').slice(0, 10), e = (g.matchDateEnd || g.matchDate || '').slice(0, 10);
+    return !!d && d <= t && t <= e;
+  };
   // Wappen-Lookup: normalisierte Vereins-Basis -> tm_club_id
   const [clubLogoMap, setClubLogoMap] = useState<Map<string, string>>(new Map());
   const clubLogoUri = (teamName: string): string | null => clubLogoUriFor(clubLogoMap, teamName);
@@ -237,28 +243,19 @@ export function DashboardScreen() {
       setInitials(email.slice(0, 2).toUpperCase());
     });
 
-    // Heutige Spiele: eigene (scouting_matches) + Umgebungs-Spiele (area_games)
+    // Meine Spiele (Matti 2026-10-25): nicht alle Spiele von heute, sondern die, bei denen ich sein werde:
+    // eigene Spiele (Meine Spiele) + DFB-Termine mit "Ich bin dabei", ab heute, die nächsten 8
     try {
-      const [ownRes, areaRes, leaguesRes] = await Promise.all([
-        supabase
-          .from('scouting_matches')
-          .select('id, home_team, away_team, match_date, match_date_end, match_time, age_group, match_type, location, fussball_de_url, source')
-          .eq('is_archived', false)
-          // heute beginnend ODER mehrtägig und heute laufend (DFB-Lehrgänge)
-          .or(`match_date.eq.${today},and(match_date.lte.${today},match_date_end.gte.${today})`)
-          .limit(30),
-        supabase
-          .from('area_games')
-          .select('match_key, league_key, kickoff_time, home_name, away_name, home_team_id, away_team_id, wettbewerb, venue, venue_address, game_url')
-          .eq('kickoff_date', today)
-          .order('kickoff_time')
-          .limit(60),
-        supabase.from('area_leagues').select('league_key, name'),
-      ]);
-      const leagueNames = new Map<string, string>(
-        ((leaguesRes.data as any[]) || []).map((l) => [l.league_key, l.name])
-      );
-      const own: TodayGame[] = ((ownRes.data as any[]) || []).map((m) => ({
+      const { data: ownData } = await supabase
+        .from('scouting_matches')
+        .select('id, home_team, away_team, match_date, match_date_end, match_time, age_group, match_type, location, fussball_de_url, source, attending')
+        .eq('is_archived', false)
+        .or(`match_date.gte.${today},match_date_end.gte.${today}`)
+        .order('match_date')
+        .order('match_time')
+        .limit(60);
+      const mine = ((ownData as any[]) || []).filter((m) => m.source !== 'dfb' || m.attending);
+      const own: TodayGame[] = mine.slice(0, 8).map((m) => ({
         key: `own-${m.id}`,
         matchId: String(m.id),
         zeit: m.match_time ? String(m.match_time).slice(0, 5) : null,
@@ -274,26 +271,7 @@ export function DashboardScreen() {
         matchDate: m.match_date || null,
         matchDateEnd: m.match_date_end || null,
       }));
-      const ownNames = new Set(own.map((g) => g.begegnung));
-      const area: TodayGame[] = ((areaRes.data as any[]) || [])
-        .map((g) => ({
-          key: `area-${g.match_key}`,
-          matchId: `area:${g.match_key}`,
-          zeit: g.kickoff_time ? String(g.kickoff_time).slice(0, 5) : null,
-          begegnung: `${g.home_name} - ${g.away_name}`,
-          home: stripAge(g.home_name),
-          away: stripAge(g.away_name),
-          liga: areaAge(g, leagueNames.get(g.league_key) || ''),
-          art: areaArt(g),
-          ort: g.venue_address ? `${g.venue ? `${g.venue}, ` : ''}${g.venue_address}` : g.venue || null,
-          fussballDeUrl: g.game_url || null,
-          isOwn: false,
-          homeTeamId: g.home_team_id || null,
-          awayTeamId: g.away_team_id || null,
-        }))
-        .filter((g) => !ownNames.has(g.begegnung));
-      const all = [...own, ...area].sort((a, b) => (a.zeit || '99').localeCompare(b.zeit || '99'));
-      setTodayGames(all);
+      setTodayGames(own);
     } catch { /* Karte bleibt leer */ }
   };
 
@@ -511,9 +489,9 @@ export function DashboardScreen() {
           {/* Heutige Spiele */}
           {/* Mobil: keine Mindestbreite (420 ragte über den Bildschirm hinaus) */}
           <View style={[styles.panelCard, styles.panelHeute, HARD_SHADOW, isMobile && ({ flexBasis: 'auto', minWidth: 0 } as any)]}>
-            {chip(`HEUTE${todayGames.length > 0 ? ` (${todayGames.length})` : ''}`, true)}
+            {chip(`MEINE SPIELE${todayGames.length > 0 ? ` (${todayGames.length})` : ''}`, true)}
             {todayGames.length === 0 ? (
-              <Text style={styles.emptyText}>Heute keine Spiele</Text>
+              <Text style={styles.emptyText}>Keine Spiele geplant</Text>
             ) : (
               todayGames.map((g, idx) => (
                 <TouchableOpacity
@@ -529,7 +507,7 @@ export function DashboardScreen() {
                 >
                   {/* Anstoßzeit-Block links: heute = grün (wie in der Spiele-Übersicht) */}
                   <View style={{
-                    width: 86, backgroundColor: '#22c55e',
+                    width: 86, backgroundColor: isTodayGame(g) ? '#22c55e' : RETRO.yellow,
                     alignItems: 'center', justifyContent: 'center',
                     paddingVertical: 8, paddingHorizontal: 4,
                     borderRightWidth: 1, borderRightColor: RETRO.rowBorder,
@@ -544,7 +522,7 @@ export function DashboardScreen() {
                     ) : (
                       <>
                         <Text style={{ fontSize: 10, fontWeight: '700', fontFamily: MONO, color: RETRO.text, opacity: 0.75 }} numberOfLines={1}>
-                          Heute
+                          {isTodayGame(g) ? 'Heute' : fmtShort(g.matchDate)}
                         </Text>
                         <Text style={{ fontSize: 14, fontWeight: '800', color: RETRO.text, marginTop: 1 }} numberOfLines={1}>
                           {g.zeit || '–'}

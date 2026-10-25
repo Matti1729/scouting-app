@@ -117,6 +117,7 @@ import { TeamLogo, CompactMatchTeams } from '../../components/ClubLogo';
 import { PulseDot, ATTENDING_COLOR } from '../../components/PulseDot';
 import { TableRow } from '../../components/table/TableRow';
 import { MatchNotesPanel } from '../../components/MatchNotesPanel';
+import { SAFE_BOTTOM } from '../../utils/safeArea';
 
 // Dropdown Optionen
 const SPIELART_OPTIONS = [
@@ -364,11 +365,13 @@ const MapLegend = ({ showHorizon }: { showHorizon: boolean }) => (
   <View
     pointerEvents="none"
     style={[HARD_SHADOW, {
-      position: 'absolute', left: 10, bottom: 10, backgroundColor: RETRO.white,
-      paddingVertical: 6, paddingHorizontal: 8, gap: 3,
+      // mittig und mit Abstand zu den runden iPhone-Ecken (Matti 2026-10-25: wirkte links und abgeschnitten)
+      position: 'absolute', left: 0, right: 0, bottom: 12 + SAFE_BOTTOM, marginHorizontal: 'auto', alignSelf: 'center',
+      alignItems: 'center', backgroundColor: RETRO.white,
+      paddingVertical: 6, paddingHorizontal: 10, gap: 3,
     }]}
   >
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: 10 }}>
       {([['herren', 'Herren'], ['jugend', 'Junioren'], ['dfb', 'DFB-Termin']] as const).map(([k, label]) => (
         <View key={k} style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
           <View style={{ width: 9, height: 9, borderRadius: 5, backgroundColor: MAP_COLOR[k], borderWidth: 1, borderColor: '#ffffff' }} />
@@ -3865,7 +3868,7 @@ export function MatchListScreen({ navigation, route }: any) {
                   )}
 
                   {notesOpen && !isEditMode ? (
-                    <View style={{ flex: 1, minHeight: 0, paddingHorizontal: isMobile ? 8 : 16, paddingBottom: isMobile ? 76 : 8 }}>
+                    <View style={{ flex: 1, minHeight: 0, paddingHorizontal: isMobile ? 8 : 16, paddingBottom: isMobile ? 76 + SAFE_BOTTOM : 8 }}>
                       <MatchNotesPanel
                         match={{ id: selectedMatch.id, spiel: selectedMatch.spiel, datum: selectedMatch.datum, mannschaft: selectedMatch.mannschaft }}
                         homeName={selectedMatch.spiel.split(' - ')[0] || 'Heim'}
@@ -3895,7 +3898,7 @@ export function MatchListScreen({ navigation, route }: any) {
                           )
                         )}
                         <LineupList
-                          bottomInset={isMobile && !isEditMode ? 84 : 0}
+                          bottomInset={isMobile && !isEditMode ? 84 + SAFE_BOTTOM : 0}
                           players={isEditMode ? editedHomeLineup : homeLineup}
                           subs={isEditMode ? editedHomeSubs : homeSubs}
                           onPlayerPress={handlePlayerSelect}
@@ -3932,7 +3935,7 @@ export function MatchListScreen({ navigation, route }: any) {
                           )
                         )}
                         <LineupList
-                          bottomInset={isMobile && !isEditMode ? 84 : 0}
+                          bottomInset={isMobile && !isEditMode ? 84 + SAFE_BOTTOM : 0}
                           players={isEditMode ? editedAwayLineup : awayLineup}
                           subs={isEditMode ? editedAwaySubs : awaySubs}
                           onPlayerPress={handlePlayerSelect}
@@ -4013,7 +4016,7 @@ export function MatchListScreen({ navigation, route }: any) {
                       <Pressable style={styles.mobileMenuOverlay} onPress={() => setActionMenuVisible(false)} />
                     )}
                     {actionMenuVisible && (
-                      <View style={[styles.mobileMenuDropdown, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+                      <View style={[styles.mobileMenuDropdown, { backgroundColor: colors.surface, borderColor: colors.border, bottom: 60 + SAFE_BOTTOM }]}>
                         <TouchableOpacity style={[styles.mobileMenuItem, { borderBottomColor: colors.border }]} onPress={() => { setActionMenuVisible(false); handleEditMatch(); }}>
                           <Text style={[styles.mobileMenuItemText, { color: colors.text }]}>Bearbeiten</Text>
                         </TouchableOpacity>
@@ -4031,7 +4034,7 @@ export function MatchListScreen({ navigation, route }: any) {
                         onPress={() => setNotesOpen((v) => !v)}
                         activeOpacity={0.8}
                         style={[HARD_SHADOW, {
-                          position: 'absolute', right: 74, bottom: 16, height: 48, borderRadius: 24,
+                          position: 'absolute', right: 74, bottom: 16 + SAFE_BOTTOM, height: 48, borderRadius: 24,
                           paddingLeft: 14, paddingRight: 18, flexDirection: 'row', alignItems: 'center', gap: 8,
                           backgroundColor: notesOpen ? RETRO.white : RETRO.yellow, borderWidth: 1, borderColor: RETRO.text,
                         }]}
@@ -4041,7 +4044,7 @@ export function MatchListScreen({ navigation, route }: any) {
                       </TouchableOpacity>
                     )}
                     <TouchableOpacity
-                      style={[styles.mobileMenuButton, { backgroundColor: colors.surface, borderColor: colors.border }]}
+                      style={[styles.mobileMenuButton, { backgroundColor: colors.surface, borderColor: colors.border, bottom: 16 + SAFE_BOTTOM }]}
                       onPress={() => setActionMenuVisible(!actionMenuVisible)}
                     >
                       <Text style={[styles.mobileMenuButtonText, { color: colors.text }]}>{actionMenuVisible ? '\u2715' : '\u22EE'}</Text>

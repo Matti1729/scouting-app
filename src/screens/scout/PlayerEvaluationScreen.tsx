@@ -33,6 +33,7 @@ import { EvalHeader } from '../../components/evaluation/EvalHeader';
 import { KoerperCard } from '../../components/evaluation/KoerperCard';
 import { AthletikCard } from '../../components/evaluation/AthletikCard';
 import { VoiceNoteButton } from '../../components/evaluation/VoiceNoteButton';
+import { SAFE_BOTTOM } from '../../utils/safeArea';
 import {
   savePlayerEvaluation as saveBeraterEval,
   setScoutStatus,
@@ -1021,7 +1022,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
           </ScrollView>
           {/* Mobil: Speichern immer sichtbar als feste Leiste unter dem Scrollbereich */}
           {isMobile && (
-            <View style={styles.saveBarMobile}>
+            <View style={[styles.saveBarMobile, { paddingBottom: 8 + SAFE_BOTTOM }]}>
               <TouchableOpacity
                 style={[RETRO_BTN, HARD_SHADOW, styles.saveButton, { backgroundColor: colors.primary, opacity: saving ? 0.6 : 1, alignSelf: 'flex-end', paddingHorizontal: 28 }]}
                 onPress={handleSave}

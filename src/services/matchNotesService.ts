@@ -78,7 +78,9 @@ export async function applyNoteDraft(
     if (Object.keys(body).length) patch.body_structure = { ...(e.body_structure || {}), ...mergedBody };
     const mergedAth = { ...ath, ...clean(e.speed_athleticism || {}) };
     if (Object.keys(ath).length) patch.speed_athleticism = { ...(e.speed_athleticism || {}), ...mergedAth };
-    if (note && !(e.notes || '').includes(note)) patch.notes = e.notes ? `${e.notes}\n${note}` : note;
+    // Notiz nur anhängen, wenn sie (bis auf Groß-/Kleinschreibung und Satzzeichen) noch nicht drinsteht
+    const flat = (x: string) => x.toLowerCase().replace(/[^a-zäöüß0-9]+/g, ' ').trim();
+    if (note && !flat(e.notes || '').includes(flat(note))) patch.notes = e.notes ? `${e.notes}\n${note}` : note;
     if (Object.keys(patch).length) {
       const { error } = await supabase.from('player_evaluations').update(patch).eq('id', e.id);
       if (error) throw new Error(error.message);

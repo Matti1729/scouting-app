@@ -49,6 +49,7 @@ import {
 } from '../services/beraterService';
 import { MONO } from '../theme/retro';
 import { supabase } from '../config/supabase';
+import { SAFE_BOTTOM } from '../utils/safeArea';
 
 // Nativer Datums-Picker des Browsers (input type="date") — nur im Web verfügbar
 let createDomElement: ((type: string, props: any) => React.ReactElement) | null = null;
@@ -543,7 +544,7 @@ export function PlayerDetailModal({
       <TouchableWithoutFeedback onPress={handleClose}>
         <View style={[styles.detailOverlay, isMobile && { padding: 0, justifyContent: 'flex-end' }]}>
           <TouchableWithoutFeedback>
-            <View style={[styles.detailModal, isMobile && { width: '100%', maxWidth: '100%', maxHeight: '90%', borderWidth: 0, padding: 10, borderTopLeftRadius: 0, borderTopRightRadius: 0, borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }, HARD_SHADOW_LG]}>
+            <View style={[styles.detailModal, isMobile && { width: '100%', maxWidth: '100%', maxHeight: '90%', borderWidth: 0, padding: 10, paddingBottom: 10 + SAFE_BOTTOM, borderTopLeftRadius: 0, borderTopRightRadius: 0, borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }, HARD_SHADOW_LG]}>
               {/* Namens-Balken (gelb): Name · SPIELERPROFIL (auf Namens-Grundlinie) · ✕ */}
               <View style={[styles.detailNameBar, HARD_SHADOW]}>
                 <View style={styles.detailNameWrap}>

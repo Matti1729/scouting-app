@@ -83,19 +83,44 @@ export function MatchNotesPanel({ match, homeName, awayName, isMobile, onApplied
     }
   };
 
+  // Übernommene Stellen aus den Notizen entfernen (Matti 2026-10-25): sonst stünde beim nächsten
+  // "Auswerten" alles doppelt im Bericht. Nicht zuordenbare Stellen bleiben stehen.
+  const removePassages = (src: string, passages: string[]) => {
+    let out = src;
+    for (const p of passages) {
+      const t = (p || '').trim();
+      if (!t) continue;
+      if (out.includes(t)) { out = out.replace(t, ''); continue; }
+      // Diktat/KI weicht bei Leerzeichen/Satzzeichen ab: unscharf über die Wortfolge suchen
+      const words = t.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+      const re = new RegExp(words.join('[\\s,.;:!?-]*') + '[.,;:!?]*', 'i');
+      out = out.replace(re, '');
+    }
+    return out.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').replace(/^\s+|\s+$/g, '');
+  };
+
   const apply = async (idxs: number[]) => {
     if (!drafts) return;
     setBusy(true);
     const done = new Set(applied);
+    const nowDone: number[] = [];
     try {
       for (const i of idxs) {
         if (done.has(i)) continue;
         await applyNoteDraft(drafts[i], match);
         done.add(i);
+        nowDone.push(i);
       }
     } catch (e: any) {
       showAlert('Fehler', e.message);
     } finally {
+      if (nowDone.length) {
+        const rest = removePassages(text, nowDone.map((i) => drafts[i].source_text));
+        setText(rest);
+        pending.current = null;
+        await saveMatchNotes(match.id, rest);
+        setSaved(true);
+      }
       setApplied(done);
       setBusy(false);
       onApplied?.();
@@ -114,7 +139,7 @@ export function MatchNotesPanel({ match, homeName, awayName, isMobile, onApplied
       <View style={{ flex: 1, minHeight: 0, gap: 8 }}>
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Text style={{ flex: 1, fontSize: 12, color: RETRO.textMuted }}>
-            {drafts.length} Spieler zugeordnet{unmatched.length ? ` · ${unmatched.length} offen` : ''}. Prüfen und übernehmen.
+            {drafts.length} Spieler zugeordnet{unmatched.length ? ` · ${unmatched.length} offen` : ''}. Übernommenes verschwindet aus den Notizen.
           </Text>
           <TouchableOpacity onPress={() => setDrafts(null)} hitSlop={8}>
             <Text style={{ fontSize: 12, fontWeight: '600', color: RETRO.text, textDecorationLine: 'underline' }}>Zurück zu den Notizen</Text>

@@ -56,6 +56,7 @@ import { savePlayerNotesText, fetchSearchPlayer, StipendiumSearchPlayer, positio
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
 import { RatingBar } from '../../components/evaluation/RatingBar';
 import { fetchAgentInfo } from '../../services/transfermarktService';
+import { SAFE_BOTTOM } from '../../utils/safeArea';
 
 const MATCH_EVAL_COLUMNS: ColumnDef[] = [
   { key: 'date', label: 'Datum', defaultFlex: 0.8, minWidth: 70 },
@@ -1502,7 +1503,7 @@ const styles = StyleSheet.create({
   detailSheet: {
     borderTopLeftRadius: 0,
     borderTopRightRadius: 0,
-    paddingBottom: 0,
+    paddingBottom: SAFE_BOTTOM,
     maxHeight: '92%',
     minWidth: '100%',
     borderWidth: 1,
