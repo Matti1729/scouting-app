@@ -48,7 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Initiale Session holen — aber nur akzeptieren, wenn Scouting-Zugang besteht.
     supabase.auth.getSession().then(async ({ data: { session } }) => {
       if (session?.user && !(await hasScoutingAccess(session.user.id))) {
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: 'local' });
         setSession(null);
       } else {
         setSession(session);
@@ -71,7 +71,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Zugriff auf die Scouting-App prüfen — sonst sofort wieder abmelden.
     if (data.user && !(await hasScoutingAccess(data.user.id))) {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
       setSession(null);
       return { error: new Error(NO_ACCESS_MESSAGE) };
     }
@@ -110,7 +110,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         p_first_name: firstName,
         p_last_name: lastName,
       });
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
       if (consumeError) return { error: consumeError as Error | null };
       return { error: null };
     } finally {
@@ -129,7 +129,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await supabase.rpc('consume_staff_invitation', { p_code: meta.invitation_code, p_first_name: meta.first_name ?? null, p_last_name: meta.last_name ?? null });
       }
       if (!data.user || !(await hasScoutingAccess(data.user.id))) {
-        await supabase.auth.signOut();
+        await supabase.auth.signOut({ scope: 'local' });
         return { error: new Error(NO_ACCESS_MESSAGE) };
       }
       setSession(data.session);
@@ -163,7 +163,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (error) return { error: error as Error | null };
     registering.current = false;
     if (!data.user || !(await hasScoutingAccess(data.user.id))) {
-      await supabase.auth.signOut();
+      await supabase.auth.signOut({ scope: 'local' });
       return { error: new Error(NO_ACCESS_MESSAGE) };
     }
     const { data: { session: s2 } } = await supabase.auth.getSession();
@@ -172,12 +172,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const cancelRecovery = async () => {
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
     registering.current = false;
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    await supabase.auth.signOut({ scope: 'local' });
   };
 
   return (
