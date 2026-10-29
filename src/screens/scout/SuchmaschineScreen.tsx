@@ -1774,11 +1774,25 @@ export function SuchmaschineScreen() {
           {/* Marktwert-Korridor: von/bis mit festen Stufen (25 Tsd. bis 200 Mio.) */}
           <View style={nc.row}>
             <Text style={nc.rowLabel}>MARKTWERT</Text>
-            <View style={[nc.dropdownWrap, nc.mvRange]}>
-              <MvField value={mvMin} onChange={setMvMin} />
-              <Text style={nc.mvRangeDash}>-</Text>
-              <MvField value={mvMax} onChange={setMvMax} />
-            </View>
+            {isMobile ? (
+              // Mobil: von/bis untereinander, sonst bleibt neben den Einheiten kein Platz für die Zahl
+              <View style={[nc.dropdownWrap, nc.mvRangeMobile]}>
+                <View style={nc.mvRange}>
+                  <Text style={nc.mvRangePrefix}>von</Text>
+                  <MvField value={mvMin} onChange={setMvMin} />
+                </View>
+                <View style={nc.mvRange}>
+                  <Text style={nc.mvRangePrefix}>bis</Text>
+                  <MvField value={mvMax} onChange={setMvMax} />
+                </View>
+              </View>
+            ) : (
+              <View style={[nc.dropdownWrap, nc.mvRange]}>
+                <MvField value={mvMin} onChange={setMvMin} />
+                <Text style={nc.mvRangeDash}>-</Text>
+                <MvField value={mvMax} onChange={setMvMax} />
+              </View>
+            )}
           </View>
           <View style={nc.checkGroupCols}>
             <View style={nc.checkCol}>
@@ -2588,6 +2602,14 @@ const nc = StyleSheet.create({
   mvRangeDash: {
     fontSize: 13,
     fontWeight: '600',
+    color: RETRO.textMuted,
+  },
+  mvRangeMobile: {
+    gap: 8,
+  },
+  mvRangePrefix: {
+    width: 22,
+    fontSize: 12,
     color: RETRO.textMuted,
   },
   checkGroup: {
