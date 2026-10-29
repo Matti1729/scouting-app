@@ -31,7 +31,8 @@ function AppContent() {
   return (
     <>
       <StatusBar style={isDark ? 'light' : 'dark'} />
-      <NavigationContainer ref={navRef}>
+      {/* Browser-Tab immer "Scouting" statt interner Seitennamen (MatchList, PlayerEvaluation …) */}
+      <NavigationContainer ref={navRef} documentTitle={{ formatter: () => 'Scouting' }}>
         <AppNavigator />
       </NavigationContainer>
       {/* Wischgesten am Handy: vom linken Rand zurück, Fenster am Kopf nach unten wegwischen */}
