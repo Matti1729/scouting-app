@@ -662,13 +662,14 @@ export interface KmhPlayer {
   club: string;   // Verein laut KMH-Spielerübersicht ("Dynamo Dresden U19", "SC Paderborn 07 II")
   league: string; // Liga laut Spielerübersicht ("U16 Regionalliga", "Regionalliga Nordost")
   category: string; // "Fußball" | "Handball" | "Funktionär" …
+  teamId: string | null; // fussball.de-Mannschafts-ID aus dem hinterlegten Spielplan-Link
 }
 
 /** Spieler der KMH-Spielerübersicht laden (gleicher Filter wie dort) */
 export async function loadKmhPlayers(): Promise<KmhPlayer[]> {
   const { data, error } = await supabase
     .from('player_details')
-    .select('id, first_name, last_name, club, league, category')
+    .select('id, first_name, last_name, club, league, category, fussball_de_url')
     .or('provision_only.is.null,provision_only.eq.false')
     .limit(1000);
   if (error) { console.error('player_details laden fehlgeschlagen:', error); return []; }
@@ -678,7 +679,30 @@ export async function loadKmhPlayers(): Promise<KmhPlayer[]> {
     club: p.club || '',
     league: p.league || '',
     category: p.category || '',
+    teamId: (String(p.fussball_de_url || '').match(/team-id\/([A-Z0-9]+)/i) || [])[1] || null,
   }));
+}
+
+/** Spielerin einer Frauenmannschaft? (Frauen-Bundesliga, Juniorinnen …) */
+function kmhIsFrauen(p: KmhPlayer): boolean {
+  return /frauen|women|juniorinnen/i.test(`${p.club} ${p.league}`);
+}
+
+/**
+ * Frauenmannschaften unserer Spielerinnen: fussball.de-Team-ID -> Namen.
+ * fussball.de nennt das Team nur "VfL Wolfsburg" (wie die Männer), deshalb
+ * erkennen wir Frauenspiele ausschließlich an der Team-ID aus dem Spielplan-Link.
+ */
+export function buildKmhFrauenTeams(players: KmhPlayer[]): Map<string, string[]> {
+  const m = new Map<string, string[]>();
+  for (const p of players) {
+    if (!p.name || !p.teamId || !kmhIsFrauen(p)) continue;
+    if (p.category && !/fu(ß|ss)ball/i.test(p.category)) continue;
+    const cur = m.get(p.teamId) || [];
+    if (!cur.includes(p.name)) cur.push(p.name);
+    m.set(p.teamId, cur);
+  }
+  return m;
 }
 
 /** Altersklasse aus Verein/Liga der Spielerübersicht ("U19", sonst "Herren"; U20+ = Herren) */
@@ -774,7 +798,7 @@ export function buildKmhClubIndex(players: KmhPlayer[], ids?: KmhClubIds): KmhCl
     // Nur Fußballer aus dem Männer-/Junioren-Bereich (Handball, Funktionäre, Frauen-Ligen
     // haben keine Spiele in dieser Übersicht und würden sonst falsch am Männer-Team hängen)
     if (p.category && !/fu(ß|ss)ball/i.test(p.category)) continue;
-    if (/frauen|women|juniorinnen/i.test(`${p.club} ${p.league}`)) continue;
+    if (kmhIsFrauen(p)) continue;
     const key = kmhClubKey(p.club, kmhAge(p.club, p.league), ids);
     const cur = byClub.get(key) || [];
     if (!cur.includes(p.name)) cur.push(p.name);

@@ -54,6 +54,7 @@ import {
   AreaLeague,
   loadKmhPlayers,
   buildKmhClubIndex,
+  buildKmhFrauenTeams,
   loadDfbKmhIndex,
   kmhClubKey,
   loadKmhClubIds,
@@ -162,6 +163,8 @@ interface Match {
   // Altersklasse je Team aus den fussball.de-Namen (Umgebungs-Spiele): "RB Leipzig U16"
   // in der "U17 Regionalliga" ist die U16 — für die KMH-Spieler-Tags
   teamAges?: [string | null, string | null];
+  // Frauenspiel: unsere Spielerinnen, zugeordnet über die fussball.de-Team-ID
+  kmhFrauen?: string[];
   // fussball.de team-ids (Umgebungs-Spiele) für die Wappen-Auflösung über die Vereinsseite
   homeTeamId?: string | null;
   awayTeamId?: string | null;
@@ -648,6 +651,8 @@ export function MatchListScreen({ navigation, route }: any) {
   /** Namen unserer Spieler in diesem Spiel (Heim zuerst, dann Gast) */
   const kmhPlayersFor = (m: Match): string[] => {
     if (m.source === 'dfb') return dfbKmhIndex.get(m.id) || [];
+    // Frauenspiel: nie über den Vereinsnamen (sonst hängen die Männer desselben Vereins dran)
+    if (m.kmhFrauen) return m.kmhFrauen;
     if (kmhIndex.size === 0) return [];
     const out: string[] = [];
     const age = m.mannschaft || 'Herren';
@@ -792,7 +797,8 @@ export function MatchListScreen({ navigation, route }: any) {
 
   // Spiele "in der Umgebung" laden (geteilte KMH-Datenbank, bereits geocodiert)
   const fetchAreaGames = async () => {
-    const { leagues, clubs, games } = await loadAreaData();
+    const [{ leagues, clubs, games }, players] = await Promise.all([loadAreaData(), loadKmhPlayers()]);
+    const frauenTeams = buildKmhFrauenTeams(players);
     const leagueName = (key: string) => leagues.find((l) => l.league_key === key)?.name || '';
     const groupColor = (key: string) => {
       const g = leagues.find((l) => l.league_key === key)?.marker_group;
@@ -810,14 +816,18 @@ export function MatchListScreen({ navigation, route }: any) {
         const venue = g.venue || homeClub?.venue || null;
         // Letzter Fallback: Heimvereinsname als Maps-Suche (findet das Vereinsgelände)
         const venueAddress = g.venue_address || homeClub?.venue_address || (venue ? null : stripAge(g.home_name));
+        // Frauenspiel unserer Spielerin (fussball.de-Name ohne "Frauen", nur die Team-ID verrät es)
+        const frauen = [g.home_team_id, g.away_team_id].flatMap((id) => (id && frauenTeams.get(id)) || []);
+        const isFrauen = [g.home_team_id, g.away_team_id].some((id) => id && frauenTeams.has(id));
         return {
           id: `area:${g.match_key}`,
           datum: g.kickoff_date, // ISO — parseDateString/formatDateGerman können das
           datumEnde: null,
           zeit: g.kickoff_time || '',
-          mannschaft: areaAge(g, leagueName(g.league_key)),
+          mannschaft: isFrauen ? 'Frauen' : areaAge(g, leagueName(g.league_key)),
           spiel: `${stripAge(g.home_name)} - ${stripAge(g.away_name)}`,
-          teamAges: [teamAge(g.home_name), teamAge(g.away_name)],
+          teamAges: isFrauen ? ['Frauen', 'Frauen'] : [teamAge(g.home_name), teamAge(g.away_name)],
+          kmhFrauen: isFrauen ? frauen : undefined,
           art: areaArt(g),
           wettbewerb: competitionLabel(leagueName(g.league_key), g.wettbewerb),
           // venue enthält teils schon die Adresse -> entdoppeln (sonst "Allee 9, Allee 9")
@@ -2319,6 +2329,7 @@ export function MatchListScreen({ navigation, route }: any) {
 
   // Jahrgang einer Zeile normalisieren ("U17", sonst "Herren") — fürs Filtern
   const rowJahrgang = (m: Match): string => {
+    if (/^frauen/i.test(m.mannschaft || '')) return 'Frauen';
     const hit = (m.mannschaft || '').match(/\bU[\s-]?(\d{2})\b/i);
     return hit ? `U${hit[1]}` : 'Herren';
   };
@@ -2466,9 +2477,9 @@ export function MatchListScreen({ navigation, route }: any) {
     const set = new Set<string>();
     for (const m of [...matches, ...areaMatches]) set.add(rowJahrgang(m));
     const jugend = Array.from(set)
-      .filter((x) => x !== 'Herren')
+      .filter((x) => x !== 'Herren' && x !== 'Frauen')
       .sort((a, b) => parseInt(a.slice(1), 10) - parseInt(b.slice(1), 10));
-    return [...jugend, ...(set.has('Herren') ? ['Herren'] : [])];
+    return [...jugend, ...(set.has('Herren') ? ['Herren'] : []), ...(set.has('Frauen') ? ['Frauen'] : [])];
   }, [matches, areaMatches]);
 
   // Filter-Pill mit Mehrfachauswahl-Dropdown (Jahrgang bzw. Art)
