@@ -48,12 +48,86 @@ async function fetchJson(url: string): Promise<any> {
   return JSON.parse(await fetchText(url))
 }
 
+// Eingescannte Listen (DFB-Dateien seit Herbst 2026 teils reine Bilder) liest Claude. Ein Aufruf
+// dauert bis zu ~30 s, deshalb je Lauf begrenzt; der Rest kommt beim nächsten Lauf dran.
+const ANTHROPIC_API_KEY = Deno.env.get('ANTHROPIC_API_KEY') || ''
+const SCAN_MODEL = 'claude-opus-5-5'
+let scansLeft = 3
+
+const SCAN_SCHEMA = {
+  type: 'object',
+  properties: {
+    players: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          nachname: { type: 'string' },
+          vorname: { type: 'string' },
+          verein: { type: 'string' },
+          abschnitt: { type: 'string', enum: ['torhueter', 'feldspieler', 'auf_abruf'] },
+        },
+        required: ['nachname', 'vorname', 'verein', 'abschnitt'],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ['players'],
+  additionalProperties: false,
+}
+
+/** Eingescannte Kaderliste per Claude lesen (Laufnummern werden wie beim Text-PDF nicht übernommen) */
+async function readKaderScan(buf: Uint8Array): Promise<DfbKaderPlayer[]> {
+  if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY fehlt')
+  let bin = ''
+  for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode(...buf.subarray(i, i + 0x8000))
+  const r = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': ANTHROPIC_API_KEY,
+      'anthropic-version': '2023-06-01',
+      'anthropic-beta': 'server-side-fallback-2026-07-01',
+    },
+    body: JSON.stringify({
+      model: SCAN_MODEL,
+      max_tokens: 8000,
+      fallbacks: 'default',
+      output_config: { effort: 'low', format: { type: 'json_schema', schema: SCAN_SCHEMA } },
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: btoa(bin) } },
+          { type: 'text', text: 'Das ist eine Kaderliste des DFB. Übertrage jeden Spieler genau wie gedruckt (Nachname, Vorname, Verein, auch Sonderzeichen). abschnitt ist die Überschrift, unter der er steht: TORHÜTER, FELDSPIELER oder AUF ABRUF. Trainer und Betreuer gehören nicht dazu.' },
+        ],
+      }],
+    }),
+  })
+  if (!r.ok) throw new Error(`Anthropic HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`)
+  const msg = await r.json()
+  if (msg.stop_reason !== 'end_turn') throw new Error(`Anthropic stop_reason ${msg.stop_reason}`)
+  const text = (msg.content || []).find((c: any) => c.type === 'text')?.text || '{}'
+  return (JSON.parse(text).players || []).map((p: any): DfbKaderPlayer => ({
+    nummer: null,
+    vorname: p.vorname,
+    name: p.nachname,
+    club: p.verein || null,
+    isGoalkeeper: p.abschnitt === 'torhueter',
+    onCall: p.abschnitt === 'auf_abruf',
+    profileUrl: null,
+    games: null,
+    goals: null,
+    birthDate: null,
+  }))
+}
+
 /** Kader-PDF → Spieler (Text-Items mit Koordinaten, Seiten per y-Offset getrennt) */
 async function loadKaderPdf(url: string): Promise<DfbKaderPlayer[]> {
   const r = await fetch(url, { headers: { 'User-Agent': UA } })
   if (!r.ok) throw new Error(`HTTP ${r.status} ${url}`)
   const buf = new Uint8Array(await r.arrayBuffer())
-  const doc = await getDocumentProxy(buf)
+  // Kopie: pdf.js übernimmt den Puffer, readKaderScan braucht ihn danach noch
+  const doc = await getDocumentProxy(buf.slice())
   const items: PdfTextItem[] = []
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p)
@@ -63,7 +137,10 @@ async function loadKaderPdf(url: string): Promise<DfbKaderPlayer[]> {
       items.push({ str: it.str, x: it.transform[4], y: it.transform[5] - p * 10000 })
     }
   }
-  return parseKaderPdfItems(items)
+  const players = parseKaderPdfItems(items)
+  if (players.length >= 5 || scansLeft <= 0) return players
+  scansLeft--
+  return await readKaderScan(buf)
 }
 
 async function loadKader(src: DfbKaderSource): Promise<DfbKaderPlayer[]> {
@@ -443,7 +520,7 @@ serve(async (req) => {
   // Bestehende DFB-Termine (alle, auch vergangene → Kader-Hash & Update)
   const { data: existingRows, error: exErr } = await sb
     .from('scouting_matches')
-    .select('id, source_key, attending, match_date, kader_hash, kader_title, dfb_match_url, home_team, away_team, match_date_end, match_time, location, age_group, lat, lng, geo_query')
+    .select('id, source_key, attending, match_date, kader_hash, kader_source, kader_title, dfb_match_url, home_team, away_team, match_date_end, match_time, location, age_group, lat, lng, geo_query')
     .eq('source', 'dfb')
   if (exErr && !dry) return json({ error: exErr.message }, 500)
   if (exErr) stats.errors.push(`DB (dry, ignoriert): ${exErr.message}`)
@@ -538,7 +615,10 @@ serve(async (req) => {
           if (error) stats.errors.push(`U${age} Kader-Titel: ${error.message}`)
         }
 
-        if (src && matchId) {
+        // PDF-Links tragen einen Zeitstempel: gleicher Link = gleiche Datei, nicht neu laden (Scan kostet)
+        if (src && matchId && src.kind === 'pdf' && ex?.kader_hash && ex?.kader_source === src.url) {
+          stats.kaderUnchanged++
+        } else if (src && matchId) {
           try {
             const players = await loadCached(src)
             if (players.length >= 5) {
