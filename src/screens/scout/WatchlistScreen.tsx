@@ -19,13 +19,12 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useTheme } from '../../contexts/ThemeContext';
-import { RETRO, RETRO_THEME, HARD_SHADOW, HARD_SHADOW_LG, MONO } from '../../theme/retro';
+import { RETRO, RETRO_BTN, RETRO_THEME, HARD_SHADOW, HARD_SHADOW_LG, MONO } from '../../theme/retro';
 import { RetroHeader } from '../../components/RetroHeader';
 import { TeamLogo } from '../../components/ClubLogo';
 import { loadClubLogoMap } from '../../services/areaGamesService';
 import { WebSafeList } from '../../components/WebSafeList';
 import { ScoutOverview } from '../../components/ScoutOverview';
-import { Dropdown } from '../../components/Dropdown';
 import { loadScoutOverview, markScoutActivitySeen, ScoutSummary } from '../../services/scoutActivityService';
 import { loadAdvisorNames } from '../../services/currentUser';
 import { supabase } from '../../config/supabase';
@@ -153,8 +152,9 @@ export function WatchlistScreen() {
   const [detailTableWidth, setDetailTableWidth] = useState(0);
 
   const { isScout } = useAuth();
+  const observedColumns = isScout ? OBSERVED_COLUMNS : OBSERVED_COLUMNS_BERATER;
   const table = useTableColumns(WATCHLIST_COLUMNS, tableWidth, 'watchlist_main_v2');
-  const observedTable = useTableColumns(isScout ? OBSERVED_COLUMNS : OBSERVED_COLUMNS_BERATER, tableWidth, 'watchlist_observed_v4');
+  const observedTable = useTableColumns(observedColumns, tableWidth, 'watchlist_observed_v4');
   const matchEvalTable = useTableColumns(MATCH_EVAL_COLUMNS, detailTableWidth, 'watchlist_match_evals');
 
   // Sort
@@ -190,6 +190,7 @@ export function WatchlistScreen() {
   const [scouts, setScouts] = useState<ScoutSummary[]>([]);
   const [advisorNames, setAdvisorNames] = useState<Map<string, string>>(new Map());
   const [vonFilter, setVonFilter] = useState('');
+  const [vonOpen, setVonOpen] = useState(false);
   useEffect(() => { if (!isScout) loadAdvisorNames().then(setAdvisorNames).catch(() => {}); }, [isScout]);
   useEffect(() => { if (viewTab === 'scouts') markScoutActivitySeen().catch(() => {}); }, [viewTab]);
   const scoutIds = useMemo(() => new Set(scouts.map((s) => s.id)), [scouts]);
@@ -197,7 +198,7 @@ export function WatchlistScreen() {
   const vonOptions = useMemo(() => {
     const ids = new Set(observed.flatMap((o) => o.authorIds));
     return [
-      { value: '', label: 'Von: alle' },
+      { value: '', label: 'Alle' },
       { value: 'scouts', label: 'Nur Scouts' },
       ...[...ids]
         .map((id) => ({ value: id, label: advisorNames.get(id) || 'Scout' }))
@@ -1087,8 +1088,39 @@ export function WatchlistScreen() {
 
       {/* Filter "Von" über "Alle Berichte" (nur Berater, Desktop + Mobil) */}
       {viewTab === 'beobachtet' && !isScout && (
-        <View style={{ paddingHorizontal: 12, paddingTop: isMobile ? 0 : 10, paddingBottom: isMobile ? 8 : 0, width: isMobile ? '100%' : 240, zIndex: 5 }}>
-          <Dropdown compact options={vonOptions} value={vonFilter} onChange={(v) => setVonFilter(v as string)} placeholder="Von: alle" />
+        <View style={{ flexDirection: 'row', paddingHorizontal: 12, paddingTop: isMobile ? 0 : 10, paddingBottom: isMobile ? 8 : 0, zIndex: 20 }}>
+          <View style={{ position: 'relative' }}>
+            <TouchableOpacity
+              style={[RETRO_BTN, HARD_SHADOW, { paddingVertical: 5, paddingHorizontal: 10, minHeight: 24, backgroundColor: vonFilter ? RETRO.faceSelected : RETRO.white }]}
+              onPress={() => setVonOpen((o) => !o)}
+            >
+              <Text style={{ fontSize: 11, fontWeight: vonFilter ? '700' : '600', color: RETRO.text }}>
+                {vonFilter ? vonOptions.find((o) => o.value === vonFilter)?.label : 'Von'} ▾
+              </Text>
+            </TouchableOpacity>
+            {vonOpen && (
+              <View style={[HARD_SHADOW_LG, {
+                position: 'absolute', top: 30, left: 0, width: 200, zIndex: 30,
+                backgroundColor: RETRO.white, borderWidth: 1, borderColor: RETRO.shadowDark, paddingVertical: 4,
+              }]}>
+                <ScrollView style={{ maxHeight: 280 }}>
+                  {vonOptions.map((o) => {
+                    const on = vonFilter === o.value;
+                    return (
+                      <TouchableOpacity
+                        key={o.value || 'alle'}
+                        style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 7, paddingHorizontal: 12 }}
+                        onPress={() => { setVonFilter(o.value); setVonOpen(false); }}
+                      >
+                        <Text style={{ fontSize: 13, fontWeight: on ? '700' : '400', color: RETRO.text }}>{o.label}</Text>
+                        {on ? <Ionicons name="checkmark" size={15} color={RETRO.text} /> : null}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </ScrollView>
+              </View>
+            )}
+          </View>
         </View>
       )}
 
@@ -1105,7 +1137,7 @@ export function WatchlistScreen() {
         >
           {observed.length > 0 && tableWidth > 0 && (
             <TableHeader
-              columnDefs={OBSERVED_COLUMNS}
+              columnDefs={observedColumns}
               columnOrder={observedTable.columnOrder}
               getColumnWidth={observedTable.getColumnWidth}
               onResizeStart={observedTable.onResizeStart}
