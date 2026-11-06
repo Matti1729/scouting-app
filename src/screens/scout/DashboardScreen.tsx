@@ -258,7 +258,7 @@ export function DashboardScreen() {
     try {
       const { data: ownData } = await supabase
         .from('scouting_matches')
-        .select('id, home_team, away_team, match_date, match_date_end, match_time, age_group, match_type, location, fussball_de_url, source, attending')
+        .select('id, home_team, away_team, match_date, match_date_end, match_time, age_group, match_type, location, fussball_de_url, source, attending, created_by')
         .eq('is_archived', false)
         .or(`match_date.gte.${today},match_date_end.gte.${today}`)
         .order('match_date')
