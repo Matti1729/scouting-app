@@ -5,6 +5,8 @@ import { Animated, Easing } from 'react-native';
 // Sitzt hinter der Nennung der Partie, nicht in der Kopfzeile.
 // "Ich bin beim Spiel": Hellgrün (Matti; Orange = Junioren-Punkte auf der Karte)
 export const ATTENDING_COLOR = '#22c55e';
+// Jemand anderes (Scout, Kollege) ist bei dem Spiel
+export const OTHER_ATTENDING_COLOR = '#e8930c';
 export function PulseDot({ size = 10, color = ATTENDING_COLOR }: { size?: number; color?: string }) {
   const scale = useRef(new Animated.Value(1)).current;
   const ring = useRef(new Animated.Value(0)).current;

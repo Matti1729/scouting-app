@@ -94,6 +94,7 @@ import {
   createMatch,
   updateMatch,
   deleteMatch,
+  setDfbAttending,
   loadLineups,
   replaceLineup,
   updatePlayer,
@@ -115,7 +116,8 @@ import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
 import { RetroHeader } from '../../components/RetroHeader';
 import { TeamLogo, CompactMatchTeams } from '../../components/ClubLogo';
-import { PulseDot, ATTENDING_COLOR } from '../../components/PulseDot';
+import { PulseDot, ATTENDING_COLOR, OTHER_ATTENDING_COLOR } from '../../components/PulseDot';
+import { currentUserId } from '../../services/currentUser';
 import { TableRow } from '../../components/table/TableRow';
 import { MatchNotesPanel } from '../../components/MatchNotesPanel';
 import { SAFE_BOTTOM } from '../../utils/safeArea';
@@ -177,6 +179,9 @@ interface Match {
   dfbUrl?: string | null;
   // DFB-Termin zu "Meine Spiele" hinzugefügt ("Ich bin beim Spiel")
   attending?: boolean;
+  // Spiel eines anderen + wer sonst noch dort ist (oranger Punkt mit Name)
+  foreign?: boolean;
+  others?: string[];
   // Automatisch übernommene fussball.de-Änderung (sync-own-matches) + schon angesehen?
   changeNote?: string | null;
   changeSeen?: boolean;
@@ -435,6 +440,8 @@ const dbMatchToMatch = (dbMatch: DbMatch): Match => ({
   source: dbMatch.source || null,
   dfbUrl: dbMatch.source === 'dfb' ? dfbTerminePageUrl(dbMatch.age_group) : null,
   attending: !!dbMatch.attending,
+  foreign: !!dbMatch.foreign,
+  others: dbMatch.others || [],
   changeNote: dbMatch.change_note || null,
   changeSeen: !!dbMatch.change_seen_at,
   kaderTitle: dbMatch.kader_title || null,
@@ -1463,8 +1470,7 @@ export function MatchListScreen({ navigation, route }: any) {
     setAddingAreaGame(true);
     // DFB-Termin (liegt schon in der Tabelle): nur "Ich bin dabei" setzen
     if (!areaDetail.isAreaGame && areaDetail.source === 'dfb') {
-      const res = await updateMatch(areaDetail.id, { attending: true });
-      if (res.success) {
+      if (await setDfbAttending(areaDetail.id, true)) {
         setMatches(prev => prev.map(m => m.id === areaDetail.id ? { ...m, attending: true } : m));
         setAreaDetail({ ...areaDetail, attending: true });
       }
@@ -1479,6 +1485,8 @@ export function MatchListScreen({ navigation, route }: any) {
       .eq('home_team', home?.trim() || areaDetail.spiel)
       .eq('away_team', rest.join(' - ').trim())
       .eq('match_date', areaDetail.datum)
+      .is('source', null)
+      .or(`created_by.is.null,created_by.eq.${currentUserId()}`)
       .limit(1);
     if (dupe && dupe.length > 0) {
       await fetchMatches();
@@ -1514,7 +1522,7 @@ export function MatchListScreen({ navigation, route }: any) {
     const own = matches.find(m => m.id === ownId);
     if (own?.source === 'dfb') {
       // DFB-Termin bleibt in "Anstehend", verliert nur die Markierung
-      await updateMatch(ownId, { attending: false });
+      await setDfbAttending(ownId, false);
     } else {
       await deleteMatch(ownId);
     }
@@ -1596,7 +1604,18 @@ export function MatchListScreen({ navigation, route }: any) {
 
   // Ist das Umgebungs-Spiel schon als eigenes Event übernommen?
   const isAreaGameAdded = (m: Match | null): boolean =>
-    !!m?.fussballDeUrl && matches.some((x) => x.fussballDeUrl === m.fussballDeUrl);
+    !!m?.fussballDeUrl && matches.some((x) => !x.foreign && x.fussballDeUrl === m.fussballDeUrl);
+
+  // Spiele anderer (Scouts, Kollegen) nach fussball.de-Link: zeigt den orangen Punkt auch
+  // an der eigenen Zeile und am Umgebungs-Spiel
+  const othersByUrl = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const m of matches) {
+      if (m.foreign && m.fussballDeUrl) map.set(m.fussballDeUrl, [...(map.get(m.fussballDeUrl) || []), ...(m.others || [])]);
+    }
+    return map;
+  }, [matches]);
+  const ownUrls = useMemo(() => new Set(matches.filter((m) => !m.foreign).map((m) => m.fussballDeUrl).filter(Boolean)), [matches]);
 
   // Ort in Karten-App öffnen (Google Maps / Apple Maps)
   const openLocationInMaps = (location: string) => {
@@ -2338,7 +2357,6 @@ export function MatchListScreen({ navigation, route }: any) {
   // gefiltert nach Suche, Jahrgang und Art
   const filteredMatches = useMemo(() => {
     // Bereits als eigenes Event übernommene Umgebungs-Spiele ausblenden (kein Duplikat)
-    const ownUrls = new Set(matches.map((m) => m.fussballDeUrl).filter(Boolean));
     const rawPool = showArchive
       ? matches
       : [...matches, ...areaMatches.filter((a) => !a.fussballDeUrl || !ownUrls.has(a.fussballDeUrl))];
@@ -2378,14 +2396,17 @@ export function MatchListScreen({ navigation, route }: any) {
       // (ab dem Folgetag); "Anstehend" = alles, was noch nicht beendet ist.
       // DFB-Termine (automatisch gesynct) stehen immer in "Anstehend"; in
       // "Meine Spiele"/"Archiv" nur, wenn sie einzeln hinzugefügt wurden (attending).
-      if ((viewTab === 'meine' || viewTab === 'archiv') && isDfbSynced(match) && !match.attending) return false;
+      if ((viewTab === 'meine' || viewTab === 'archiv') && isDfbSynced(match) && !match.attending && !match.others?.length) return false;
+      // Spiele anderer: in "Anstehend" steht das Spiel schon mit orangem Punkt, in "Meine
+      // Spiele" reicht die eigene Zeile, wenn ich selbst auch hingehe
+      if (match.foreign && (viewTab === 'anstehend' || (viewTab === 'meine' && ownUrls.has(match.fussballDeUrl)))) return false;
       const isArchived = match.isArchived || isEventFinished(match.datum, match.datumEnde);
       const matchesArchiveFilter = viewTab === 'archiv' ? isArchived : !isArchived;
 
       return matchesSearch && matchesJahrgang && matchesArt && matchesDate && matchesArchiveFilter;
     });
     return getSortedMatches(filtered);
-  }, [matches, areaMatches, searchQuery, jahrgangFilter, artFilter, dateFilter, viewTab, sortField, sortDirection, clubLogoMap]);
+  }, [matches, areaMatches, ownUrls, searchQuery, jahrgangFilter, artFilter, dateFilter, viewTab, sortField, sortDirection, clubLogoMap]);
   // Zurück auf die erste Portion, wenn sich Filter/Tab/Sortierung ändern
   // (nicht bei jeder Neuberechnung der Liste, sonst springt sie beim Nachladen zurück)
   const listResetKey = [viewTab, searchQuery, jahrgangFilter.join(','), artFilter.join(','), dateFilter, sortField, sortDirection, filteredMatches.length].join('|');
@@ -2466,7 +2487,7 @@ export function MatchListScreen({ navigation, route }: any) {
   // Anzahl archivierter Spiele
   // Zähler für "Meine Spiele"/"Archiv": DFB-Termine nur, wenn hinzugefügt (attending)
   const ownMatchCount = useMemo(
-    () => matches.filter(m => !isDfbSynced(m) || m.attending),
+    () => matches.filter(m => !isDfbSynced(m) || m.attending || m.others?.length),
     [matches]
   );
   const archivedCount = ownMatchCount.filter(m => m.isArchived || isEventFinished(m.datum, m.datumEnde)).length;
@@ -2800,9 +2821,8 @@ export function MatchListScreen({ navigation, route }: any) {
 
   // Anstehend-Zähler (übernommene Umgebungs-Spiele nicht doppelt zählen)
   const anstehendCount = (() => {
-    const ownUrls = new Set(matches.map((m) => m.fussballDeUrl).filter(Boolean));
     return (
-      matches.filter((m) => !m.isArchived && !isMatchFinished(m.datum)).length +
+      matches.filter((m) => !m.foreign && !m.isArchived && !isMatchFinished(m.datum)).length +
       areaMatches.filter((a) => !a.fussballDeUrl || !ownUrls.has(a.fussballDeUrl)).length
     );
   })();
@@ -2878,7 +2898,10 @@ export function MatchListScreen({ navigation, route }: any) {
                           const away = rest.join(' - ');
                           // DFB-Event ohne Gegner (Lehrgang, Turnier, Camp): DFB-Wappen vor dem Titel; Ort nur im Modal
                           const isDfbEvent = !away && item.source === 'dfb';
-                          const attending = item.source === 'dfb' ? !!item.attending : (!item.isAreaGame || isAreaGameAdded(item));
+                          const attending = !item.foreign && (item.source === 'dfb' ? !!item.attending : (!item.isAreaGame || isAreaGameAdded(item)));
+                          const others = item.foreign
+                            ? item.others || []
+                            : [...(item.others || []), ...((item.fussballDeUrl && othersByUrl.get(item.fussballDeUrl)) || [])];
                           return (
                             // Partie (Heim/Gast) · dahinter pulsierender Punkt = "Ich bin bei diesem Spiel"
                             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -2919,8 +2942,14 @@ export function MatchListScreen({ navigation, route }: any) {
                                   <PulseDot />
                                 </View>
                               ) : null}
+                              {others.length > 0 ? (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: attending ? 0 : (isMobile ? 10 : 14), paddingRight: 10, flexShrink: 0, maxWidth: isMobile ? 110 : 200 }}>
+                                  <PulseDot color={OTHER_ATTENDING_COLOR} />
+                                  <Text style={{ fontSize: 11, color: RETRO.text, flexShrink: 1 }} numberOfLines={1}>{others.join(', ')}</Text>
+                                </View>
+                              ) : null}
                               {/* Meine Spiele: Kästchen für den Kalender-Download (eigener Klickbereich) */}
-                              {viewTab === 'meine' && !item.isAreaGame ? (
+                              {viewTab === 'meine' && !item.isAreaGame && !item.foreign ? (
                                 <Pressable
                                   onPress={(e: any) => { e?.stopPropagation?.(); toggleMatchSelection(item.id); }}
                                   hitSlop={10}
@@ -3163,8 +3192,7 @@ export function MatchListScreen({ navigation, route }: any) {
                     key: 'anstehend' as const,
                     label: `Anstehend (${(() => {
                       // Übernommene Umgebungs-Spiele nicht doppelt zählen
-                      const ownUrls = new Set(matches.map(m => m.fussballDeUrl).filter(Boolean));
-                      return matches.filter(m => !m.isArchived && !isMatchFinished(m.datum)).length
+                      return matches.filter(m => !m.foreign && !m.isArchived && !isMatchFinished(m.datum)).length
                         + areaMatches.filter(a => !a.fussballDeUrl || !ownUrls.has(a.fussballDeUrl)).length;
                     })()})`,
                   },
@@ -3269,7 +3297,7 @@ export function MatchListScreen({ navigation, route }: any) {
         // Zugehöriges eigenes Event (für "Aufstellung & Scouting öffnen")
         const ownMatch = isOwn
           ? areaDetail
-          : matches.find((x) => x.fussballDeUrl && x.fussballDeUrl === areaDetail.fussballDeUrl) || null;
+          : matches.find((x) => !x.foreign && x.fussballDeUrl && x.fussballDeUrl === areaDetail.fussballDeUrl) || null;
         const infoRow = (label: string, value: React.ReactNode) => (
           <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6, gap: 10, paddingHorizontal: 4 }}>
             <Text style={{ width: 100, fontSize: 13, color: RETRO.text }}>{label}</Text>
@@ -3966,12 +3994,14 @@ export function MatchListScreen({ navigation, route }: any) {
                 {/* Footer */}
                 {isEditMode ? (
                   <View style={[styles.modalFooter, { borderTopColor: colors.border }]}>
+                    {!selectedMatch?.foreign && (
                     <TouchableOpacity
                       style={[styles.footerButtonSmall, { backgroundColor: colors.error }]}
                       onPress={handleDeleteMatch}
                     >
                       <Text style={[styles.footerButtonSmallText, { color: '#fff' }]}>Spiel löschen</Text>
                     </TouchableOpacity>
+                    )}
                     <TouchableOpacity
                       style={[styles.footerButtonSmall, { backgroundColor: colors.primary }]}
                       onPress={handleAddPlayer}
@@ -4034,9 +4064,11 @@ export function MatchListScreen({ navigation, route }: any) {
                         <TouchableOpacity style={[styles.mobileMenuItem, { borderBottomColor: colors.border }]} onPress={() => { setActionMenuVisible(false); handleAddPlayer(); }}>
                           <Text style={[styles.mobileMenuItemText, { color: colors.text }]}>Spieler hinzufügen</Text>
                         </TouchableOpacity>
+                        {!selectedMatch?.foreign && (
                         <TouchableOpacity style={[styles.mobileMenuItem, { borderBottomWidth: 0 }]} onPress={() => { setActionMenuVisible(false); handleDeleteMatch(); }}>
                           <Text style={[styles.mobileMenuItemText, { color: colors.error || '#ef4444' }]}>Spiel löschen</Text>
                         </TouchableOpacity>
+                        )}
                       </View>
                     )}
                     {/* Spielnotizen: gelber Knopf links neben ⋮ (Matti 2026-10-25, Variante A) */}

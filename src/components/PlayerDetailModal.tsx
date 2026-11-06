@@ -2,6 +2,8 @@
 // Wird von der Suchmaschine und dem Sportstipendium-Board geteilt, damit das
 // Spielerprofil überall identisch aussieht. Lädt die TM-Details (Einsätze,
 // Transfers) selbst nach.
+import { useAuth } from '../contexts/AuthContext';
+import { currentUserId, loadAdvisorNames } from '../services/currentUser';
 import { showAlert } from '../utils/alert';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -44,6 +46,7 @@ import {
   setScoutStatus,
   isAlertSubscribed,
   setAlertSubscription,
+  watchlistTable,
   loadPlayerHistory,
   BeraterChange,
 } from '../services/beraterService';
@@ -192,6 +195,9 @@ export function PlayerDetailModal({
   /** Nach Änderung des Scouting-Status (Watchlist/Top-Ziel/Uninteressant) — optional */
   onStatusChanged?: (status: ScoutStatus) => void;
 }) {
+  const { isScout } = useAuth();
+  // Berater sehen, welcher Scout einen Bericht geschrieben hat
+  const [authorNames, setAuthorNames] = useState<Map<string, string>>(new Map());
   // Mobil: Karten dürfen nicht breiter als der Bildschirm sein (sonst ragt z. B. das
   // Berichte-Plus über den Rand), Vertrag + Potential bleiben aber ein Paar
   const { width: windowWidth } = useWindowDimensions();
@@ -363,12 +369,13 @@ export function PlayerDetailModal({
     setVerlauf(null);
     setVerlaufUrls(new Map());
     setAlertOn(false);
-    isAlertSubscribed(player.id).then(setAlertOn);
+    if (!isScout) isAlertSubscribed(player.id).then(setAlertOn);
+    loadAdvisorNames().then(setAuthorNames);
     (async () => {
       const [n, evalRow, wlRow] = await Promise.all([
         loadPlayerNote(player.id),
         supabase.from('berater_player_evaluations').select('notes, rating, status').eq('player_id', player.id).maybeSingle(),
-        supabase.from('berater_watchlist').select('notes, rating').eq('player_id', player.id).maybeSingle(),
+        supabase.from(watchlistTable()).select('notes, rating').eq('player_id', player.id).maybeSingle(),
       ]);
       const evalData = evalRow?.data as { notes: string | null; rating: number | null; status: string | null } | null;
       const wlData = wlRow?.data as { notes: string | null; rating: number | null } | null;
@@ -380,17 +387,19 @@ export function PlayerDetailModal({
       setScoutStatusState(deriveScoutStatus(!!wlData, evalData?.status));
     })();
     setAddedBy(null);
-    if (player.tm_player_id) {
+    if (player.tm_player_id && !isScout) {
       fetchEntryAddedBy(player.tm_player_id).then(setAddedBy);
     }
-    // Gespeicherte Einschätzung laden (Spalte existiert erst nach Migration — Fehler still schlucken)
+    // Gespeicherte Einschätzung laden (nur Berater)
     setSummary(null);
-    supabase
-      .from('berater_players')
-      .select('scout_summary')
-      .eq('id', player.id)
-      .maybeSingle()
-      .then(({ data }) => setSummary((data as any)?.scout_summary ?? null));
+    if (!isScout) {
+      supabase
+        .from('player_scout_summaries')
+        .select('summary')
+        .eq('player_id', player.id)
+        .maybeSingle()
+        .then(({ data }) => setSummary(data?.summary ?? null));
+    }
     // Scouting-Berichte laden (feste Verknüpfung bevorzugt, sonst URL/Name)
     setMatchEvals([]);
     setEvalsLoading(true);
@@ -405,13 +414,18 @@ export function PlayerDetailModal({
     if (nextNotes === savedNote.current.notes && nextContact === savedNote.current.firstContact) return;
     savedNote.current = { notes: nextNotes, firstContact: nextContact };
     const text = nextNotes.trim() || null;
+    // Scouts: Notiz liegt am eigenen Watchlist-Eintrag
+    if (isScout) {
+      supabase.from(watchlistTable()).update({ notes: text }).eq('player_id', player.id).then(() => {});
+      return;
+    }
     savePlayerNote(player.id, {
       notes: text,
       first_contact_date: nextContact || null,
     });
     // Watchlist-Notizen synchron halten (nur bestehende Einträge aktualisieren)
     supabase.from('berater_player_evaluations').update({ notes: text }).eq('player_id', player.id).then(() => {});
-    supabase.from('berater_watchlist').update({ notes: text }).eq('player_id', player.id).then(() => {});
+    supabase.from(watchlistTable()).update({ notes: text }).eq('player_id', player.id).then(() => {});
   };
 
   // Einschätzung aus den Berichten generieren und am Spieler speichern
@@ -437,11 +451,9 @@ export function PlayerDetailModal({
       });
       if (!error && data?.success && data.text) {
         setSummary(data.text);
-        // Speichern ist optional (Spalte kommt per Migration) — Fehler nicht anzeigen
         await supabase
-          .from('berater_players')
-          .update({ scout_summary: data.text, scout_summary_at: new Date().toISOString() })
-          .eq('id', player.id);
+          .from('player_scout_summaries')
+          .upsert({ player_id: player.id, summary: data.text, updated_at: new Date().toISOString() });
       }
     } catch { /* Anzeige bleibt beim alten Stand */ }
     setSummaryLoading(false);
@@ -821,6 +833,9 @@ export function PlayerDetailModal({
                             <Text style={styles.reportRatingText}>{ev.overall_rating}</Text>
                           </View>
                         ) : null}
+                        {ev.created_by && ev.created_by !== currentUserId() && authorNames.get(ev.created_by) ? (
+                          <Text style={styles.reportMeta} numberOfLines={1}>{`von ${authorNames.get(ev.created_by)}`}</Text>
+                        ) : null}
                       </TouchableOpacity>
                     ))}
                     </ScrollView>
@@ -829,7 +844,9 @@ export function PlayerDetailModal({
               </View>
 
               {/* Zeile 3: Einschätzung (generiert) + Notizen */}
+              {(!isScout || scoutStatus === 'watchlist') && (
               <View style={styles.cardGrid}>
+                {!isScout && (
                 <View style={[styles.card, styles.cardWide, HARD_SHADOW, isMobile && { minWidth: 0, flexBasis: '100%' }]}>
                   {cardChip('EINSCHÄTZUNG')}
                   {summaryLoading ? (
@@ -854,6 +871,7 @@ export function PlayerDetailModal({
                     </Text>
                   </TouchableOpacity>
                 </View>
+                )}
                 <View style={[styles.card, HARD_SHADOW, isMobile && { minWidth: 0, flexBasis: '100%' }]}>
                   {cardChip('NOTIZEN')}
                   <TextInput
@@ -867,6 +885,7 @@ export function PlayerDetailModal({
                   />
                 </View>
               </View>
+              )}
 
               {/* Fußzeile: links Scouting-Status (exklusiv), rechts Aktionen des Aufrufers */}
               <View style={styles.detailFooter}>
@@ -875,13 +894,14 @@ export function PlayerDetailModal({
                     Aufrufer-Aktionen bekommen eine eigene Zeile darunter */}
                 {!isMobile && (
                 <View style={styles.statusGroup}>
-                  {renderStatusBtn({ key: 'uninteressant', idle: 'Uninteressant', active: 'aussortiert', bg: '#dc2626', fg: '#ffffff' })}
+                  {!isScout && renderStatusBtn({ key: 'uninteressant', idle: 'Uninteressant', active: 'aussortiert', bg: '#dc2626', fg: '#ffffff' })}
                   {actions ? <View style={styles.detailActions}>{actions}</View> : null}
                 </View>
                 )}
                 {/* Rechts: Glocke + Watchlist + Zielspieler (Status-Key bleibt top_ziel) */}
                 <View style={[styles.statusGroup, isMobile && { width: '100%', justifyContent: 'space-between', flexWrap: 'nowrap', gap: 6 }]}>
-                  {isMobile && renderStatusBtn({ key: 'uninteressant', idle: 'Uninteressant', active: 'aussortiert', bg: '#dc2626', fg: '#ffffff' })}
+                  {isMobile && !isScout && renderStatusBtn({ key: 'uninteressant', idle: 'Uninteressant', active: 'aussortiert', bg: '#dc2626', fg: '#ffffff' })}
+                  {!isScout && (
                   <TouchableOpacity
                     style={[styles.statusBtn, HARD_SHADOW, alertOn && { backgroundColor: '#dc2626' }]}
                     disabled={alertSaving}
@@ -894,8 +914,9 @@ export function PlayerDetailModal({
                       color={alertOn ? '#ffffff' : RETRO.text}
                     />
                   </TouchableOpacity>
+                  )}
                   {renderStatusBtn({ key: 'watchlist', idle: 'Watchlist', active: 'Watchlist', bg: '#22c55e', fg: '#ffffff' })}
-                  {renderStatusBtn({ key: 'top_ziel', idle: 'Zielspieler', active: 'Zielspieler', bg: '#22c55e', fg: '#ffffff' })}
+                  {!isScout && renderStatusBtn({ key: 'top_ziel', idle: 'Zielspieler', active: 'Zielspieler', bg: '#22c55e', fg: '#ffffff' })}
                 </View>
                 {isMobile && actions ? <View style={[styles.detailActions, { width: '100%', justifyContent: 'flex-start' }]}>{actions}</View> : null}
               </View>

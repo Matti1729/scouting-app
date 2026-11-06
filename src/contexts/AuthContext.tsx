@@ -1,10 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from '../config/supabase';
+import { setCurrentUser } from '../services/currentUser';
 
 interface AuthContextType {
   session: Session | null;
   loading: boolean;
+  // Scout = alle ohne Berater-Rolle; sie sehen nur Spiele, eigene Watchlist und eigene Berichte
+  isScout: boolean;
+  profileReady: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string, name: string) => Promise<{ error: Error | null }>;
   signUpWithInvitation: (email: string, password: string, firstName: string, lastName: string, code: string) => Promise<{ error: Error | null; needsConfirmation?: boolean }>;
@@ -35,7 +39,9 @@ async function hasScoutingAccess(userId: string): Promise<boolean> {
 }
 
 const NO_ACCESS_MESSAGE =
-  'Kein Zugang zur Suchmaschine. Bitte wende dich an einen Administrator.';
+  'Kein Zugang zur Scouting-App. Bitte wende dich an einen Administrator.';
+
+const BERATER_ROLES = ['admin', 'advisor', 'berater'];
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -43,6 +49,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // Während einer Code-Registrierung Session-Änderungen ignorieren,
   // damit die App nicht kurz aufgeht, bevor die Einladung eingelöst ist.
   const registering = useRef(false);
+  const [profile, setProfile] = useState<{ userId: string; isScout: boolean } | null>(null);
+
+  // Rolle laden, bevor die App aufgeht. Schlägt das fehl, gilt die Person als
+  // Scout (weniger Rechte); die Datenbank trennt ohnehin selbst.
+  const userId = session?.user?.id ?? null;
+  useEffect(() => {
+    if (!userId) {
+      setCurrentUser(null, false);
+      setProfile(null);
+      return;
+    }
+    let active = true;
+    Promise.resolve(supabase.from('advisors').select('role').eq('id', userId).maybeSingle()).then(({ data }) => {
+      if (!active) return;
+      const isScout = !BERATER_ROLES.includes(data?.role ?? '');
+      setCurrentUser(userId, isScout);
+      setProfile({ userId, isScout });
+    });
+    return () => { active = false; };
+  }, [userId]);
 
   useEffect(() => {
     // Initiale Session holen — aber nur akzeptieren, wenn Scouting-Zugang besteht.
@@ -181,7 +207,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ session, loading, signIn, signUp, signUpWithInvitation, verifySignupCode, resendSignupCode, requestPasswordReset, verifyRecoveryCode, finishRecovery, cancelRecovery, signOut }}>
+    <AuthContext.Provider value={{ session, loading, isScout: profile?.isScout ?? false, profileReady: !userId || profile?.userId === userId, signIn, signUp, signUpWithInvitation, verifySignupCode, resendSignupCode, requestPasswordReset, verifyRecoveryCode, finishRecovery, cancelRecovery, signOut }}>
       {children}
     </AuthContext.Provider>
   );

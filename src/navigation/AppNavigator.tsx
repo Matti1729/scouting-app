@@ -17,10 +17,10 @@ export { RootStackParamList } from './types';
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export function AppNavigator() {
-  const { session, loading } = useAuth();
+  const { session, loading, isScout, profileReady } = useAuth();
   const { colors } = useTheme();
 
-  if (loading) {
+  if (loading || !profileReady) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: colors.background }}>
         <ActivityIndicator size="large" color={colors.primary} />
@@ -54,8 +54,9 @@ export function AppNavigator() {
         }}
       />
       <Stack.Screen name="Watchlist" component={WatchlistScreen} />
-      <Stack.Screen name="Sportstipendium" component={SportstipendiumScreen} />
-      <Stack.Screen name="Suchmaschine" component={SuchmaschineScreen} />
+      {/* Scouts: nur Spiele und eigene Watchlist */}
+      {!isScout && <Stack.Screen name="Sportstipendium" component={SportstipendiumScreen} />}
+      {!isScout && <Stack.Screen name="Suchmaschine" component={SuchmaschineScreen} />}
     </Stack.Navigator>
   );
 }

@@ -1,6 +1,7 @@
 // matchService.ts - Supabase CRUD für Spiele und Aufstellungen
 
 import { supabase } from '../config/supabase';
+import { currentUserId, isScoutUser, loadAdvisorNames } from './currentUser';
 
 // ============================================
 // TYPEN
@@ -26,6 +27,10 @@ export interface DbMatch {
   source_key?: string | null;
   // DFB-Termin als "Meine Spiele" markiert ("Ich bin beim Spiel")
   attending?: boolean | null;
+  created_by?: string | null;
+  // Wird beim Laden ergänzt: Spiel eines anderen + wer sonst noch dort ist
+  foreign?: boolean;
+  others?: string[];
   // DFB-Termin: Kader-Überschrift (dfb.de), Datencenter-Spielseite, letzter Aufstellungs-Import
   kader_title?: string | null;
   dfb_match_url?: string | null;
@@ -124,11 +129,50 @@ export async function loadMatches(): Promise<{ success: boolean; data?: DbMatch[
       return { success: false, error: error.message };
     }
 
-    return { success: true, data: data || [] };
+    return { success: true, data: await annotatePresence((data || []) as DbMatch[]) };
   } catch (err) {
     console.error('Error loading matches:', err);
     return { success: false, error: 'Fehler beim Laden der Spiele' };
   }
+}
+
+/**
+ * Wer ist wo? Ergänzt Spiele um foreign/others und setzt bei Scouts "Ich bin
+ * dabei" für DFB-Termine aus der eigenen Teilnahme (die Terminzeile teilen sich alle).
+ */
+export async function annotatePresence<T extends Pick<DbMatch, 'id' | 'created_by' | 'attending'>>(
+  rows: T[]
+): Promise<(T & Pick<DbMatch, 'foreign' | 'others'>)[]> {
+  const me = currentUserId();
+  const scout = isScoutUser();
+  const [names, att] = await Promise.all([
+    loadAdvisorNames(),
+    supabase.from('scouting_match_attendance').select('match_id, user_id'),
+  ]);
+  const going = new Map<string, string[]>();
+  for (const a of (att.data || []) as { match_id: string; user_id: string }[]) {
+    going.set(a.match_id, [...(going.get(a.match_id) || []), a.user_id]);
+  }
+  const label = (id: string) => names.get(id) || 'Scout';
+  return rows.map((m) => {
+    const users = going.get(m.id) || [];
+    const foreign = !!m.created_by && m.created_by !== me;
+    const others = [...(foreign ? [m.created_by as string] : []), ...users.filter((u) => u !== me)].map(label);
+    return { ...m, foreign, others, attending: scout ? users.includes(me || '') : m.attending };
+  });
+}
+
+/** "Ich bin dabei" bei einem DFB-Termin setzen oder zurücknehmen */
+export async function setDfbAttending(matchId: string, on: boolean): Promise<boolean> {
+  if (!isScoutUser()) {
+    const res = await updateMatch(matchId, { attending: on });
+    return res.success;
+  }
+  const { error } = on
+    ? await supabase.from('scouting_match_attendance').upsert({ match_id: matchId, user_id: currentUserId() }, { onConflict: 'match_id,user_id' })
+    : await supabase.from('scouting_match_attendance').delete().eq('match_id', matchId).eq('user_id', currentUserId() || '');
+  if (error) console.error('Error saving attendance:', error);
+  return !error;
 }
 
 /**

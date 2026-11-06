@@ -1,3 +1,5 @@
+import { useAuth } from '../../contexts/AuthContext';
+import { currentUserId, loadAdvisorNames, pickOwnReport } from '../../services/currentUser';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   View,
@@ -293,6 +295,9 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
   // Nach dem Speichern: Vorschlag, den Spieler hochzustufen (7/8 -> Watchlist, 9/10 -> Top-Ziel)
   const [statusPrompt, setStatusPrompt] = useState<{ target: 'watchlist' | 'top_ziel'; playerId: string } | null>(null);
   const [statusPromptSaving, setStatusPromptSaving] = useState(false);
+  // Bericht eines anderen (Berater öffnet Scout-Bericht)
+  const [reportAuthor, setReportAuthor] = useState<string | null>(null);
+  const { isScout } = useAuth();
 
   // Bestehende Bewertung laden
   useEffect(() => {
@@ -320,9 +325,8 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
             .from('player_evaluations')
             .select('*')
             .eq('match_id', params.matchId)
-            .eq('lineup_player_id', params.lineupPlayerId)
-            .maybeSingle();
-          data = byLineup;
+            .eq('lineup_player_id', params.lineupPlayerId);
+          data = pickOwnReport(byLineup);
         }
         // 2. Fallback per Name — nur mit echtem Namen, nie mit Platzhalter
         if (!data && params.matchId && parsedName.lastName && !isPlaceholderName(parsedName.lastName)) {
@@ -336,7 +340,8 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
           } else {
             query = query.is('first_name', null);
           }
-          const { data: byName } = await query.maybeSingle();
+          const { data: byNameRows } = await query;
+          const byName = pickOwnReport(byNameRows);
           // Nur übernehmen, wenn der Bericht nicht zu einer ANDEREN
           // Aufstellungs-Zeile gehört
           if (byName && (!byName.lineup_player_id || !params.lineupPlayerId || byName.lineup_player_id === params.lineupPlayerId)) {
@@ -345,6 +350,9 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         }
         if (data) {
           setExistingId(data.id);
+          if (data.created_by && data.created_by !== currentUserId()) {
+            loadAdvisorNames().then((names) => setReportAuthor(names.get(data.created_by) || null));
+          }
           if (data.positions) setPositions(data.positions.split(', ').filter(Boolean) as Position[]);
           if (data.preferred_foot) setPreferredFoot(data.preferred_foot as PreferredFoot);
           if (data.body_structure) setBodyStructure(normalizeBodyStructure(data.body_structure));
@@ -755,7 +763,11 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
         // Uninteressant bleibt eine bewusste Entscheidung.
         const pid = linkedPlayerId || beraterPlayerId || null;
         const current = deriveScoutStatus(onWatchlist, beraterEvalStatus);
-        if (pid && overallRating >= 9 && current !== 'top_ziel' && current !== 'uninteressant') {
+        if (pid && isScout) {
+          // Scouts: nur die eigene Watchlist, keine Zielspieler
+          if (overallRating >= 7 && current === 'neutral') setStatusPrompt({ target: 'watchlist', playerId: pid });
+          else navigation.goBack();
+        } else if (pid && overallRating >= 9 && current !== 'top_ziel' && current !== 'uninteressant') {
           setStatusPrompt({ target: 'top_ziel', playerId: pid });
         } else if (pid && (overallRating === 7 || overallRating === 8) && current === 'neutral') {
           setStatusPrompt({ target: 'watchlist', playerId: pid });
@@ -963,7 +975,11 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                   <View style={RETRO_CHIP}>
                     <Text style={RETRO_CHIP_TEXT}>EINORDNUNG</Text>
                   </View>
+                  {reportAuthor ? (
+                    <Text style={{ fontSize: 12, color: RETRO.textMuted, marginBottom: 8 }}>{`Bericht von ${reportAuthor}`}</Text>
+                  ) : null}
                   <View style={styles.evalButtons}>
+                    {!isScout && (<>
                     <TouchableOpacity
                       style={[
                         RETRO_BTN, HARD_SHADOW, styles.evalButton,
@@ -990,6 +1006,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
                         Interessant
                       </Text>
                     </TouchableOpacity>
+                    </>)}
                     <TouchableOpacity
                       style={[
                         RETRO_BTN, HARD_SHADOW, styles.evalButton,

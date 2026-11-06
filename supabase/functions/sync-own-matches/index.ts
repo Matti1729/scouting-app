@@ -31,6 +31,7 @@ const MATTI_ADVISOR_ID = "892d4dbc-3c5b-4908-9735-ac0ca3794dfc";
 const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128 Safari/537.36";
 
 type OwnMatch = {
+  created_by?: string | null;
   id: string;
   home_team: string;
   away_team: string | null;
@@ -347,7 +348,7 @@ serve(async (req) => {
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     const { data: own, error } = await sb
       .from("scouting_matches")
-      .select("id, home_team, away_team, match_date, match_time, fussball_de_url, change_note, location, lat, lng")
+      .select("id, home_team, away_team, match_date, match_time, fussball_de_url, change_note, location, lat, lng, created_by")
       .is("source", null)
       .eq("is_archived", false)
       .not("fussball_de_url", "is", null)
@@ -400,6 +401,9 @@ serve(async (req) => {
       const { error: ue } = await sb.from("scouting_matches").update(c.patch).eq("id", c.id);
       if (ue) { log.push(`Update ${c.id}: ${ue.message}`); continue; }
       if (!c.notes.length) continue; // nur Spielort still nachgetragen
+      // Spiele von Scouts werden abgeglichen, aber nicht an Matti gemeldet
+      const createdBy = pool.find((m) => m.id === c.id)?.created_by;
+      if (createdBy && createdBy !== MATTI_ADVISOR_ID) continue;
       // Neuer Termin; nur Uhrzeit geändert -> "→ 10.10. 17:00" mit unverändertem Datum
       const date = (c.patch.match_date as string) || (c.patch.match_time ? pool.find((m) => m.id === c.id)?.match_date || "" : "");
       const when = date ? ` → ${fmtDate(date)}${c.patch.match_time ? ` ${c.patch.match_time}` : ""}` : "";

@@ -1,3 +1,4 @@
+import { useAuth } from '../../contexts/AuthContext';
 import React, { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import {
   View,
@@ -172,6 +173,7 @@ export function WatchlistScreen() {
 
   // Tabs: Watchlist | Zielspieler (aktiv ansprechen) | Alle Berichte
   const [viewTab, setViewTab] = useState<'watchlist' | 'ziel' | 'beobachtet'>('watchlist');
+  const { isScout } = useAuth();
   const [observed, setObserved] = useState<ObservedPlayer[]>([]);
   // Wappen für die mobilen Karten (wie Dashboard/Spiele)
   const [clubLogoMap, setClubLogoMap] = useState<Map<string, string>>(new Map());
@@ -908,7 +910,7 @@ export function WatchlistScreen() {
         }
         onBack={() => navigation.goBack()}
         tabs={[
-          { key: 'ziel', label: `Zielspieler (${zielList.length})` },
+          ...(isScout ? [] : [{ key: 'ziel', label: `Zielspieler (${zielList.length})` }]),
           { key: 'watchlist', label: `Watchlist (${watchlist.length})` },
           { key: 'beobachtet', label: `Berichte (${observed.length})` },
         ]}
@@ -916,6 +918,7 @@ export function WatchlistScreen() {
         onTabChange={(k) => setViewTab(k as typeof viewTab)}
         right={isMobile ? undefined :
           <View style={{ flexDirection: 'row', gap: 8 }}>
+            {!isScout && (
             <TouchableOpacity
               onPress={() => setViewTab('ziel')}
               style={[styles.headerTab, HARD_SHADOW, viewTab === 'ziel' && styles.headerTabActive]}
@@ -925,6 +928,7 @@ export function WatchlistScreen() {
                 {`Zielspieler (${zielList.length})`}
               </Text>
             </TouchableOpacity>
+            )}
             <TouchableOpacity
               onPress={() => setViewTab('watchlist')}
               style={[styles.headerTab, HARD_SHADOW, viewTab === 'watchlist' && styles.headerTabActive]}

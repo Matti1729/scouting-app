@@ -2,6 +2,7 @@
 // Kommuniziert mit Supabase (direkte DB-Queries + Edge Function für Scans)
 
 import { supabase } from '../config/supabase';
+import { currentUserId, isScoutUser } from './currentUser';
 import { teamLabel, agRank } from './stipendiumService';
 
 const SUPABASE_URL = 'https://ozggtruvnwozhwjbznsm.supabase.co';
@@ -301,12 +302,15 @@ export async function loadPlayerHistory(playerId: string): Promise<BeraterChange
 // WATCHLIST
 // ============================================================================
 
+// Scouts haben je eine eigene Watchlist, die der Berater sehen sie nicht
+export const watchlistTable = () => (isScoutUser() ? 'scout_watchlist' : 'berater_watchlist');
+
 /**
  * Lädt alle Watchlist-Einträge mit Spielerdaten
  */
 export async function loadWatchlist(): Promise<WatchlistEntry[]> {
   const { data, error } = await supabase
-    .from('berater_watchlist')
+    .from(watchlistTable())
     .select(`
       *,
       berater_players (
@@ -382,8 +386,11 @@ export async function loadWatchlist(): Promise<WatchlistEntry[]> {
  */
 export async function addToWatchlist(playerId: string, notes?: string): Promise<boolean> {
   const { error } = await supabase
-    .from('berater_watchlist')
-    .upsert({ player_id: playerId, notes }, { onConflict: 'player_id' });
+    .from(watchlistTable())
+    .upsert(
+      isScoutUser() ? { owner_id: currentUserId(), player_id: playerId, notes } : { player_id: playerId, notes },
+      { onConflict: isScoutUser() ? 'owner_id,player_id' : 'player_id' }
+    );
 
   if (error) {
     console.error('Error adding to watchlist:', error);
@@ -469,6 +476,8 @@ export function deriveScoutStatus(
  * berater_player_evaluations.status zusammen. Rating/Notizen bleiben erhalten.
  */
 export async function setScoutStatus(playerId: string, status: ScoutStatus): Promise<boolean> {
+  // Scouts kennen nur die eigene Watchlist
+  if (isScoutUser()) return status === 'watchlist' ? addToWatchlist(playerId) : removeFromWatchlist(playerId);
   try {
     if (status === 'watchlist' || status === 'top_ziel') {
       const ok = await addToWatchlist(playerId);
@@ -508,7 +517,7 @@ export async function setScoutStatus(playerId: string, status: ScoutStatus): Pro
  */
 export async function removeFromWatchlist(playerId: string): Promise<boolean> {
   const { error } = await supabase
-    .from('berater_watchlist')
+    .from(watchlistTable())
     .delete()
     .eq('player_id', playerId);
 
@@ -524,7 +533,7 @@ export async function removeFromWatchlist(playerId: string): Promise<boolean> {
  */
 export async function updateWatchlistEntry(playerId: string, updates: { notes?: string | null; rating?: number | null }): Promise<boolean> {
   const { error } = await supabase
-    .from('berater_watchlist')
+    .from(watchlistTable())
     .update(updates)
     .eq('player_id', playerId);
 
@@ -540,7 +549,7 @@ export async function updateWatchlistEntry(playerId: string, updates: { notes?: 
  */
 export async function isOnWatchlist(playerId: string): Promise<boolean> {
   const { data } = await supabase
-    .from('berater_watchlist')
+    .from(watchlistTable())
     .select('id')
     .eq('player_id', playerId)
     .maybeSingle();
@@ -685,6 +694,7 @@ export async function loadLeagues(): Promise<Array<{ id: string; name: string; c
 
 export interface MatchEvaluation {
   id: string;
+  created_by?: string | null;
   match_id: string | null;
   match_name: string | null;
   match_date: string | null;
@@ -727,7 +737,7 @@ export async function loadMatchEvaluationsForPlayer(
   if (beraterPlayerId) {
     const { data } = await supabase
       .from('player_evaluations')
-      .select('id, match_id, match_name, match_date, age_group, first_name, last_name, jersey_number, current_club, positions, transfermarkt_url, agent_name, birth_date, overall_rating, notes, body_structure, speed_athleticism')
+      .select('id, match_id, match_name, match_date, age_group, first_name, last_name, jersey_number, current_club, positions, transfermarkt_url, agent_name, birth_date, overall_rating, notes, body_structure, speed_athleticism, created_by')
       .eq('berater_player_id', beraterPlayerId)
       .order('match_date', { ascending: false });
     if (data && data.length > 0) return attachMatchTypes(data);
@@ -747,7 +757,7 @@ export async function loadMatchEvaluationsForPlayer(
   if (tmProfileUrl) {
     const { data } = await supabase
       .from('player_evaluations')
-      .select('id, match_id, match_name, match_date, age_group, first_name, last_name, jersey_number, current_club, positions, transfermarkt_url, agent_name, birth_date, overall_rating, notes, body_structure, speed_athleticism')
+      .select('id, match_id, match_name, match_date, age_group, first_name, last_name, jersey_number, current_club, positions, transfermarkt_url, agent_name, birth_date, overall_rating, notes, body_structure, speed_athleticism, created_by')
       .eq('transfermarkt_url', tmProfileUrl)
       .order('match_date', { ascending: false });
     if (data && data.length > 0) return attachMatchTypes(data);
@@ -757,7 +767,7 @@ export async function loadMatchEvaluationsForPlayer(
   if (lastName) {
     let query = supabase
       .from('player_evaluations')
-      .select('id, match_id, match_name, match_date, age_group, first_name, last_name, jersey_number, current_club, positions, transfermarkt_url, agent_name, birth_date, overall_rating, notes, body_structure, speed_athleticism')
+      .select('id, match_id, match_name, match_date, age_group, first_name, last_name, jersey_number, current_club, positions, transfermarkt_url, agent_name, birth_date, overall_rating, notes, body_structure, speed_athleticism, created_by')
       .ilike('last_name', lastName);
 
     if (firstName) {
@@ -843,7 +853,7 @@ export async function loadSuggestedPlayers(
 
   // Watchlist-Status hinzufügen
   const { data: watchlist } = await supabase
-    .from('berater_watchlist')
+    .from(watchlistTable())
     .select('player_id');
 
   const watchlistPlayerIds = new Set(
@@ -1254,7 +1264,7 @@ export async function loadBeraterStatusForLineup(
 
   // Alle Watchlist-Einträge mit Spielerdaten laden
   const { data: watchlist } = await supabase
-    .from('berater_watchlist')
+    .from(watchlistTable())
     .select('player_id, berater_players(player_name, tm_profile_url)');
 
   // Berater-Spieler-Daten indexieren: tm_url → { beraterPlayerId, status }
@@ -1399,6 +1409,7 @@ export function namesCompatible(a: string, b: string): boolean {
  * Läuft still; gibt die Anzahl der Zusammenführungen zurück.
  */
 export async function mergeObservedDuplicates(): Promise<number> {
+  if (isScoutUser()) return 0;
   try {
     const { data: scouted, error } = await supabase
       .from('berater_players')
@@ -1521,6 +1532,12 @@ export async function mergeScoutedInto(scoutedId: string, keeperId: string): Pro
       }
     }
 
+    // Scout-Watchlisten mitnehmen; hat ein Scout beide, bleibt der Ziel-Eintrag
+    const { data: scoutRows } = await supabase.from('scout_watchlist').select('id').eq('player_id', scoutedId);
+    for (const r of scoutRows || []) {
+      await supabase.from('scout_watchlist').update({ player_id: keeperId }).eq('id', r.id);
+    }
+
     const { error } = await supabase.from('berater_players').delete().eq('id', scoutedId);
     return !error;
   } catch {
@@ -1546,6 +1563,7 @@ export interface AmbiguousMerge {
  *  es MEHRERE passende TM-Datensätze gibt (oder nur widersprüchliche) — die
  *  soll der Nutzer von Hand zuordnen, der Auto-Merge fasst sie bewusst nicht an. */
 export async function findAmbiguousMergeCandidates(): Promise<AmbiguousMerge[]> {
+  if (isScoutUser()) return [];
   try {
     const { data: scouted } = await supabase
       .from('berater_players')

@@ -28,7 +28,9 @@ import { areaAge, areaArt, shortVenueName, stripAge, loadClubLogoMap, clubLogoUr
 import { createMatch, deleteMatch } from '../../services/matchService';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
 import { TeamLogo, CompactMatchTeams } from '../../components/ClubLogo';
-import { PulseDot, ATTENDING_COLOR } from '../../components/PulseDot';
+import { PulseDot, ATTENDING_COLOR, OTHER_ATTENDING_COLOR } from '../../components/PulseDot';
+import { annotatePresence } from '../../services/matchService';
+import { currentUserId } from '../../services/currentUser';
 import { fetchSearchPlayer, StipendiumSearchPlayer, positionCode, ageFromBirthDate, agentDisplayName } from '../../services/stipendiumService';
 import { BLUE_GRADIENT } from '../../theme/retro';
 import { supabase } from '../../config/supabase';
@@ -47,6 +49,8 @@ interface TodayGame {
   ort: string | null;
   fussballDeUrl: string | null;
   isOwn: boolean;
+  foreign?: boolean;
+  others?: string[];
   /** automatisch von dfb.de gesynct (kein "Ich bin dabei"-Marker) */
   isDfb?: boolean;
   matchDate?: string | null;
@@ -79,7 +83,7 @@ function nameLastFirst(fullName: string): string {
 
 export function DashboardScreen() {
   const navigation = useNavigation<NavigationProp>();
-  const { signOut } = useAuth();
+  const { signOut, isScout } = useAuth();
   const { width } = useWindowDimensions();
   const isMobile = width < 768;
   const [headerRightW, setHeaderRightW] = useState(0); // Breite Glocke+Initialen, damit der Titel mittig bleibt
@@ -226,17 +230,19 @@ export function DashboardScreen() {
 
     // Vereinswappen: alle bekannten Vereine einmal laden (Lookup über Namensbasis)
     loadClubLogoMap().then(setClubLogoMap).catch(() => {});
-    loadUnseenAlerts().then(setAlerts).catch(() => {});
     findAmbiguousMergeCandidates().then(setAmbiguous).catch(() => {});
 
-    supabase
-      .from('stipendium_entries')
-      .select('*', { count: 'exact', head: true })
-      .then(({ count }) => setStipendiumCount(count || 0));
-
-    loadScanStatus()
-      .then((result) => setBeraterStats(result.stats))
-      .catch(() => {});
+    // Nur Berater: Glocke, Sportstipendium, Suchmaschine
+    if (!isScout) {
+      loadUnseenAlerts().then(setAlerts).catch(() => {});
+      supabase
+        .from('stipendium_entries')
+        .select('*', { count: 'exact', head: true })
+        .then(({ count }) => setStipendiumCount(count || 0));
+      loadScanStatus()
+        .then((result) => setBeraterStats(result.stats))
+        .catch(() => {});
+    }
 
     supabase.auth.getUser().then(({ data }) => {
       const email = data?.user?.email || '';
@@ -254,7 +260,8 @@ export function DashboardScreen() {
         .order('match_date')
         .order('match_time')
         .limit(60);
-      const mine = ((ownData as any[]) || []).filter((m) => m.source !== 'dfb' || m.attending);
+      const withPresence = await annotatePresence((ownData as any[]) || []);
+      const mine = withPresence.filter((m) => m.source !== 'dfb' || m.attending || m.others?.length);
       const own: TodayGame[] = mine.slice(0, 8).map((m) => ({
         key: `own-${m.id}`,
         matchId: String(m.id),
@@ -268,6 +275,8 @@ export function DashboardScreen() {
         fussballDeUrl: m.fussball_de_url || null,
         isOwn: true,
         isDfb: m.source === 'dfb',
+        foreign: !!m.foreign,
+        others: m.others || [],
         matchDate: m.match_date || null,
         matchDateEnd: m.match_date_end || null,
       }));
@@ -287,7 +296,7 @@ export function DashboardScreen() {
       rating: watchlistRating(w),
       topZiel: evaluations.get(w.player_id)?.status === 'top_ziel',
     }))
-    .filter((x) => x.topZiel)
+    .filter((x) => isScout || x.topZiel)
     .sort((a, b) => (b.rating || 0) - (a.rating || 0))
     .slice(0, 6);
 
@@ -313,6 +322,8 @@ export function DashboardScreen() {
       .eq('home_team', home?.trim() || gameDetail.begegnung)
       .eq('away_team', rest.join(' - ').trim())
       .eq('match_date', today)
+      .is('source', null)
+      .or(`created_by.is.null,created_by.eq.${currentUserId()}`)
       .limit(1);
     if (dupe && dupe.length > 0) {
       setAddingGame(false);
@@ -443,6 +454,7 @@ export function DashboardScreen() {
         <View style={{ flex: 1 }} />
         <View style={styles.headerRightGroup} onLayout={(e) => setHeaderRightW(e.nativeEvent.layout.width)}>
         {/* Glocke wie im Spielerprofil: leer = keine Meldungen, rot = neue */}
+        {!isScout && (
         <TouchableOpacity
           ref={bellRef as any}
           style={[styles.headerBox, HARD_SHADOW, { position: 'relative' }, bellCount > 0 && { backgroundColor: '#dc2626' }]}
@@ -460,6 +472,7 @@ export function DashboardScreen() {
             </View>
           )}
         </TouchableOpacity>
+        )}
         <TouchableOpacity style={[styles.headerBox, HARD_SHADOW]} onPress={signOut} activeOpacity={0.7}>
           <Text style={styles.headerBoxText}>{initials || '⎋'}</Text>
         </TouchableOpacity>
@@ -472,7 +485,7 @@ export function DashboardScreen() {
           {statCard('SPIELE', String(upcomingMatches), 'Eigene Spiele & Termine', 'ALLE SPIELE', () => navigation.navigate('MatchList'))}
           {statCard('WATCHLIST', String(watchlist.length), 'Spieler auf der Watchlist', 'WATCHLIST', () => navigation.navigate('Watchlist'))}
           {/* Suchmaschine übernimmt den Beraterstatus (Wechsel-Filter in der Suche) */}
-          {statCard(
+          {!isScout && statCard(
             'SUCHMASCHINE',
             beraterStats && beraterStats.recentChanges > 0 ? String(beraterStats.recentChanges) : '—',
             'Beraterwechsel in den letzten 7 Tagen',
@@ -481,7 +494,7 @@ export function DashboardScreen() {
             // Mobil ohne Zusatzzeile, damit alle vier Kacheln gleich hoch sind
             beraterStats && !isMobile ? `${beraterStats.playersWithoutAgent} Spieler ohne Berater` : undefined
           )}
-          {statCard('SPORTSTIPENDIUM', String(stipendiumCount), 'Kandidaten im Prozess', 'ÖFFNEN', () => navigation.navigate('Sportstipendium'))}
+          {!isScout && statCard('SPORTSTIPENDIUM', String(stipendiumCount), 'Kandidaten im Prozess', 'ÖFFNEN', () => navigation.navigate('Sportstipendium'))}
         </View>
 
         {/* Untere Reihe: Heute + Zielspieler (mobil: Zielspieler ZUERST) */}
@@ -564,9 +577,15 @@ export function DashboardScreen() {
                           </View>
                         ) : null}
                       </View>
-                      {g.isOwn && !g.isDfb ? (
+                      {g.isOwn && !g.isDfb && !g.foreign ? (
                         <View style={{ paddingLeft: isMobile ? 10 : 14, paddingRight: 10 }}>
                           <PulseDot />
+                        </View>
+                      ) : null}
+                      {g.others?.length ? (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingLeft: isMobile ? 10 : 14, paddingRight: 10, flexShrink: 0, maxWidth: isMobile ? 110 : 200 }}>
+                          <PulseDot color={OTHER_ATTENDING_COLOR} />
+                          <Text style={{ fontSize: 11, color: RETRO.text, flexShrink: 1 }} numberOfLines={1}>{g.others.join(', ')}</Text>
                         </View>
                       ) : null}
                     </View>
@@ -578,13 +597,13 @@ export function DashboardScreen() {
 
           {/* Zuletzt zur Watchlist hinzugefügt */}
           <View style={[styles.panelCard, styles.panelWatchlist, HARD_SHADOW, isMobile && ({ flexBasis: 'auto', minWidth: 0 } as any)]}>
-            {chip('ZIELSPIELER', true)}
+            {chip(isScout ? 'WATCHLIST' : 'ZIELSPIELER', true)}
             <View style={styles.tableHead}>
               <Text style={[styles.tableHeadText, { flex: 1 }]}>SPIELER</Text>
               <Text style={styles.tableHeadText}>POT.</Text>
             </View>
             {topWatchlist.length === 0 ? (
-              <Text style={styles.emptyText}>Noch keine Zielspieler markiert</Text>
+              <Text style={styles.emptyText}>{isScout ? 'Noch keine Spieler auf der Watchlist' : 'Noch keine Zielspieler markiert'}</Text>
             ) : (
               topWatchlist.map(({ entry: w, rating, topZiel }, idx) => (
                 <TouchableOpacity

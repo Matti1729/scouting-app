@@ -1,6 +1,7 @@
 // matchNotesService.ts - Spielnotizen (Diktat) speichern, auswerten und als Bericht übernehmen
 // (Matti 2026-10-25). Auswertung: Edge Function parse-match-notes.
 import { supabase } from '../config/supabase';
+import { currentUserId, pickOwnReport } from './currentUser';
 
 export interface NoteDraft {
   side: 'home' | 'away' | null;
@@ -29,9 +30,12 @@ export function writeLocalNotes(id: string, text: string, synced: boolean): void
 }
 
 export async function loadMatchNotes(matchId: string): Promise<string> {
-  const { data } = await supabase.from('scouting_matches').select('scouting_notes, scouting_notes_updated_at').eq('id', matchId).maybeSingle();
-  const dbText = (data as any)?.scouting_notes || '';
-  const dbAt = (data as any)?.scouting_notes_updated_at || '';
+  // Jede Person hat eigene Notizen; auf fremden Spielen sehen Berater die des Scouts
+  const { data } = await supabase.from('scouting_match_notes').select('user_id, notes, updated_at').eq('match_id', matchId);
+  const rows = (data || []) as { user_id: string; notes: string | null; updated_at: string }[];
+  const row = rows.find((r) => r.user_id === currentUserId()) || rows[0];
+  const dbText = row?.notes || '';
+  const dbAt = row?.updated_at || '';
   const local = readLocal(matchId);
   // Nicht hochgeladene, neuere Fassung im Gerät: die nehmen und gleich speichern
   if (local && !local.synced && local.text !== dbText && (!dbAt || local.at > dbAt)) {
@@ -42,7 +46,10 @@ export async function loadMatchNotes(matchId: string): Promise<string> {
 }
 
 export async function saveMatchNotes(matchId: string, text: string): Promise<boolean> {
-  const { error } = await supabase.from('scouting_matches').update({ scouting_notes: text, scouting_notes_updated_at: new Date().toISOString() }).eq('id', matchId);
+  const { error } = await supabase.from('scouting_match_notes').upsert(
+    { match_id: matchId, user_id: currentUserId(), notes: text, updated_at: new Date().toISOString() },
+    { onConflict: 'match_id,user_id' }
+  );
   writeLocalNotes(matchId, text, !error);
   return !error;
 }
@@ -64,8 +71,9 @@ export async function applyNoteDraft(
   match: { id: string; spiel: string; datum: string; mannschaft?: string | null },
 ): Promise<void> {
   if (!d.lineup_player_id) throw new Error('Spieler nicht zugeordnet');
-  const { data: ex } = await supabase.from('player_evaluations').select('*')
-    .eq('match_id', match.id).eq('lineup_player_id', d.lineup_player_id).maybeSingle();
+  const { data: reports } = await supabase.from('player_evaluations').select('*')
+    .eq('match_id', match.id).eq('lineup_player_id', d.lineup_player_id);
+  const ex = pickOwnReport(reports);
   const body = clean(d.body);
   const ath = clean(d.athletics);
   const note = d.note?.trim() || '';
