@@ -735,7 +735,7 @@ export function PlayerEvaluationScreen({ navigation, route }: any) {
       // Nur setzen, wenn Verknüpfung gelang — nie eine bestehende überschreiben
       if (linkedPlayerId) evalData.berater_player_id = linkedPlayerId;
       // Hauptfuß ist ein Fakt zum Spieler -> auch am Spieler-Datensatz pflegen
-      if (linkedPlayerId && preferredFoot) {
+      if (linkedPlayerId && preferredFoot && !isScout) {
         supabase.from('berater_players').update({ preferred_foot: preferredFoot }).eq('id', linkedPlayerId).then(() => {});
       }
       let error;

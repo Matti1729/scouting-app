@@ -224,6 +224,7 @@ export function DashboardScreen() {
       .from('scouting_matches')
       .select('*', { count: 'exact', head: true })
       .eq('is_archived', false)
+      .or(`created_by.is.null,created_by.eq.${currentUserId()}`)
       .then(({ count }) => setUpcomingMatches(count || 0));
 
     loadWatchlist().then(setWatchlist).catch(() => {});
@@ -264,7 +265,8 @@ export function DashboardScreen() {
         .order('match_time')
         .limit(60);
       const withPresence = await annotatePresence((ownData as any[]) || []);
-      const mine = withPresence.filter((m) => m.source !== 'dfb' || m.attending || m.others?.length);
+      // Nur die eigenen: Spiele anderer stehen in der Spiele-Übersicht, nicht hier
+      const mine = withPresence.filter((m) => !m.foreign && (m.source !== 'dfb' || m.attending));
       const own: TodayGame[] = mine.slice(0, 8).map((m) => ({
         key: `own-${m.id}`,
         matchId: String(m.id),
