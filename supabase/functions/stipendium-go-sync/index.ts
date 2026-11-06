@@ -4,6 +4,7 @@
 // Idempotent: source_lead_id = stipendium_entries.id — mehrfaches Verschieben
 // nach "Go" erzeugt keinen doppelten Lead.
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { denyUnlessAccess } from '../_shared/access.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -21,6 +22,9 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+
+  const denied = await denyUnlessAccess(req, corsHeaders, 'staff');
+  if (denied) return denied;
 
   try {
     const { first_name, last_name, profile_url, source_lead_id, date_of_birth, action } = await req.json()

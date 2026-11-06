@@ -2,6 +2,7 @@
 // Erwartet multipart/form-data mit Feld "file" (webm/m4a/mp3/wav), optional "language" (Standard: de).
 // Antwort: { success: true, text } oder { success: false, error }.
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { denyUnlessAccess } from '../_shared/access.ts'
 
 const GROQ_API_KEY = Deno.env.get('GROQ_API_KEY')
 const GROQ_URL = 'https://api.groq.com/openai/v1/audio/transcriptions'
@@ -20,6 +21,9 @@ function json(body: unknown, status = 200): Response {
 
 serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
+
+  const denied = await denyUnlessAccess(req, corsHeaders, 'scouting');
+  if (denied) return denied;
   if (req.method !== 'POST') return json({ success: false, error: 'POST erwartet' }, 405)
 
   try {

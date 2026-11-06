@@ -2,6 +2,7 @@
 // Spieler aus seinen Spielberichten (via Claude). Stateless — der Client
 // liefert die Berichte und speichert das Ergebnis selbst am Spieler.
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { denyUnlessAccess } from '../_shared/access.ts'
 
 const CLAUDE_API_KEY = Deno.env.get('ANTHROPIC_API_KEY')
 const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages'
@@ -32,6 +33,9 @@ serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+
+  const denied = await denyUnlessAccess(req, corsHeaders, 'staff');
+  if (denied) return denied;
 
   try {
     if (!CLAUDE_API_KEY) return json({ success: false, error: 'ANTHROPIC_API_KEY fehlt' }, 500)
