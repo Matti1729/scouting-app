@@ -18,13 +18,13 @@ import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient, SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { getDocumentProxy } from 'npm:unpdf@0.12.1'
 import {
-import { denyUnlessAccess } from '../_shared/access.ts'
   AGES, termineUrl, teamUrl, parseTerminePage, parseTeamPage, kaderMatchesTermin,
   parsePeopleListHtml, parseKaderPdfItems, kaderHash,
   seasonplanUrl, parseSeasonplanHtml, parseMatchLineupHtml, stripNationalTeamSuffix,
   DfbLineupPlayer,
   type DfbKaderPlayer, type DfbKaderSource, type DfbTermin, type PdfTextItem,
 } from './parse.ts'
+import { denyUnlessAccess } from '../_shared/access.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
