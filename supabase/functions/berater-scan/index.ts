@@ -1,5 +1,7 @@
 // Supabase Edge Function: Berater-Scan
-// Scannt Transfermarkt-Profile für Beraterstatus-Änderungen
+// Prüft die Kader der überwachten Vereine auf Beraterstatus-Änderungen.
+// Quelle ist die Transfermarkt-Schnittstelle (tmapi), nicht die HTML-Seiten: Die antworten Servern
+// mit 405, und sie bräuchten je Spieler einen Abruf. Nur bootstrap_clubs liest noch eine HTML-Seite.
 // Aktionen: bootstrap_clubs, scan_club, scan_next_batch, get_status
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
@@ -118,16 +120,16 @@ async function fireAgentAlert(
 // ============================================================================
 
 interface AgentInfo {
-  fullName: string | null   // echter Spielername von der Profilseite (mit Diakritika)
+  fullName: string | null   // echter Spielername (mit Diakritika)
   agentName: string | null
   agentCompany: string | null
   agentUrl: string | null
   birthDate: string | null
   isRetired: boolean
-  currentClubName: string | null
+  currentClubId: string | null  // Transfermarkt-Vereinsnummer, null bei vereinslos/Karriereende
   marketValue: string | null
-  contractUntil: string | null  // ISO "YYYY-MM-DD" aus "Vertrag bis: DD.MM.YYYY"
-  position: string | null      // z.B. "Offensives Mittelfeld" von der Profilseite
+  contractUntil: string | null  // ISO "YYYY-MM-DD"
+  position: string | null      // z.B. "Mittelfeld - Offensives Mittelfeld"
 }
 
 interface SquadPlayer {
@@ -185,373 +187,100 @@ async function fetchWithRetry(url: string, maxRetries = 3): Promise<Response | n
   return null
 }
 
-/**
- * Extrahiert Berater-Info und Geburtsdatum von einer TM-Profilseite.
- * (Kopiert aus transfermarkt-proxy/index.ts)
- */
-async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
-  try {
-    const fullUrl = profileUrl.startsWith('http') ? profileUrl : `https://www.transfermarkt.de${profileUrl}`
-    const response = await fetchWithRetry(fullUrl)
+const TM_API = 'https://tmapi.transfermarkt.technology'
+const CLUB_VEREINSLOS = '515'
+const CLUB_KARRIEREENDE = '123'
 
-    if (!response || !response.ok) {
-      console.error('Profile fetch failed for:', fullUrl)
-      return { fullName: null, agentName: null, agentCompany: null, agentUrl: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null, contractUntil: null, position: null }
-    }
+const POSITIONS: Record<string, string> = {
+  'Goalkeeper': 'Torwart',
+  'Centre-Back': 'Abwehr - Innenverteidiger',
+  'Left-Back': 'Abwehr - Linker Verteidiger',
+  'Right-Back': 'Abwehr - Rechter Verteidiger',
+  'Defensive Midfield': 'Mittelfeld - Defensives Mittelfeld',
+  'Central Midfield': 'Mittelfeld - Zentrales Mittelfeld',
+  'Attacking Midfield': 'Mittelfeld - Offensives Mittelfeld',
+  'Left Midfield': 'Mittelfeld - Linkes Mittelfeld',
+  'Right Midfield': 'Mittelfeld - Rechtes Mittelfeld',
+  'Left Winger': 'Sturm - Linksaußen',
+  'Right Winger': 'Sturm - Rechtsaußen',
+  'Centre-Forward': 'Sturm - Mittelstürmer',
+  'Second Striker': 'Sturm - Hängende Spitze',
+}
+const POSITION_GROUPS: Record<string, string> = {
+  GOALKEEPER: 'Torwart', DEFENDER: 'Abwehr', MIDFIELDER: 'Mittelfeld', FORWARD: 'Sturm',
+}
 
-    const html = await response.text()
+const NO_DATA: AgentInfo = {
+  fullName: null, agentName: null, agentCompany: null, agentUrl: null, birthDate: null,
+  isRetired: false, currentClubId: null, marketValue: null, contractUntil: null, position: null,
+}
 
-    // ========== AKTUELLER VEREIN ERKENNEN ==========
-    let currentClubName: string | null = null
-    const clubHeaderMatch = html.match(/Aktueller Verein:[\s\S]*?<a[^>]*>([^<]+)<\/a>/i)
-      || html.match(/class="data-header__club"[^>]*>[\s\S]*?<a[^>]*title="([^"]+)"/i)
-      || html.match(/class="data-header__club"[^>]*>[\s\S]*?<a[^>]*>([^<]+)<\/a>/i)
-    if (clubHeaderMatch) {
-      const club = clubHeaderMatch[1].trim()
-      if (club && !/ohne verein|vereinslos|career break|retired|karriereende/i.test(club)) {
-        currentClubName = club
+async function tmApi(path: string): Promise<any> {
+  let lastError = ''
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) await sleep(attempt * 3000)
+    try {
+      const r = await fetch(`${TM_API}/${path}`, {
+        headers: { 'User-Agent': getRandomUserAgent(), Accept: 'application/json' },
+      })
+      if (r.ok) {
+        const j = await r.json()
+        if (j?.success) return j.data
+        lastError = j?.message || 'keine Daten'
+      } else {
+        lastError = `HTTP ${r.status}`
       }
+    } catch (error) {
+      lastError = String(error)
     }
+  }
+  throw new Error(`Transfermarkt-Schnittstelle ${path.split('?')[0]}: ${lastError}`)
+}
 
-    // ========== ECHTER NAME (Headline, mit Diakritika) ==========
-    // Kader-Slugs verlieren Umlaute/Diakritika ("uriel-van-aalst" statt "Uriël van Aalst")
-    let fullName: string | null = null
-    const h1Match = html.match(/<h1[^>]*class="[^"]*data-header__headline-wrapper[^"]*"[^>]*>([\s\S]*?)<\/h1>/i)
-    if (h1Match) {
-      const n = decodeHtmlEntities(h1Match[1].replace(/<[^>]*>/g, ' '))
-        .replace(/\s+/g, ' ')
-        .trim()
-        .replace(/^#\d+\s*/, '')
-      if (n.length >= 3 && n.length <= 60) {
-        fullName = n
-      }
-    }
+function formatMarketValue(value: number | null | undefined): string | null {
+  if (!value) return null
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2).replace('.', ',')} Mio. €`
+  return `${Math.round(value / 1000)} Tsd. €`
+}
 
-    // ========== KARRIEREENDE ERKENNEN ==========
-    // Nur das spezifische Header-Label matchen (nicht "Karriereende" irgendwo auf der Seite,
-    // z.B. im Verwandte-Abschnitt oder in der Transferhistorie)
-    // Zusätzlich: Wenn ein aktueller Verein gefunden wurde, kann es kein Karriereende sein
-    const isRetired = !currentClubName && /class="data-header__label"[^>]*>\s*Karriereende\s*seit:/i.test(html)
-
-    // ========== MARKTWERT EXTRAHIEREN ==========
-    let marketValue: string | null = null
-
-    // Pattern 1: data-header market value wrapper
-    const mvWrapperMatch = html.match(/class="data-header__market-value-wrapper"[^>]*>[\s\S]*?<\/a>/i)
-    if (mvWrapperMatch) {
-      const mvText = mvWrapperMatch[0].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim()
-      const valueMatch = mvText.match(/(\d[\d.,]*\s*(?:Mio|Tsd|Mrd)\.\s*(?:€|EUR))/i)
-      if (valueMatch) {
-        marketValue = valueMatch[1].replace(/EUR/i, '€').trim()
-      }
-    }
-
-    // Pattern 2: market value development element
-    if (!marketValue) {
-      const mvDevMatch = html.match(/class="tm-player-market-value-development__current-value"[^>]*>([^<]+)/i)
-      if (mvDevMatch) {
-        const valueMatch = mvDevMatch[1].trim().match(/(\d[\d.,]*\s*(?:Mio|Tsd|Mrd)\.\s*(?:€|EUR))/i)
-        if (valueMatch) {
-          marketValue = valueMatch[1].replace(/EUR/i, '€').trim()
-        }
-      }
-    }
-
-    // Pattern 3: Fallback — any value near "Marktwert"
-    if (!marketValue) {
-      const mvGenericMatch = html.match(/Marktwert[\s\S]{0,200}?(\d[\d.,]*\s*(?:Mio|Tsd|Mrd)\.\s*(?:€|EUR))/i)
-      if (mvGenericMatch) {
-        marketValue = mvGenericMatch[1].replace(/EUR/i, '€').trim()
-      }
-    }
-
-    // ========== VERTRAGSENDE EXTRAHIEREN ==========
-    // TM-Profilseite: "Vertrag bis: 30.06.2026" (Info-Tabelle oder Header)
-    let contractUntil: string | null = null
-    const contractMatch = html.match(/Vertrag bis:[\s\S]{0,300}?(\d{1,2})\.(\d{1,2})\.(\d{4})/i)
-    if (contractMatch) {
-      const year = parseInt(contractMatch[3])
-      const currentYear = new Date().getFullYear()
-      // Plausibilität: Vertragsende zwischen letztem und +10 Jahren
-      if (year >= currentYear - 1 && year <= currentYear + 10) {
-        contractUntil = `${contractMatch[3]}-${contractMatch[2].padStart(2, '0')}-${contractMatch[1].padStart(2, '0')}`
-      }
-    }
-
-    // ========== POSITION EXTRAHIEREN ==========
-    // Info-Tabelle oder Data-Header: "Position: Offensives Mittelfeld"
-    let position: string | null = null
-    const posMatch = html.match(/Position:\s*<\/span>\s*<span[^>]*>\s*([^<]+?)\s*</i)
-      || html.match(/Position:\s*<span[^>]*>\s*([^<]+?)\s*</i)
-    if (posMatch) {
-      const p = decodeHtmlEntities(posMatch[1]).trim()
-      // Plausibilität: muss wie eine Fußballposition aussehen
-      if (/torwart|verteidiger|abwehr|mittelfeld|sturm|stürmer|außen/i.test(p) && p.length <= 40) {
-        position = p
-      }
-    }
-
-    // ========== GEBURTSDATUM EXTRAHIEREN ==========
-    let birthDate: string | null = null
-
-    const directDateMatch = html.match(/(?<![a-zA-Z])(?:Geb\.|Geb\/|Geburtsdatum|birth|geboren)[^>]*>?\s*[^<]*?(\d{1,2}\.\d{1,2}\.\d{4})/i)
-    if (directDateMatch) {
-      const dateMatch = directDateMatch[1].match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/)
-      if (dateMatch) {
-        birthDate = `${dateMatch[1].padStart(2, '0')}.${dateMatch[2].padStart(2, '0')}.${dateMatch[3]}`
-      }
-    }
-
-    if (!birthDate) {
-      const dateInLinkMatch = html.match(/<a[^>]*>(\d{1,2}\.\d{1,2}\.\d{4})\s*\(\d{1,2}\)<\/a>/)
-      if (dateInLinkMatch) {
-        const dateMatch = dateInLinkMatch[1].match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/)
-        if (dateMatch) {
-          birthDate = `${dateMatch[1].padStart(2, '0')}.${dateMatch[2].padStart(2, '0')}.${dateMatch[3]}`
-        }
-      }
-    }
-
-    if (!birthDate) {
-      const dateWithAgeMatch = html.match(/(\d{1,2}\.\d{1,2}\.\d{4})\s*\(\d{1,2}\)/)
-      if (dateWithAgeMatch) {
-        const dateMatch = dateWithAgeMatch[1].match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/)
-        if (dateMatch) {
-          birthDate = `${dateMatch[1].padStart(2, '0')}.${dateMatch[2].padStart(2, '0')}.${dateMatch[3]}`
-        }
-      }
-    }
-
-    if (!birthDate) {
-      const birthDatePatterns = [
-        /Geb\.\s*\/\s*Alter:<\/span>\s*<span[^>]*>([^<(]+)/i,
-        /Geburtsdatum:<\/span>\s*<span[^>]*class="[^"]*info-table__content[^"]*"[^>]*>([^<(]+)/i,
-        /Geburtsdatum:<\/span>\s*<span[^>]*>([^<(]+)/i,
-        /data-header="Geburtsdatum"[^>]*>([^<(]+)/i,
-        /itemprop="birthDate"[^>]*content="(\d{4}-\d{2}-\d{2})"/i,
-        /class="data-header__content[^"]*"[^>]*>[^<]*?(\d{1,2}\.\d{1,2}\.\d{4})/i,
-        /"birthDate"\s*:\s*"(\d{4}-\d{2}-\d{2})"/,
-        /<span[^>]*class="[^"]*birth[^"]*"[^>]*>([^<]*\d{1,2}\.\d{1,2}\.\d{4})/i,
-        /(?:geboren\s*(?:am)?|born)[:\s]*(\d{1,2}\.\d{1,2}\.\d{4})/i,
-        /class="info-table__content[^"]*"[^>]*>[\s\n]*(\d{1,2}\.\d{1,2}\.\d{4})/i,
-        /<span[^>]*>[\s\n]*(\d{1,2}\.\d{1,2}\.\d{4})[\s\n]*\(/i,
-      ]
-
-      for (const pattern of birthDatePatterns) {
-        const match = html.match(pattern)
-        if (match) {
-          const dateStr = match[1].trim()
-          let dateMatch = dateStr.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})/)
-          if (dateMatch) {
-            birthDate = `${dateMatch[1].padStart(2, '0')}.${dateMatch[2].padStart(2, '0')}.${dateMatch[3]}`
-            break
-          }
-          dateMatch = dateStr.match(/(\d{4})-(\d{2})-(\d{2})/)
-          if (dateMatch) {
-            birthDate = `${dateMatch[3]}.${dateMatch[2]}.${dateMatch[1]}`
-            break
-          }
-        }
-      }
-    }
-
-    // Geburtsdatum validieren: Alter muss zwischen 13 und 45 liegen
-    if (birthDate) {
-      const parts = birthDate.split('.')
-      if (parts.length === 3) {
-        const bd = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]))
-        const now = new Date()
-        const age = now.getFullYear() - bd.getFullYear() - (now < new Date(now.getFullYear(), bd.getMonth(), bd.getDate()) ? 1 : 0)
-        if (age < 13 || age > 45 || isNaN(age)) {
-          console.log(`Birth date ${birthDate} rejected: age ${age} out of range (13-45)`)
-          birthDate = null
-        }
-      }
-    }
-
-    // ========== BERATER-INFO EXTRAHIEREN ==========
-    // Position-based search to avoid issues with nested <span> inside agent section
-    const beraterPos = html.search(/Spielerberater:/i)
-
-    if (beraterPos !== -1) {
-      // Search forward 800 chars from "Spielerberater:" for the agent link/text
-      const searchArea = html.substring(beraterPos, beraterPos + 800)
-
-      // Look for <a> tag in this area (handles inner HTML elements like <span>)
-      const aTagMatch = searchArea.match(/<a\s([^>]*)>([\s\S]*?)<\/a>/i)
-
-      if (aTagMatch) {
-        const attrs = aTagMatch[1]
-        const innerHTML = aTagMatch[2]
-
-        // Extract href and title from attributes
-        const hrefMatch = attrs.match(/href="([^"]*)"/)
-        const titleMatch = attrs.match(/title="([^"]*)"/)
-        const href = hrefMatch ? hrefMatch[1] : ''
-        const title = titleMatch ? titleMatch[1].trim() : null
-
-        // Get visible text (strip any inner HTML tags)
-        const linkText = innerHTML.replace(/<[^>]*>/g, '').trim()
-
-        // agentCompany: prefer title > href slug > link text
-        let agentCompany = title || null
-        if (!agentCompany || agentCompany.endsWith('...')) {
-          const slugMatch = href.match(/^\/([^\/]+)\/beraterfirma\//)
-          if (slugMatch) {
-            agentCompany = slugMatch[1].replace(/-/g, ' ')
-              .split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
-          }
-        }
-        if (!agentCompany || agentCompany.endsWith('...')) agentCompany = linkText
-
-        // agentName: use company name if link text is abbreviated
-        const agentName = (title || (linkText.endsWith('...') && agentCompany ? agentCompany : linkText)).trim()
-
-        const agentUrl = href ? `https://www.transfermarkt.de${href}` : null
-        if (agentName) return { fullName, agentName, agentCompany, agentUrl, birthDate, isRetired, currentClubName, marketValue, contractUntil, position }
-      }
-
-      // No link found - extract text from the bold span
-      const boldMatch = searchArea.match(/info-table__content--bold[^>]*>([\s\S]*?)(?:<\/span>\s*<\/span>|<\/td>)/i)
-      const textContent = boldMatch
-        ? boldMatch[1].replace(/<[^>]*>/g, '').trim()
-        : searchArea.replace(/<[^>]*>/g, '').replace(/Spielerberater:\s*/i, '').trim().split('\n')[0]?.trim()
-
-      if (textContent && textContent !== '-' && textContent !== '---') {
-        return { fullName, agentName: textContent, agentCompany: null, agentUrl: null, birthDate, isRetired, currentClubName, marketValue, contractUntil, position }
-      }
-    }
-
-    // Pattern 2: Header area (data-header)
-    const beraterHeaderPos = html.search(/Berater:\s*<span/i)
-    if (beraterHeaderPos !== -1) {
-      const headerArea = html.substring(beraterHeaderPos, beraterHeaderPos + 500)
-      const aTagMatch = headerArea.match(/<a\s([^>]*)>([\s\S]*?)<\/a>/i)
-      if (aTagMatch) {
-        const attrs = aTagMatch[1]
-        const innerHTML = aTagMatch[2]
-        const hrefMatch = attrs.match(/href="([^"]*)"/)
-        const titleMatch = attrs.match(/title="([^"]*)"/)
-        const href = hrefMatch ? hrefMatch[1] : ''
-        const title = titleMatch ? titleMatch[1].trim() : null
-        const linkText = innerHTML.replace(/<[^>]*>/g, '').trim()
-        const agentName = (title || linkText).trim()
-        let agentCompany = title || null
-        if (!agentCompany || agentCompany.endsWith('...')) {
-          const slugMatch = href.match(/^\/([^\/]+)\/beraterfirma\//)
-          if (slugMatch) {
-            agentCompany = slugMatch[1].replace(/-/g, ' ')
-              .split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')
-          }
-        }
-        if (!agentCompany || agentCompany.endsWith('...')) agentCompany = linkText
-        const agentUrl = href ? `https://www.transfermarkt.de${href}` : null
-        if (agentName) return { fullName, agentName, agentCompany, agentUrl, birthDate, isRetired, currentClubName, marketValue, contractUntil, position }
-      }
-    }
-
-    // Validate page is a real TM profile before returning 'kein Beratereintrag'
-    const isValidProfile = /data-header__headline-wrapper|class="[^"]*info-table/i.test(html)
-    if (!isValidProfile) {
-      console.log('Page does not appear to be a valid TM profile (captcha/error page?) - returning null')
-      return { fullName: null, agentName: null, agentCompany: null, agentUrl: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null, contractUntil: null, position: null }
-    }
-
-    // All patterns tried on a valid profile page → genuinely no agent listed
-    return { fullName, agentName: 'kein Beratereintrag', agentCompany: null, agentUrl: null, birthDate, isRetired, currentClubName, marketValue, contractUntil, position }
-  } catch (error) {
-    console.error('Error fetching agent info:', error)
-    return { fullName: null, agentName: null, agentCompany: null, agentUrl: null, birthDate: null, isRetired: false, currentClubName: null, marketValue: null, contractUntil: null, position: null }
+function toAgentInfo(p: any): AgentInfo {
+  const ag = p.attributes?.consultantAgency
+  // Sonderfälle (Familienangehörige, ohne Berater) tragen den deutschen Text im shortName
+  const agentName = (ag?.isSpecialConsultantAgency ? ag?.shortName : ag?.name)?.trim() || null
+  const clubId = (p.clubAssignments || []).find((c: any) => c.type === 'current')?.clubId?.toString() ?? null
+  const dob = (p.lifeDates?.dateOfBirth || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  return {
+    fullName: p.name || null,
+    agentName: agentName || 'kein Beratereintrag',
+    agentCompany: agentName,
+    agentUrl: ag?.relativeUrl ? `https://www.transfermarkt.de${ag.relativeUrl}` : null,
+    birthDate: dob ? `${dob[3]}.${dob[2]}.${dob[1]}` : null,
+    isRetired: clubId === CLUB_KARRIEREENDE,
+    currentClubId: clubId && clubId !== CLUB_VEREINSLOS && clubId !== CLUB_KARRIEREENDE ? clubId : null,
+    marketValue: formatMarketValue(p.marketValueDetails?.current?.value),
+    contractUntil: p.attributes?.contractUntil || null,
+    position: POSITIONS[p.attributes?.position?.name] || POSITION_GROUPS[p.attributes?.positionGroup] || null,
   }
 }
 
-// ============================================================================
-// KADERSEITE PARSEN
-// ============================================================================
-
-/**
- * Extrahiert die Kader-Tabelle (<table class="items">) inklusive verschachtelter
- * Tabellen — zählt öffnende/schließende table-Tags bis zur Balance.
- */
-function extractItemsTable(html: string): string | null {
-  const startMatch = html.match(/<table class="items"/i)
-  if (!startMatch || startMatch.index === undefined) return null
-  const start = startMatch.index
-  const tokenRe = /<table\b|<\/table>/gi
-  tokenRe.lastIndex = start
-  let depth = 0
-  let m: RegExpExecArray | null
-  while ((m = tokenRe.exec(html)) !== null) {
-    if (m[0].toLowerCase().startsWith('<table')) {
-      depth++
-    } else {
-      depth--
-      if (depth === 0) {
-        return html.slice(start, m.index + m[0].length)
-      }
-    }
-  }
-  return null
+async function fetchSquadIds(tmClubId: string): Promise<string[]> {
+  const data = await tmApi(`club/${tmClubId}/squad?locale=de`)
+  return [...new Set<string>((data?.squad || []).map((s: any) => String(s.playerId)))]
 }
 
-/**
- * Extrahiert alle Spieler von einer TM-Kaderseite.
- */
-function parseSquadPage(html: string): SquadPlayer[] {
-  const players: SquadPlayer[] = []
-  const seenIds = new Set<string>()
-
-  // WICHTIG: Nur die eigentliche Kader-Tabelle parsen (<table class="items">),
-  // nicht die ganze Seite — sonst landen Spieler aus Seitenboxen
-  // (Transfergerüchte, News, Top-Transfers) fälschlich im Kader.
-  // Die Kader-Tabelle enthält VERSCHACHTELTE Tabellen (inline-table pro Zeile),
-  // daher balanciert bis zum echten Tabellenende parsen statt non-greedy Regex.
-  const squadHtml = extractItemsTable(html) ?? html
-  if (squadHtml === html) {
-    console.warn('parseSquadPage: keine Kader-Tabelle (table.items) gefunden — parse gesamte Seite (Kontaminationsrisiko)')
+/** Spielerdaten gesammelt abrufen (ein Abruf je 50 Spieler) */
+async function fetchPlayers(tmPlayerIds: string[]): Promise<Map<string, any>> {
+  const players = new Map<string, any>()
+  for (let i = 0; i < tmPlayerIds.length; i += 50) {
+    const query = tmPlayerIds.slice(i, i + 50).map((id) => `ids[]=${id}`).join('&')
+    for (const p of (await tmApi(`players?locale=de&${query}`)) || []) players.set(String(p.id), p)
   }
-
-  // Pattern: Spieler-Profil-Links auf Kaderseiten
-  // href="/spielername/profil/spieler/123456"
-  const urlPattern = /href="\/([^\/]+)\/profil\/spieler\/(\d+)"/gi
-
-  for (const match of squadHtml.matchAll(urlPattern)) {
-    const urlSlug = match[1]
-    const tmPlayerId = match[2]
-
-    if (seenIds.has(tmPlayerId)) continue
-    seenIds.add(tmPlayerId)
-
-    // Name aus URL-Slug
-    const nameFromUrl = urlSlug.replace(/-/g, ' ')
-    const formattedName = nameFromUrl.split(' ')
-      .map((word: string) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(' ')
-
-    const profileUrl = `https://www.transfermarkt.de/${urlSlug}/profil/spieler/${tmPlayerId}`
-
-    players.push({
-      name: formattedName,
-      tmPlayerId,
-      profileUrl,
-    })
-  }
-
-  // Positionen extrahieren (optional, best-effort)
-  // TM-Kaderseiten haben Positionen in eigenen Spalten
-  // Wir versuchen sie aus den table rows zu extrahieren
-  const positionPattern = /class="[^"]*inline-table[^"]*"[\s\S]*?\/profil\/spieler\/(\d+)[\s\S]*?<td[^>]*class="[^"]*pos[^"]*"[^>]*>([^<]+)/gi
-  for (const match of squadHtml.matchAll(positionPattern)) {
-    const playerId = match[1]
-    const position = match[2].trim()
-    const player = players.find(p => p.tmPlayerId === playerId)
-    if (player && position) {
-      player.position = position
-    }
-  }
-
   return players
 }
+
+// ============================================================================
+// WETTBEWERBSSEITE PARSEN (nur bootstrap_clubs)
+// ============================================================================
 
 /**
  * Extrahiert Vereins-Links von einer TM-Wettbewerbsseite.
@@ -607,7 +336,7 @@ function parseCompetitionPage(html: string): Array<{ tmClubId: string; clubName:
 function normalizeAgentName(name: string | null | undefined): string | null {
   if (!name) return null
   const trimmed = name.trim()
-  if (!trimmed || trimmed === '-' || trimmed === '---' || trimmed === 'kein Beratereintrag') {
+  if (!trimmed || trimmed === '-' || trimmed === '---' || trimmed === 'kein Beratereintrag' || trimmed === 'ohne Berater') {
     return null
   }
   return trimmed
@@ -799,38 +528,32 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
 
   console.log(`Scanning club: ${club.club_name} (TM ID: ${club.tm_club_id})`)
 
-  // Kaderseite laden
-  const squadUrl = club.tm_squad_url || `https://www.transfermarkt.de/verein/kader/verein/${club.tm_club_id}`
-  const response = await fetchWithRetry(squadUrl)
+  const squadIds = await fetchSquadIds(club.tm_club_id)
+  console.log(`Found ${squadIds.length} players in squad of ${club.club_name}`)
 
-  if (!response || !response.ok) {
-    throw new Error(`Failed to fetch squad page for ${club.club_name}: ${response?.status}`)
-  }
-
-  const html = await response.text()
-  const squadPlayers = parseSquadPage(html)
-
-  console.log(`Found ${squadPlayers.length} players in squad of ${club.club_name}`)
-
-  // Schutz: Bei verdächtig kleinem Parse-Ergebnis nicht weitermachen —
-  // sonst würde unten der ganze Kader als vereinslos markiert.
-  if (squadPlayers.length < 5) {
-    // Kader-Tabelle vorhanden, aber (fast) leer: legitimer Zustand in der
-    // Sommerpause (v.a. Jugendteams) — Verein sauber überspringen statt Fehler.
-    if (html.includes('class="items"')) {
-      console.log(`Skipping ${club.club_name}: only ${squadPlayers.length} players listed (likely off-season/empty squad)`)
-      return {
-        playersScanned: squadPlayers.length,
-        changesDetected: 0,
-        newPlayers: 0,
-        deactivated: 0,
-        clubName: club.club_name,
-        skipped: true,
-      }
+  // Schutz: Bei (fast) leerem Kader nicht weitermachen, sonst würde unten der ganze
+  // Kader als vereinslos markiert. Legitim in der Sommerpause, vor allem bei Jugendteams.
+  if (squadIds.length < 5) {
+    console.log(`Skipping ${club.club_name}: only ${squadIds.length} players listed`)
+    return {
+      playersScanned: squadIds.length,
+      changesDetected: 0,
+      newPlayers: 0,
+      deactivated: 0,
+      clubName: club.club_name,
+      skipped: true,
     }
-    // Keine Kader-Tabelle gefunden: echte Fehlerseite/Layout-Änderung
-    throw new Error(`Suspiciously few players (${squadPlayers.length}) parsed for ${club.club_name} — skipping to avoid false vereinslos marking`)
   }
+
+  const apiPlayers = await fetchPlayers(squadIds)
+  const squadPlayers: SquadPlayer[] = squadIds.map((id) => {
+    const p = apiPlayers.get(id)
+    return {
+      name: p?.name || id,
+      tmPlayerId: id,
+      profileUrl: `https://www.transfermarkt.de${p?.relativeUrl || `/x/profil/spieler/${id}`}`,
+    }
+  })
 
   let changesDetected = 0
   let newPlayers = 0
@@ -843,24 +566,8 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
 
     console.log(`[${i + 1}/${squadPlayers.length}] Scanning: ${sp.name}`)
 
-    // Delay zwischen Requests
-    if (i > 0) {
-      await sleep(getRequestDelay())
-    }
-
-    // Berater-Info holen
-    const agentInfo = await fetchAgentFromProfile(sp.profileUrl)
-
-    // U16-Platzhalter über die TM-API auflösen (Berater ist bekannt, nur versteckt)
-    if (agentInfo.agentName && /spieler unter 16/i.test(agentInfo.agentName)) {
-      const hidden = await resolveHiddenU16Agent(sp.tmPlayerId)
-      if (hidden) {
-        console.log(`U16-HIDDEN resolved for ${sp.name}: ${hidden.name}`)
-        agentInfo.agentName = hidden.name
-        agentInfo.agentCompany = hidden.company
-        agentInfo.agentUrl = hidden.url
-      }
-    }
+    const apiPlayer = apiPlayers.get(sp.tmPlayerId)
+    const agentInfo = apiPlayer ? toAgentInfo(apiPlayer) : NO_DATA
 
     // Spieler existiert bereits in DB?
     const { data: existingPlayer } = await supabase
@@ -1092,6 +799,7 @@ async function cleanupVereinslose(supabase: ReturnType<typeof createClient>, bat
   }
 
   console.log(`Checking ${vereinslose.length} vereinslose players...`)
+  const apiPlayers = await fetchPlayers(vereinslose.map((p: any) => String(p.tm_player_id)).filter((id: string) => id !== 'null'))
 
   let reactivated = 0
   let retired = 0
@@ -1101,13 +809,10 @@ async function cleanupVereinslose(supabase: ReturnType<typeof createClient>, bat
   for (let i = 0; i < vereinslose.length; i++) {
     const player = vereinslose[i]
 
-    if (i > 0) {
-      await sleep(getRequestDelay())
-    }
-
     console.log(`[vereinslos ${i + 1}/${vereinslose.length}] Checking: ${player.player_name}`)
 
-    const agentInfo = await fetchAgentFromProfile(player.tm_profile_url)
+    const apiPlayer = apiPlayers.get(String(player.tm_player_id))
+    const agentInfo = apiPlayer ? toAgentInfo(apiPlayer) : NO_DATA
 
     // Fetch fehlgeschlagen → überspringen
     if (agentInfo.agentName === null) {
@@ -1131,23 +836,21 @@ async function cleanupVereinslose(supabase: ReturnType<typeof createClient>, bat
     }
 
     // Spieler hat wieder einen Verein → Verein finden und zuordnen
-    if (agentInfo.currentClubName) {
-      console.log(`  BACK IN CLUB: ${player.player_name} → ${agentInfo.currentClubName}`)
+    if (agentInfo.currentClubId) {
+      console.log(`  BACK IN CLUB: ${player.player_name} → ${agentInfo.currentClubId}`)
 
       // Verein in DB suchen
       const { data: matchedClub } = await supabase
         .from('berater_clubs')
         .select('id')
-        .ilike('club_name', agentInfo.currentClubName)
+        .eq('tm_club_id', agentInfo.currentClubId)
         .eq('is_active', true)
         .maybeSingle()
 
       // Neuer Verein ist nicht in den überwachten Ligen → Spieler hat die
       // überwachten Ligen verlassen (z.B. Wechsel ins Ausland) → deaktivieren.
-      // Falls der Verein doch überwacht ist (Namensabweichung), reaktiviert ihn
-      // der nächste Kader-Scan dieses Vereins automatisch.
       if (!matchedClub) {
-        console.log(`  LEFT MONITORED LEAGUES: ${player.player_name} → ${agentInfo.currentClubName} (nicht überwacht), deaktiviere`)
+        console.log(`  LEFT MONITORED LEAGUES: ${player.player_name} → ${agentInfo.currentClubId} (nicht überwacht), deaktiviere`)
         await supabase.from('berater_players').update({
           is_active: false,
           is_vereinslos: false,
