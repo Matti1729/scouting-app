@@ -4,6 +4,7 @@
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { denyUnlessAccess } from '../_shared/access.ts';
 
 // ============================================================================
 // KONFIGURATION
@@ -1404,6 +1405,9 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+
+  const denied = await denyUnlessAccess(req, corsHeaders, 'scouting');
+  if (denied) return denied;
 
   try {
     const { action, clubId } = await req.json()

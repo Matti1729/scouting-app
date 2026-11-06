@@ -22,6 +22,7 @@
 
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { denyUnlessAccess } from '../_shared/access.ts'
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -336,6 +337,9 @@ function json(body: unknown, status = 200): Response {
 }
 
 serve(async (req) => {
+  const denied = await denyUnlessAccess(req, {}, 'staff')
+  if (denied) return denied
+
   try {
     const body = await req.json().catch(() => ({}));
     const dryRun = body.dry_run === true && (await isServiceRole(req.headers.get("Authorization")));

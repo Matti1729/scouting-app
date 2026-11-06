@@ -2,6 +2,7 @@
 // Umgeht CORS-Einschränkungen im Browser durch serverseitigen Fetch
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { denyUnlessAccess } from '../_shared/access.ts';
 
 // User-Agent Rotation (wie in berater-scan)
 const USER_AGENTS = [
@@ -51,6 +52,9 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+
+  const denied = await denyUnlessAccess(req, corsHeaders, 'scouting');
+  if (denied) return denied;
 
   try {
     const { playerName, clubHint, searchViaClub, fetchAgentInfo, profileUrl, searchWithFullInfo, clubSearch } = await req.json()

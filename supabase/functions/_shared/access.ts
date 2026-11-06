@@ -19,8 +19,13 @@ export async function denyUnlessAccess(
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
 
+  // Zeitpläne (pg_cron) schicken das Geheimwort, Funktionen untereinander den Service-Key
+  const cronSecret = Deno.env.get("CRON_SECRET");
+  if (cronSecret && req.headers.get("x-cron-secret") === cronSecret) return null;
+
   const token = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "");
   if (!token) return deny(401);
+  if (token === Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")) return null;
 
   const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
     auth: { autoRefreshToken: false, persistSession: false },

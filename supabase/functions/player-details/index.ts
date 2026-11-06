@@ -2,6 +2,7 @@
 // - Transferhistorie (JSON-API von TM) -> letzter Verein + Datum/Saison
 // - Einsätze aktuelle + letzte Saison (aus der Leistungsdaten-Seite)
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { denyUnlessAccess } from '../_shared/access.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -159,6 +160,9 @@ serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+
+  const denied = await denyUnlessAccess(req, corsHeaders, 'staff');
+  if (denied) return denied;
 
   try {
     const { playerId } = await req.json()

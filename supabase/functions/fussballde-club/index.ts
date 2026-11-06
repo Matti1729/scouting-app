@@ -5,6 +5,7 @@
 // richtigen Verein (Wacker 09 Cottbus statt Wacker Burghausen).
 // Aufruf: POST { teamId: "011MIC7BGK000000VTVG0001VTR8C1K7" }
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { denyUnlessAccess } from '../_shared/access.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -53,6 +54,9 @@ serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders })
   }
+
+  const denied = await denyUnlessAccess(req, corsHeaders, 'scouting');
+  if (denied) return denied;
 
   try {
     const { teamId } = await req.json()
