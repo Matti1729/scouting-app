@@ -1655,6 +1655,7 @@ export interface ObservedPlayer {
   lastMatchDate: string | null; // wie in player_evaluations gespeichert
   lastMatchName: string | null;
   lastRating: number | null;
+  authorIds: string[]; // wer Berichte geschrieben hat (alte Berichte ohne Autor fehlen)
 }
 
 // "25.01.2026" / "2026-01-25" → Timestamp (für Sortierung); unbekannt → 0
@@ -1706,7 +1707,7 @@ export async function loadObservedPlayers(): Promise<ObservedPlayer[]> {
   try {
     const { data: evals, error } = await supabase
       .from('player_evaluations')
-      .select('berater_player_id, match_date, match_name, overall_rating, current_club, age_group')
+      .select('berater_player_id, match_date, match_name, overall_rating, current_club, age_group, created_by')
       .not('berater_player_id', 'is', null);
     if (error) throw error;
 
@@ -1716,13 +1717,15 @@ export async function loadObservedPlayers(): Promise<ObservedPlayer[]> {
     type Agg = {
       count: number; lastTs: number; lastDate: string | null; lastName: string | null; lastRating: number | null;
       clubBest: { club: string; ag: string | null; rank: number; ts: number } | null;
+      authors: Set<string>;
     };
     const byPlayer = new Map<string, Agg>();
     for (const e of (evals || []) as any[]) {
       const id = e.berater_player_id as string;
       const ts = reportDateTs(e.match_date);
-      const agg = byPlayer.get(id) || { count: 0, lastTs: -1, lastDate: null, lastName: null, lastRating: null, clubBest: null };
+      const agg = byPlayer.get(id) || { count: 0, lastTs: -1, lastDate: null, lastName: null, lastRating: null, clubBest: null, authors: new Set<string>() };
       agg.count++;
+      if (e.created_by) agg.authors.add(e.created_by);
       if (ts >= agg.lastTs) {
         agg.lastTs = ts;
         agg.lastDate = e.match_date || null;
@@ -1769,6 +1772,7 @@ export async function loadObservedPlayers(): Promise<ObservedPlayer[]> {
         lastMatchDate: agg.lastDate,
         lastMatchName: agg.lastName,
         lastRating: agg.lastRating,
+        authorIds: [...agg.authors],
       };
     });
     result.sort((a, b) => (byPlayer.get(b.player.id)!.lastTs) - (byPlayer.get(a.player.id)!.lastTs));

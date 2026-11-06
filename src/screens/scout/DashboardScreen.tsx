@@ -18,6 +18,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { loadNewScoutReports, markScoutActivitySeen } from '../../services/scoutActivityService';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
@@ -182,7 +183,8 @@ export function DashboardScreen() {
   };
   // Offene Benachrichtigungen: Beraterstatus-Alarme + unklare Zuordnungen
   const openMerges = ambiguous.filter((a) => !mergeHidden.has(a.scouted.id));
-  const bellCount = alerts.length + openMerges.length;
+  const [scoutNew, setScoutNew] = useState<{ count: number; names: string[] }>({ count: 0, names: [] });
+  const bellCount = alerts.length + openMerges.length + (scoutNew.count > 0 ? 1 : 0);
 
   // Manuelle Zuordnung aus dem Benachrichtigungs-Detail
   const handleAssign = async (scoutedId: string, keeperId: string) => {
@@ -235,6 +237,7 @@ export function DashboardScreen() {
     // Nur Berater: Glocke, Sportstipendium, Suchmaschine
     if (!isScout) {
       loadUnseenAlerts().then(setAlerts).catch(() => {});
+      loadNewScoutReports().then(setScoutNew).catch(() => {});
       supabase
         .from('stipendium_entries')
         .select('*', { count: 'exact', head: true })
@@ -661,6 +664,24 @@ export function DashboardScreen() {
                 <Text style={styles.alertText}>Keine neuen Benachrichtigungen.</Text>
               ) : (
                 <View style={{ paddingHorizontal: 14, paddingVertical: 6 }}>
+                  {scoutNew.count > 0 && (
+                    <TouchableOpacity
+                      style={styles.bellRow}
+                      onPress={() => {
+                        markScoutActivitySeen().catch(() => {});
+                        setScoutNew({ count: 0, names: [] });
+                        setBellOpen(false);
+                        navigation.navigate('Watchlist', { tab: 'scouts' });
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={styles.bellRowTag}>SCOUTS</Text>
+                      <Text style={styles.bellRowText} numberOfLines={1}>
+                        {`${scoutNew.count} ${scoutNew.count === 1 ? 'neuer Bericht' : 'neue Berichte'} (${scoutNew.names.join(', ')})`}
+                      </Text>
+                      <Ionicons name="chevron-forward" size={13} color={RETRO.shadowDark} />
+                    </TouchableOpacity>
+                  )}
                   {alerts.map((a) => (
                     <TouchableOpacity
                       key={a.id}

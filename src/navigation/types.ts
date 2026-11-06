@@ -17,7 +17,7 @@ export type RootStackParamList = {
     playerPosition?: string;
     playerBirthYear?: string;
   };
-  Watchlist: undefined;
+  Watchlist: { tab?: 'watchlist' | 'ziel' | 'beobachtet' | 'scouts' } | undefined;
   Sportstipendium: undefined;
   Suchmaschine: undefined;
 };

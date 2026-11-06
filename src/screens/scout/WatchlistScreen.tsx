@@ -24,7 +24,12 @@ import { RetroHeader } from '../../components/RetroHeader';
 import { TeamLogo } from '../../components/ClubLogo';
 import { loadClubLogoMap } from '../../services/areaGamesService';
 import { WebSafeList } from '../../components/WebSafeList';
-import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import { ScoutOverview } from '../../components/ScoutOverview';
+import { Dropdown } from '../../components/Dropdown';
+import { loadScoutOverview, markScoutActivitySeen, ScoutSummary } from '../../services/scoutActivityService';
+import { loadAdvisorNames } from '../../services/currentUser';
+import { supabase } from '../../config/supabase';
+import { useNavigation, useFocusEffect, useRoute } from '@react-navigation/native';
 import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
@@ -86,6 +91,11 @@ const OBSERVED_COLUMNS: ColumnDef[] = [
   { key: 'rating', label: 'Pot.', defaultFlex: 0.4, minWidth: 34 },
   { key: 'last', label: 'Letzter Bericht', defaultFlex: 0.8, minWidth: 90 },
 ];
+// Berater sehen zusätzlich, von wem die Berichte stammen
+const OBSERVED_COLUMNS_BERATER: ColumnDef[] = [
+  ...OBSERVED_COLUMNS,
+  { key: 'von', label: 'Von', defaultFlex: 0.8, minWidth: 70 },
+];
 
 // Farbe wie im Potential-Schiebebalken (1-3 rot, 4-6 orange, 7-9 grün, 10 gold)
 function potentialColor(v: number): string {
@@ -142,8 +152,9 @@ export function WatchlistScreen() {
   const [tableWidth, setTableWidth] = useState(0);
   const [detailTableWidth, setDetailTableWidth] = useState(0);
 
+  const { isScout } = useAuth();
   const table = useTableColumns(WATCHLIST_COLUMNS, tableWidth, 'watchlist_main_v2');
-  const observedTable = useTableColumns(OBSERVED_COLUMNS, tableWidth, 'watchlist_observed_v3');
+  const observedTable = useTableColumns(isScout ? OBSERVED_COLUMNS : OBSERVED_COLUMNS_BERATER, tableWidth, 'watchlist_observed_v4');
   const matchEvalTable = useTableColumns(MATCH_EVAL_COLUMNS, detailTableWidth, 'watchlist_match_evals');
 
   // Sort
@@ -151,7 +162,7 @@ export function WatchlistScreen() {
   const [sortKey, setSortKey] = useState<SortKey>('added');
   const [sortAsc, setSortAsc] = useState(false); // newest first by default
   // Sortierung "Alle Berichte" (eigener Zustand, Standard: neuester Bericht oben)
-  type ObsSortKey = 'name' | 'alter' | 'mv' | 'club' | 'agent' | 'rating' | 'last';
+  type ObsSortKey = 'name' | 'alter' | 'mv' | 'club' | 'agent' | 'rating' | 'last' | 'von';
   const [obsSortKey, setObsSortKey] = useState<ObsSortKey>('last');
   const [obsSortAsc, setObsSortAsc] = useState(false);
 
@@ -172,9 +183,27 @@ export function WatchlistScreen() {
   const notesTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Tabs: Watchlist | Zielspieler (aktiv ansprechen) | Alle Berichte
-  const [viewTab, setViewTab] = useState<'watchlist' | 'ziel' | 'beobachtet'>('watchlist');
-  const { isScout } = useAuth();
+  const route = useRoute<any>();
+  const [viewTab, setViewTab] = useState<'watchlist' | 'ziel' | 'beobachtet' | 'scouts'>(route.params?.tab || 'watchlist');
   const [observed, setObserved] = useState<ObservedPlayer[]>([]);
+  // Scout-Übersicht + Filter "Von" (nur Berater)
+  const [scouts, setScouts] = useState<ScoutSummary[]>([]);
+  const [advisorNames, setAdvisorNames] = useState<Map<string, string>>(new Map());
+  const [vonFilter, setVonFilter] = useState('');
+  useEffect(() => { if (!isScout) loadAdvisorNames().then(setAdvisorNames).catch(() => {}); }, [isScout]);
+  useEffect(() => { if (viewTab === 'scouts') markScoutActivitySeen().catch(() => {}); }, [viewTab]);
+  const scoutIds = useMemo(() => new Set(scouts.map((s) => s.id)), [scouts]);
+  const authorLabel = (o: ObservedPlayer) => o.authorIds.map((id) => advisorNames.get(id) || 'Scout').join(', ');
+  const vonOptions = useMemo(() => {
+    const ids = new Set(observed.flatMap((o) => o.authorIds));
+    return [
+      { value: '', label: 'Von: alle' },
+      { value: 'scouts', label: 'Nur Scouts' },
+      ...[...ids]
+        .map((id) => ({ value: id, label: advisorNames.get(id) || 'Scout' }))
+        .sort((a, b) => a.label.localeCompare(b.label, 'de')),
+    ];
+  }, [observed, advisorNames]);
   // Wappen für die mobilen Karten (wie Dashboard/Spiele)
   const [clubLogoMap, setClubLogoMap] = useState<Map<string, string>>(new Map());
   useEffect(() => { loadClubLogoMap().then(setClubLogoMap).catch(() => {}); }, []);
@@ -205,7 +234,8 @@ export function WatchlistScreen() {
     setEvaluations(evals);
     setObserved(obs);
     setLoading(false);
-  }, []);
+    if (!isScout) loadScoutOverview().then(setScouts).catch(() => {});
+  }, [isScout]);
 
   // Doppelgänger-Abgleich läuft im Hintergrund (Dutzende Einzelabfragen,
   // mehrere Sekunden) und darf die Anzeige nicht blockieren; bei Änderungen
@@ -432,7 +462,10 @@ export function WatchlistScreen() {
 
   const sortedObserved = useMemo(() => {
     const dir = obsSortAsc ? 1 : -1;
-    return [...observed].sort((a, b) => {
+    const filtered = !vonFilter
+      ? observed
+      : observed.filter((o) => (vonFilter === 'scouts' ? o.authorIds.some((id) => scoutIds.has(id)) : o.authorIds.includes(vonFilter)));
+    return [...filtered].sort((a, b) => {
       switch (obsSortKey) {
         case 'name':
           return dir * formatNameLastFirst(a.player.player_name).localeCompare(formatNameLastFirst(b.player.player_name), 'de');
@@ -451,11 +484,13 @@ export function WatchlistScreen() {
           return dir * ((a.lastRating ?? -1) - (b.lastRating ?? -1));
         case 'last':
           return dir * (reportTs(a.lastMatchDate) - reportTs(b.lastMatchDate));
+        case 'von':
+          return dir * (authorLabel(a) || 'zzz').localeCompare(authorLabel(b) || 'zzz', 'de');
         default:
           return 0;
       }
     });
-  }, [observed, obsSortKey, obsSortAsc]);
+  }, [observed, obsSortKey, obsSortAsc, vonFilter, scoutIds, advisorNames]);
   const mobileObserved = useMemo(() => {
     let list = sortedObserved;
     if (mobileSearch.trim()) list = list.filter((o) => matchesSearch(o.player));
@@ -815,12 +850,24 @@ export function WatchlistScreen() {
                   {formatReportDate(item.lastMatchDate)}
                 </Text>
               );
+            case 'von':
+              return (
+                <Text style={[{ fontSize: 13, color: RETRO.text }]} numberOfLines={1}>
+                  {authorLabel(item) || '–'}
+                </Text>
+              );
             default:
               return null;
           }
         }}
       />
     );
+  };
+
+  // Scout-Übersicht: Spieler aus dem Verlauf öffnen
+  const openPlayerById = async (id: string) => {
+    const { data } = await supabase.from('berater_players').select('*').eq('id', id).maybeSingle();
+    if (data) openPlayerDetail(data as BeraterPlayer);
   };
 
   // Manuelle Zuordnung: Bericht-Spieler in den gewählten TM-Datensatz überführen
@@ -900,9 +947,11 @@ export function WatchlistScreen() {
     <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
       {/* Header (gelber Titelbalken wie im Dashboard) */}
       <RetroHeader
-        title={viewTab === 'beobachtet' ? 'Alle Berichte' : viewTab === 'ziel' ? 'Zielspieler' : 'Watchlist'}
+        title={viewTab === 'scouts' ? 'Scouts' : viewTab === 'beobachtet' ? 'Alle Berichte' : viewTab === 'ziel' ? 'Zielspieler' : 'Watchlist'}
         subtitle={
-          viewTab === 'beobachtet'
+          viewTab === 'scouts'
+            ? 'Wer arbeitet womit'
+            : viewTab === 'beobachtet'
             ? 'Alle Spieler mit Spielbericht'
             : viewTab === 'ziel'
               ? 'Kandidaten für die Ansprache'
@@ -913,6 +962,7 @@ export function WatchlistScreen() {
           ...(isScout ? [] : [{ key: 'ziel', label: `Zielspieler (${zielList.length})` }]),
           { key: 'watchlist', label: `Watchlist (${watchlist.length})` },
           { key: 'beobachtet', label: `Berichte (${observed.length})` },
+          ...(isScout ? [] : [{ key: 'scouts', label: `Scouts (${scouts.length})` }]),
         ]}
         activeTab={viewTab}
         onTabChange={(k) => setViewTab(k as typeof viewTab)}
@@ -947,12 +997,23 @@ export function WatchlistScreen() {
                 {`Alle Berichte (${observed.length})`}
               </Text>
             </TouchableOpacity>
+            {!isScout && (
+            <TouchableOpacity
+              onPress={() => setViewTab('scouts')}
+              style={[styles.headerTab, HARD_SHADOW, viewTab === 'scouts' && styles.headerTabActive]}
+              activeOpacity={0.7}
+            >
+              <Text style={[styles.headerTabText, viewTab === 'scouts' && styles.headerTabTextActive]}>
+                {`Scouts (${scouts.length})`}
+              </Text>
+            </TouchableOpacity>
+            )}
           </View>
         }
       />
 
       {/* Mobile Suchleiste (Name, Verein) — Optik wie in der Spiele-Übersicht */}
-      {isMobile && (
+      {isMobile && viewTab !== 'scouts' && (
         // Eigene Fläche mit Abstand nach unten: gescrollte Karten werden sauber unter der Leiste abgeschnitten
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, paddingTop: 12, paddingBottom: 12, backgroundColor: colors.background, zIndex: 2, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder }}>
           <View style={[HARD_SHADOW, { flex: 1, height: 25, backgroundColor: RETRO.inputBg, borderRadius: 2, justifyContent: 'center', paddingHorizontal: 10 }]}>
@@ -1024,8 +1085,17 @@ export function WatchlistScreen() {
         </Modal>
       )}
 
+      {/* Filter "Von" über "Alle Berichte" (nur Berater, Desktop + Mobil) */}
+      {viewTab === 'beobachtet' && !isScout && (
+        <View style={{ paddingHorizontal: 12, paddingTop: isMobile ? 0 : 10, paddingBottom: isMobile ? 8 : 0, width: isMobile ? '100%' : 240, zIndex: 5 }}>
+          <Dropdown compact options={vonOptions} value={vonFilter} onChange={(v) => setVonFilter(v as string)} placeholder="Von: alle" />
+        </View>
+      )}
+
       {/* List */}
-      {viewTab === 'beobachtet' && !isMobile ? (
+      {viewTab === 'scouts' ? (
+        <ScoutOverview scouts={scouts} loading={loading} onOpenPlayer={openPlayerById} />
+      ) : viewTab === 'beobachtet' && !isMobile ? (
         /* "Alle Berichte" als Tabelle — gleiche Optik wie die Watchlist */
         <>
         {renderAmbiguousCard()}
