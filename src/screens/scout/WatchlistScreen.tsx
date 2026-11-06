@@ -5,7 +5,6 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  FlatList,
   RefreshControl,
   useWindowDimensions,
   Linking,
@@ -24,6 +23,7 @@ import { RETRO, RETRO_THEME, HARD_SHADOW, HARD_SHADOW_LG, MONO } from '../../the
 import { RetroHeader } from '../../components/RetroHeader';
 import { TeamLogo } from '../../components/ClubLogo';
 import { loadClubLogoMap } from '../../services/areaGamesService';
+import { WebSafeList } from '../../components/WebSafeList';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
@@ -1050,7 +1050,7 @@ export function WatchlistScreen() {
               setHeaderRef={observedTable.setHeaderRef}
             />
           )}
-          <FlatList
+          <WebSafeList
             data={sortedObserved}
             renderItem={renderObservedRow}
             keyExtractor={(item) => item.player.id}
@@ -1070,7 +1070,7 @@ export function WatchlistScreen() {
         </View>
         </>
       ) : viewTab === 'beobachtet' ? (
-        <FlatList
+        <WebSafeList
           data={mobileObserved}
           ListHeaderComponent={renderAmbiguousCard()}
           keyExtractor={(item) => item.player.id}
@@ -1089,7 +1089,7 @@ export function WatchlistScreen() {
           renderItem={({ item }) => renderPlayerCard(item.player, { lastMatchDate: item.lastMatchDate, reportCount: item.reportCount, lastRating: item.lastRating })}
         />
       ) : isMobile ? (
-        <FlatList
+        <WebSafeList
           data={activeList}
           renderItem={renderMobileCard}
           keyExtractor={(item) => item.id}
@@ -1125,7 +1125,7 @@ export function WatchlistScreen() {
               setHeaderRef={table.setHeaderRef}
             />
           )}
-          <FlatList
+          <WebSafeList
             data={activeList}
             renderItem={renderDesktopRow}
             keyExtractor={(item) => item.id}
