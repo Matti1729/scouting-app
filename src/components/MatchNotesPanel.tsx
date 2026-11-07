@@ -1,10 +1,12 @@
-// MatchNotesPanel: Spielnotizen im Spiel-Modal (Matti 2026-10-25). Ein Textfeld, in das Matti per
-// iPhone-Diktat einspricht ("Heim 13, groß, schlaksig …"); "Auswerten" ordnet per KI den Spielern der
-// Aufstellung zu, die Entwürfe werden einzeln oder alle auf einmal in die Berichte übernommen.
+// MatchNotesPanel: Spielnotizen im Spiel-Modal (Matti 2026-10-25). Ein Textfeld, in das Matti über den
+// Mikrofon-Knopf einspricht ("Heim 13, groß, schlaksig …", immer Deutsch, unabhängig von der Tastatur);
+// "Auswerten" ordnet per KI den Spielern der Aufstellung zu, die Entwürfe werden einzeln oder alle
+// auf einmal in die Berichte übernommen.
 import React, { useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, ScrollView } from 'react-native';
 import { RETRO, MONO, HARD_SHADOW } from '../theme/retro';
 import { showAlert } from '../utils/alert';
+import { VoiceNoteButton } from './evaluation/VoiceNoteButton';
 import {
   NoteDraft, loadMatchNotes, saveMatchNotes, writeLocalNotes, parseMatchNotes, applyNoteDraft, draftLines,
 } from '../services/matchNotesService';
@@ -28,6 +30,7 @@ export function MatchNotesPanel({ match, homeName, awayName, isMobile, onApplied
   const [applied, setApplied] = useState<Set<number>>(new Set());
   const saveTimer = useRef<any>(null);
   const pending = useRef<string | null>(null); // noch nicht gespeicherter Text
+  const textRef = useRef(''); // aktueller Text: die Aufnahme endet später als der Render, in dem sie begann
 
   // Offenen Stand sofort speichern (Fenster zu, App in den Hintergrund, Seite verlassen)
   const flush = () => {
@@ -40,7 +43,7 @@ export function MatchNotesPanel({ match, homeName, awayName, isMobile, onApplied
 
   useEffect(() => {
     let off = false;
-    loadMatchNotes(match.id).then((t) => { if (!off) { setText(t); setLoaded(true); } });
+    loadMatchNotes(match.id).then((t) => { if (!off) { textRef.current = t; setText(t); setLoaded(true); } });
     const onHide = () => { if (typeof document === 'undefined' || document.visibilityState === 'hidden') flush(); };
     if (typeof window !== 'undefined') {
       window.addEventListener('pagehide', onHide);
@@ -58,6 +61,7 @@ export function MatchNotesPanel({ match, homeName, awayName, isMobile, onApplied
 
   // Jede Änderung sofort im Gerät sichern, kurz danach in der Datenbank speichern
   const onChange = (t: string) => {
+    textRef.current = t;
     setText(t);
     setSaved(false);
     pending.current = t;
@@ -210,10 +214,18 @@ export function MatchNotesPanel({ match, homeName, awayName, isMobile, onApplied
           placeholderTextColor="#9a9aa2"
           style={{ flex: 1, paddingHorizontal: 12, paddingBottom: 10, fontSize: 14, lineHeight: 21, color: RETRO.text, textAlignVertical: 'top', outlineStyle: 'none' } as any}
         />
-        <View style={{ borderTopWidth: 1, borderTopColor: RETRO.rowBorder, backgroundColor: '#f7f5f0', paddingHorizontal: 12, paddingVertical: 8 }}>
-          <Text style={{ fontSize: 11, lineHeight: 15, color: RETRO.textMuted }}>
-            Tipp aufs Mikrofon der Tastatur und einfach sprechen: Heim/Gast + Nummer, dann was du siehst.
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, borderTopWidth: 1, borderTopColor: RETRO.rowBorder, backgroundColor: '#f7f5f0', paddingHorizontal: 12, paddingVertical: 8 }}>
+          <Text style={{ flex: 1, fontSize: 11, lineHeight: 15, color: RETRO.textMuted }}>
+            Mikrofon antippen und sprechen: Heim/Gast + Nummer, dann was du siehst.
           </Text>
+          <VoiceNoteButton
+            style={{ height: 32 }}
+            textStyle={{ fontSize: 12, fontWeight: '700' }}
+            onText={(t) => {
+              const prev = textRef.current.replace(/\s+$/, '');
+              onChange(prev ? `${prev}\n${t}` : t);
+            }}
+          />
         </View>
       </View>
       <TouchableOpacity
