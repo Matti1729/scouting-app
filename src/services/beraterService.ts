@@ -49,6 +49,8 @@ export interface BeraterChange {
   previous_agent_company: string | null;
   new_agent_name: string | null;
   new_agent_company: string | null;
+  previous_agent_url?: string | null; // TM-Link der alten Agentur (seit 2026-11-08)
+  new_agent_url?: string | null;
   player_name: string;
   club_name: string | null;
   league_id: string | null;

@@ -211,6 +211,7 @@ export function EvalHeader({
           // Agentur-URL über irgendeinen aktuellen Spieler derselben Agentur finden
           const keys = new Set<string>();
           for (const c of hist) {
+            if (c.previous_agent_url) continue; // Link steht schon im Verlauf
             if (!agentDisplayName(c.previous_agent_name, c.previous_agent_company)) continue;
             const k = c.previous_agent_company || c.previous_agent_name;
             if (k) keys.add(k);
@@ -441,7 +442,7 @@ export function EvalHeader({
                     const start = verlauf[index + 1]?.detected_at || null;
                     const agentKey = change.previous_agent_company || change.previous_agent_name;
                     const hasRealAgent = !!agentDisplayName(change.previous_agent_name, change.previous_agent_company);
-                    const prevUrl = hasRealAgent && agentKey ? verlaufUrls.get(agentKey) : undefined;
+                    const prevUrl = hasRealAgent ? change.previous_agent_url || (agentKey ? verlaufUrls.get(agentKey) : undefined) : undefined;
                     return (
                       <View
                         key={change.id}
