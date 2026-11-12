@@ -2375,8 +2375,8 @@ export function MatchListScreen({ navigation, route }: any) {
         // Vereins-Basis vergleichen (Wortanfang): "Rasenballsport" → "rb" findet "RB Leipzig"
         (qBase.length > 0 && (` ${clubBase(match.spiel)} `).includes(` ${qBase}`)) ||
         match.mannschaft.toLowerCase().includes(q) ||
-        match.art.toLowerCase().includes(q) ||
-        (match.ort && match.ort.toLowerCase().includes(q));
+        // Spielort bewusst nicht durchsuchen: "Köln" fand sonst Leverkusen (Kurtekotten, 51061 Köln), Matti 2026-11-12
+        match.art.toLowerCase().includes(q);
 
       const matchesJahrgang =
         jahrgangFilter.length === 0 || jahrgangFilter.includes(rowJahrgang(match));
