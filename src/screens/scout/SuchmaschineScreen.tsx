@@ -32,7 +32,9 @@ import {
   agentDisplayName,
   baseClubName,
   POSITION_FULL,
+  fetchSearchPlayer,
 } from '../../services/stipendiumService';
+import { TopscorerView } from '../../components/TopscorerView';
 import { PlayerDetailModal } from '../../components/PlayerDetailModal';
 import { RatingBar } from '../../components/evaluation/RatingBar';
 import { RetroHeader } from '../../components/RetroHeader';
@@ -1104,6 +1106,8 @@ export function SuchmaschineScreen() {
 
   // Spieler-Detail-Modal
   const [detailPlayer, setDetailPlayer] = useState<StipendiumSearchPlayer | null>(null);
+  // Reiter: Suche oder Topscorer-Liste (Matti 2026-11-13)
+  const [mainTab, setMainTab] = useState<'suche' | 'topscorer'>('suche');
   // Nach Schließen der Spielbewertung zurück ins Spielerprofil
   const returnToPlayerRef = useRef<StipendiumSearchPlayer | null>(null);
   useFocusEffect(
@@ -1959,11 +1963,44 @@ export function SuchmaschineScreen() {
       {/* Header (gelber Titelbalken wie im Dashboard) */}
       <RetroHeader
         title="Suchmaschine"
-        subtitle="Spielerdatenbank durchsuchen"
+        subtitle={mainTab === 'topscorer' ? 'Tore und Vorlagen pro Liga' : 'Spielerdatenbank durchsuchen'}
         onBack={() => navigation.goBack()}
+        tabs={[{ key: 'suche', label: 'Suche' }, { key: 'topscorer', label: 'Topscorer' }]}
+        activeTab={mainTab}
+        onTabChange={(k) => setMainTab(k as 'suche' | 'topscorer')}
+        right={isMobile ? undefined : (
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            {(['suche', 'topscorer'] as const).map((k) => (
+              <TouchableOpacity
+                key={k}
+                onPress={() => setMainTab(k)}
+                style={[styles.headerTab, HARD_SHADOW, mainTab === k && styles.headerTabActive]}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.headerTabText, mainTab === k && styles.headerTabTextActive]}>
+                  {k === 'suche' ? 'Suche' : 'Topscorer'}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        )}
       />
 
-      {loading ? (
+      {mainTab === 'topscorer' ? (
+        <TopscorerView
+          isMobile={isMobile}
+          clubLogoMap={clubLogoMap}
+          watchlistIds={watchlistIds}
+          onOpenPlayer={async (tmId, name) => {
+            const p = await fetchSearchPlayer(tmId, name);
+            if (p) setDetailPlayer(p);
+            else Linking.openURL(`https://www.transfermarkt.de/-/profil/spieler/${tmId}`);
+          }}
+          onAddedToWatchlist={(pid) => {
+            if (pid) setWatchlistIds((prev) => new Set(prev).add(pid));
+          }}
+        />
+      ) : loading ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={RETRO.headerBg} />
         </View>
@@ -2151,6 +2188,28 @@ const retro = StyleSheet.create({
 // ============================================================================
 
 const styles = StyleSheet.create({
+  // Reiter-Kästen im gelben Balken (Desktop), wie in der Watchlist
+  headerTab: {
+    backgroundColor: '#ffffff',
+    borderRadius: 2,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    minHeight: 25,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  headerTabActive: {
+    backgroundColor: RETRO.text,
+  },
+  headerTabText: {
+    fontSize: 12,
+    fontWeight: '700' as const,
+    fontFamily: MONO,
+    color: RETRO.text,
+  },
+  headerTabTextActive: {
+    color: RETRO.yellow,
+  },
   container: {
     flex: 1,
   },

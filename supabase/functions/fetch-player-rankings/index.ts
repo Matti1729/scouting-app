@@ -395,15 +395,16 @@ async function fetchRankingsForLeague(
     console.log(`[${statType}] ${league.id}: Deleted old data for season ${season}`)
   }
 
-  // In DB speichern
+  // In DB speichern (berater_players einmal pro Liste abfragen statt je Zeile)
+  const { data: knownPlayers } = await supabase
+    .from('berater_players')
+    .select('id, tm_player_id, birth_date, position')
+    .in('tm_player_id', players.map((p) => p.tmPlayerId))
+  const known = new Map((knownPlayers || []).map((k: any) => [k.tm_player_id, k]))
+
   let savedCount = 0
   for (const player of players) {
-    // Prüfe ob Spieler bereits in berater_players existiert
-    const { data: existingPlayer } = await supabase
-      .from('berater_players')
-      .select('id')
-      .eq('tm_player_id', player.tmPlayerId)
-      .maybeSingle()
+    const existingPlayer = known.get(player.tmPlayerId)
 
     const { error } = await supabase
       .from('berater_player_stats')
@@ -421,8 +422,8 @@ async function fetchRankingsForLeague(
         tm_profile_url: player.tmProfileUrl.startsWith('http')
           ? player.tmProfileUrl
           : `https://www.transfermarkt.de${player.tmProfileUrl}`,
-        birth_date: player.birthDate,
-        position: player.position,
+        birth_date: existingPlayer?.birth_date || player.birthDate,
+        position: existingPlayer?.position || player.position,
         updated_at: new Date().toISOString(),
       }, {
         onConflict: 'tm_player_id,league_id,stat_type,season'
@@ -436,6 +437,60 @@ async function fetchRankingsForLeague(
   }
 
   return { success: true, count: savedCount }
+}
+
+// Jahrgang + Position über die Transfermarkt-Schnittstelle (tmapi) nachtragen,
+// wo berater_players nichts hat (Matti 2026-11-13, Topscorer nach Jahrgang)
+const TM_POSITIONS: Record<string, string> = {
+  'Goalkeeper': 'Torwart',
+  'Centre-Back': 'Abwehr - Innenverteidiger',
+  'Left-Back': 'Abwehr - Linker Verteidiger',
+  'Right-Back': 'Abwehr - Rechter Verteidiger',
+  'Defensive Midfield': 'Mittelfeld - Defensives Mittelfeld',
+  'Central Midfield': 'Mittelfeld - Zentrales Mittelfeld',
+  'Attacking Midfield': 'Mittelfeld - Offensives Mittelfeld',
+  'Left Midfield': 'Mittelfeld - Linkes Mittelfeld',
+  'Right Midfield': 'Mittelfeld - Rechtes Mittelfeld',
+  'Left Winger': 'Sturm - Linksaußen',
+  'Right Winger': 'Sturm - Rechtsaußen',
+  'Centre-Forward': 'Sturm - Mittelstürmer',
+  'Second Striker': 'Sturm - Hängende Spitze',
+}
+const TM_POSITION_GROUPS: Record<string, string> = {
+  GOALKEEPER: 'Torwart', DEFENDER: 'Abwehr', MIDFIELDER: 'Mittelfeld', FORWARD: 'Sturm',
+}
+
+async function fillMissingBirthDates(supabase: ReturnType<typeof getSupabaseClient>, leagueIds: string[]): Promise<number> {
+  const { data: missing } = await supabase
+    .from('berater_player_stats')
+    .select('tm_player_id')
+    .in('league_id', leagueIds)
+    .is('birth_date', null)
+  const ids = [...new Set((missing || []).map((r: any) => r.tm_player_id))]
+  let filled = 0
+  for (let i = 0; i < ids.length; i += 50) {
+    const query = ids.slice(i, i + 50).map((id) => `ids[]=${id}`).join('&')
+    try {
+      const r = await fetch(`https://tmapi.transfermarkt.technology/players?locale=de&${query}`, {
+        headers: { 'User-Agent': getRandomUserAgent(), Accept: 'application/json' },
+      })
+      const j = r.ok ? await r.json() : null
+      for (const p of j?.data || []) {
+        const dob = (p.lifeDates?.dateOfBirth || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+        const position = TM_POSITIONS[p.attributes?.position?.name] || TM_POSITION_GROUPS[p.attributes?.positionGroup] || null
+        if (!dob && !position) continue
+        const { error } = await supabase
+          .from('berater_player_stats')
+          .update({ birth_date: dob ? `${dob[3]}.${dob[2]}.${dob[1]}` : null, position })
+          .eq('tm_player_id', String(p.id))
+          .is('birth_date', null)
+        if (!error) filled++
+      }
+    } catch (error) {
+      console.error('tmapi players failed:', error)
+    }
+  }
+  return filled
 }
 
 async function fetchRankingsBatch(batchIndex: number = 0): Promise<{
@@ -518,6 +573,9 @@ async function fetchRankingsBatch(batchIndex: number = 0): Promise<{
     }
   }
 
+  const birthDatesFilled = await fillMissingBirthDates(supabase, leagues.map((l) => l.id))
+  console.log(`Batch ${batchIndex}: ${birthDatesFilled} Jahrgänge über tmapi nachgetragen`)
+
   return {
     success: errors.length < leagues.length,
     leaguesProcessed,
@@ -540,7 +598,7 @@ serve(async (req: Request) => {
     return new Response(null, { headers: corsHeaders })
   }
 
-  const denied = await denyUnlessAccess(req, corsHeaders, 'scouting');
+  const denied = await denyUnlessAccess(req, corsHeaders, 'staff'); // nur Berater (Matti 2026-11-13)
   if (denied) return denied;
 
   try {
@@ -554,6 +612,21 @@ serve(async (req: Request) => {
       const batchIndex = batchParam ? parseInt(batchParam, 10) : 0
 
       const result = await fetchRankingsBatch(batchIndex)
+
+      // fetch_all: nächsten Batch als eigenen Aufruf anstoßen (eine Funktion schafft nicht alle 27 Ligen in der Laufzeit)
+      if (action === 'fetch_all' && result.hasMore) {
+        const next = fetch(`${Deno.env.get('SUPABASE_URL')}/functions/v1/fetch-player-rankings?action=fetch_all&batch=${result.nextBatch}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-cron-secret': Deno.env.get('CRON_SECRET') ?? '',
+            Authorization: `Bearer ${Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')}`,
+          },
+          body: '{}',
+        }).catch((e) => console.error(`Batch ${result.nextBatch} nicht gestartet:`, e))
+        // @ts-ignore EdgeRuntime gibt es nur in Supabase Edge Functions
+        if (typeof EdgeRuntime !== 'undefined') EdgeRuntime.waitUntil(next)
+      }
 
       return new Response(JSON.stringify({
         success: result.success,

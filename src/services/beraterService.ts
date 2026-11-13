@@ -815,6 +815,75 @@ export interface PlayerStat {
 
 const RANKINGS_FUNCTION_URL = `${SUPABASE_URL}/functions/v1/fetch-player-rankings`;
 
+/** Eine Zeile der Topscorer-Liste (Tore oder Vorlagen eines Spielers in einer Liga) */
+export interface TopscorerRow {
+  tm_player_id: string;
+  player_id: string | null;
+  player_name: string;
+  league_id: string;
+  club_name: string | null;
+  club_tm_id: string | null;
+  stat_type: 'goals' | 'assists';
+  stat_value: number;
+  games_played: number | null;
+  tm_profile_url: string | null;
+  birth_date: string | null;
+  position: string | null;
+  agent_name: string | null;
+  updated_at: string;
+}
+
+/** Laufende Saison wie in fetch-player-rankings ("26/27", Wechsel im Juli) */
+export function currentRankingSeason(): string {
+  const now = new Date();
+  const start = now.getMonth() + 1 >= 7 ? now.getFullYear() : now.getFullYear() - 1;
+  return `${String(start).slice(-2)}/${String(start + 1).slice(-2)}`;
+}
+
+/**
+ * Topscorer-Liste (Matti 2026-11-13, nur Berater): alle Tore- und Vorlagen-Einträge der
+ * laufenden Saison. Jahrgang, Position, Berater und Verein bevorzugt aus berater_players.
+ */
+export async function loadTopscorers(season = currentRankingSeason()): Promise<TopscorerRow[]> {
+  const rows: any[] = [];
+  // PostgREST liefert höchstens 1000 Zeilen pro Abfrage
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase
+      .from('berater_player_stats')
+      .select(`tm_player_id, player_id, player_name, league_id, club_name, stat_type, stat_value, games_played,
+        tm_profile_url, birth_date, position, updated_at,
+        berater_players(birth_date, position, current_agent_name, berater_clubs(club_name, tm_club_id))`)
+      .eq('season', season)
+      .order('id')
+      .range(from, from + 999);
+    if (error) {
+      console.error('Error loading topscorers:', error);
+      break;
+    }
+    rows.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
+  return rows.map((r) => {
+    const bp = r.berater_players;
+    return {
+      tm_player_id: r.tm_player_id,
+      player_id: r.player_id,
+      player_name: r.player_name,
+      league_id: r.league_id,
+      club_name: bp?.berater_clubs?.club_name || r.club_name,
+      club_tm_id: bp?.berater_clubs?.tm_club_id ?? null,
+      stat_type: r.stat_type,
+      stat_value: r.stat_value,
+      games_played: r.games_played,
+      tm_profile_url: r.tm_profile_url,
+      birth_date: bp?.birth_date || r.birth_date,
+      position: bp?.position || r.position,
+      agent_name: bp?.current_agent_name ?? null,
+      updated_at: r.updated_at,
+    };
+  });
+}
+
 /**
  * Lädt vorgeschlagene Spieler (Top-Torschützen oder Vorlagengeber)
  * Filtert bereits auf Watchlist befindliche Spieler aus
