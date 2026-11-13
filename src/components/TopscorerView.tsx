@@ -14,26 +14,21 @@ import { loadTopscorers, addStatPlayerToWatchlist, TopscorerRow, PlayerStat } fr
 
 type Sort = 'goals' | 'assists' | 'both';
 
-// Kurznamen der Ligen (berater_leagues.name ist bei allen Nachwuchs-Gruppen gleich)
+// Ligen für die Anzeige: U19- und U17-Gruppen (Vorrunde und Hauptrunde) laufen als eine
+// "U19 Bundesliga" bzw. "U17 Bundesliga" (Matti 2026-11-13), Tore der Saison werden addiert.
+const leagueKey = (id: string): string =>
+  id.startsWith('U19') || id.startsWith('19L') ? 'U19' : id.startsWith('U17') || id.startsWith('17L') ? 'U17' : id;
 const LEAGUE_LABELS: Record<string, string> = {
-  L3: '3. Liga', RLN3: 'RL Nord', RLN4: 'RL Nordost', RLW3: 'RL West', RLSW: 'RL Südwest', RLB3: 'RL Bayern',
-  '19LA': 'U19 Liga A', '19LB': 'U19 Liga B', '17LA': 'U17 Liga A', '17LB': 'U17 Liga B',
+  L1: '1. Bundesliga', L2: '2. Bundesliga', L3: '3. Liga',
+  RLN3: 'RL Nord', RLN4: 'RL Nordost', RLW3: 'RL West', RLSW: 'RL Südwest', RLB3: 'RL Bayern',
+  U19: 'U19 Bundesliga', U17: 'U17 Bundesliga',
 };
-const leagueLabel = (id: string): string => {
-  if (LEAGUE_LABELS[id]) return LEAGUE_LABELS[id];
-  const u19 = id.match(/^U19D(\d)$/);
-  if (u19) return `U19 Gruppe ${'ABCDEFGHI'[Number(u19[1]) - 1]}`;
-  const u17 = id.match(/^U17D([A-H])$/);
-  if (u17) return `U17 Gruppe ${u17[1]}`;
-  return id;
+const leagueLabel = (key: string): string => LEAGUE_LABELS[key] || key;
+// Sammel-Eintrag im Liga-Dropdown
+const LEAGUE_GROUPS: Record<string, (key: string) => boolean> = {
+  'grp:rl': (key) => key.startsWith('RL'),
 };
-// Sammel-Einträge im Liga-Dropdown
-const LEAGUE_GROUPS: Record<string, (id: string) => boolean> = {
-  'grp:rl': (id) => id.startsWith('RL'),
-  'grp:u19': (id) => id.startsWith('U19') || id.startsWith('19L'),
-  'grp:u17': (id) => id.startsWith('U17') || id.startsWith('17L'),
-};
-const LEAGUE_ORDER = ['L3', 'RLN3', 'RLN4', 'RLW3', 'RLSW', 'RLB3'];
+const LEAGUE_ORDER = ['L1', 'L2', 'L3', 'RLN3', 'RLN4', 'RLW3', 'RLSW', 'RLB3', 'U19', 'U17'];
 
 const birthYear = (d: string | null): string | null => d?.match(/(\d{4})$/)?.[1] ?? null;
 // "Sturm - Mittelstürmer" -> "Mittelstürmer"
@@ -85,32 +80,29 @@ export function TopscorerView({
   }, []);
   useEffect(() => setVisible(PAGE), [leagueFilter, yearFilter, onlyFree, sort]);
 
-  const leagueIds = useMemo(() => {
-    const ids = Array.from(new Set((rows || []).map((r) => r.league_id)));
-    const rank = (id: string) => {
-      const i = LEAGUE_ORDER.indexOf(id);
-      if (i >= 0) return `0${i}`;
-      return (id.includes('19') ? '1' : '2') + (/L[AB]$/.test(id) ? 'b' : 'a') + leagueLabel(id);
-    };
-    return ids.sort((a, b) => rank(a).localeCompare(rank(b)));
+  const leagueKeys = useMemo(() => {
+    const keys = Array.from(new Set((rows || []).map((r) => leagueKey(r.league_id))));
+    const rank = (k: string) => (LEAGUE_ORDER.indexOf(k) + 1 || 99);
+    return keys.sort((a, b) => rank(a) - rank(b));
   }, [rows]);
 
-  const leagueOptions = useMemo(() => [
-    { value: 'grp:rl', label: 'Alle Regionalligen' },
-    { value: 'grp:u19', label: 'Alle U19' },
-    { value: 'grp:u17', label: 'Alle U17' },
-    ...leagueIds.map((id) => ({ value: id, label: leagueLabel(id) })),
-  ], [leagueIds]);
+  const leagueOptions = useMemo(() => {
+    const opts = leagueKeys.map((k) => ({ value: k, label: leagueLabel(k) }));
+    const firstRl = opts.findIndex((o) => o.value.startsWith('RL'));
+    if (firstRl >= 0) opts.splice(firstRl, 0, { value: 'grp:rl', label: 'Alle Regionalligen' });
+    return opts;
+  }, [leagueKeys]);
 
   // Spieler zusammenfassen (Tore und Vorlagen, mehrere Ligen z. B. Vorrunde + Hauptrunde)
   const entries = useMemo(() => {
     if (!rows) return [];
-    const inLeague = (id: string) =>
+    const inLeague = (key: string) =>
       leagueFilter.length === 0 ||
-      leagueFilter.some((f) => (LEAGUE_GROUPS[f] ? LEAGUE_GROUPS[f](id) : f === id));
+      leagueFilter.some((f) => (LEAGUE_GROUPS[f] ? LEAGUE_GROUPS[f](key) : f === key));
     const map = new Map<string, ScorerEntry & { gamesByLeague: Map<string, number> }>();
     for (const r of rows) {
-      if (!inLeague(r.league_id)) continue;
+      const key = leagueKey(r.league_id);
+      if (!inLeague(key)) continue;
       let e = map.get(r.tm_player_id);
       if (!e) {
         e = {
@@ -121,7 +113,7 @@ export function TopscorerView({
         };
         map.set(r.tm_player_id, e);
       }
-      if (!e.leagues.includes(r.league_id)) e.leagues.push(r.league_id);
+      if (!e.leagues.includes(key)) e.leagues.push(key);
       if (r.games_played != null) e.gamesByLeague.set(r.league_id, r.games_played);
       if (r.stat_type === 'goals') e.goals = (e.goals ?? 0) + r.stat_value;
       else e.assists = (e.assists ?? 0) + r.stat_value;

@@ -13,8 +13,10 @@ import { denyUnlessAccess } from '../_shared/access.ts';
 const TOP_N = 30  // Top 30 pro Liga holen
 const BATCH_SIZE = 5  // Ligen pro Batch (für Timeout-Vermeidung)
 
-// Erlaubte Liga-IDs für Vorschläge (ohne 1. und 2. Bundesliga)
+// Ligen der Topscorer-Liste (1. und 2. Bundesliga dazu, Matti 2026-11-13)
 const ALLOWED_LEAGUE_IDS = [
+  'L1',      // 1. Bundesliga
+  'L2',      // 2. Bundesliga
   'L3',      // 3. Liga
   'RLN3',    // Regionalliga Nord
   'RLN4',    // Regionalliga Nordost
@@ -509,7 +511,7 @@ async function fetchRankingsBatch(batchIndex: number = 0): Promise<{
   let totalGoals = 0
   let totalAssists = 0
 
-  // Nur erlaubte Ligen laden (ohne 1. und 2. Bundesliga)
+  // Nur erlaubte Ligen laden
   const { data: allLeagues, error: leaguesError } = await supabase
     .from('berater_leagues')
     .select('id, name, tm_competition_url, category')
