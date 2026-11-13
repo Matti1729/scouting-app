@@ -513,18 +513,144 @@ async function fillMissingBirthDates(supabase: ReturnType<typeof getSupabaseClie
   return filled
 }
 
+// Saison, in der wir gerade sind (Saison 26/27 -> 2026)
+function currentSeasonStartYear(): number {
+  const now = new Date()
+  return now.getMonth() + 1 >= 7 ? now.getFullYear() : now.getFullYear() - 1
+}
+
+// Spiele, Tore und Vorlagen eines Spielers in einem Wettbewerb über die Transfermarkt-Schnittstelle
+async function fetchLeagueTotals(tmPlayerId: string, tmCompetitionId: string, seasonId: number): Promise<{ games: number; goals: number; assists: number } | null> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const r = await fetch(`https://tmapi.transfermarkt.technology/player/${tmPlayerId}/performance-game`, {
+        headers: { 'User-Agent': getRandomUserAgent(), Accept: 'application/json' },
+      })
+      if (!r.ok) throw new Error(`Status ${r.status}`)
+      const j = await r.json()
+      if (!Array.isArray(j?.data?.performance)) throw new Error('keine Leistungsdaten')
+      const totals = { games: 0, goals: 0, assists: 0 }
+      for (const g of j.data.performance) {
+        if (g.gameInformation?.seasonId !== seasonId || g.gameInformation?.competitionId !== tmCompetitionId) continue
+        if (g.statistics?.generalStatistics?.participationState === 'played') totals.games++
+        totals.goals += g.statistics?.goalStatistics?.goalsScoredTotal || 0
+        totals.assists += g.statistics?.goalStatistics?.assists || 0
+      }
+      return totals
+    } catch (error) {
+      if (attempt === 2) console.error(`tmapi performance-game ${tmPlayerId} fehlgeschlagen:`, error)
+      else await sleep(1000)
+    }
+  }
+  return null
+}
+
+// Die Ranglisten zeigen nur die Top 25 je Statistik. Wer nur in einer der beiden Listen steht,
+// hatte bisher bei der anderen einen Strich, obwohl er dort Werte hat (Guirassy: 3 Tore,
+// 2 Vorlagen, Vorlagen fehlten, Matti 2026-11-13). Darum für jeden Spieler der Liga Spiele,
+// Tore und Vorlagen über tmapi holen, die fehlende Zeile ergänzen und die gelesenen Werte prüfen.
+async function completeFromTmapi(
+  supabase: ReturnType<typeof getSupabaseClient>,
+  league: League
+): Promise<{ added: number; corrected: number; failed: number; warnings: string[] }> {
+  const warnings: string[] = []
+  const tmCompetitionId = (league.tm_competition_url || '').split('/wettbewerb/')[1]?.split(/[/?#]/)[0]
+  const seasonId = currentSeasonStartYear()
+  const season = `${String(seasonId).slice(-2)}/${String(seasonId + 1).slice(-2)}`
+  if (!tmCompetitionId) return { added: 0, corrected: 0, failed: 0, warnings: [`${league.id}: keine Wettbewerbs-Kennung`] }
+
+  // Ergänzte Zeilen vom letzten Lauf (ohne Platz) weg, sie werden unten neu gebaut
+  await supabase.from('berater_player_stats').delete()
+    .eq('league_id', league.id).eq('season', season).is('rank_in_league', null)
+
+  const { data: rows, error } = await supabase
+    .from('berater_player_stats')
+    .select('*')
+    .eq('league_id', league.id)
+    .eq('season', season)
+  if (error || !rows) return { added: 0, corrected: 0, failed: 0, warnings: [`${league.id}: Zeilen nicht lesbar`] }
+
+  const byPlayer = new Map<string, any[]>()
+  for (const r of rows) byPlayer.set(r.tm_player_id, [...(byPlayer.get(r.tm_player_id) || []), r])
+  const ids = [...byPlayer.keys()]
+  const totals = new Map<string, { games: number; goals: number; assists: number } | null>()
+  let next = 0
+  await Promise.all(Array.from({ length: 6 }, async () => {
+    while (next < ids.length) {
+      const id = ids[next++]
+      totals.set(id, await fetchLeagueTotals(id, tmCompetitionId, seasonId))
+    }
+  }))
+
+  let added = 0, corrected = 0, failed = 0
+  for (const [id, playerRows] of byPlayer) {
+    const t = totals.get(id)
+    if (!t) { failed++; continue }
+    const first = playerRows[0]
+    if (t.games === 0) warnings.push(`${league.id} ${first.player_name}: laut tmapi kein Spiel`)
+    for (const statType of ['goals', 'assists'] as const) {
+      const value = t[statType]
+      const row = playerRows.find((r) => r.stat_type === statType)
+      if (row) {
+        if (row.stat_value !== value || row.games_played !== t.games) {
+          warnings.push(`${league.id} ${row.player_name} ${statType}: Liste ${row.stat_value} (${row.games_played} Sp.), tmapi ${value} (${t.games} Sp.)`)
+          const { error: e } = await supabase.from('berater_player_stats')
+            .update({ stat_value: value, games_played: t.games }).eq('id', row.id)
+          if (!e) corrected++
+        }
+        continue
+      }
+      const { error: e } = await supabase.from('berater_player_stats').upsert({
+        player_id: first.player_id,
+        tm_player_id: id,
+        player_name: first.player_name,
+        league_id: league.id,
+        club_name: first.club_name,
+        stat_type: statType,
+        stat_value: value,
+        games_played: t.games,
+        rank_in_league: null, // nicht in den Top 25 dieser Statistik
+        season,
+        tm_profile_url: first.tm_profile_url,
+        birth_date: first.birth_date,
+        position: first.position,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'tm_player_id,league_id,stat_type,season' })
+      if (e) warnings.push(`${league.id} ${first.player_name} ${statType}: nicht gespeichert (${e.message})`)
+      else added++
+    }
+  }
+
+  // Plausibilität der gelesenen Listen: Platz fortlaufend, keine Zeile ohne Spiele oder mit Wert 0
+  for (const statType of ['goals', 'assists']) {
+    const ranked = rows.filter((r) => r.stat_type === statType).sort((a, b) => a.rank_in_league - b.rank_in_league)
+    if (ranked.length === 0) warnings.push(`${league.id} ${statType}: Liste leer`)
+    ranked.forEach((r, i) => {
+      if (r.rank_in_league !== i + 1) warnings.push(`${league.id} ${statType}: Platz ${r.rank_in_league} an Stelle ${i + 1}`)
+      if (!r.games_played) warnings.push(`${league.id} ${statType} ${r.player_name}: keine Spiele gelesen`)
+      if (!r.stat_value) warnings.push(`${league.id} ${statType} ${r.player_name}: Wert 0`)
+    })
+  }
+  if (failed) warnings.push(`${league.id}: ${failed} Spieler ohne tmapi-Antwort`)
+  for (const w of warnings) console.warn(`PRÜFUNG ${w}`)
+  console.log(`${league.id}: ${added} Zeilen ergänzt, ${corrected} korrigiert, ${failed} ohne tmapi`)
+  return { added, corrected, failed, warnings }
+}
+
 async function fetchRankingsBatch(batchIndex: number = 0): Promise<{
   success: boolean
   leaguesProcessed: number
   totalGoals: number
   totalAssists: number
   errors: string[]
+  warnings: string[]
   hasMore: boolean
   nextBatch: number
   totalLeagues: number
 }> {
   const supabase = getSupabaseClient()
   const errors: string[] = []
+  const warnings: string[] = []
   let leaguesProcessed = 0
   let totalGoals = 0
   let totalAssists = 0
@@ -544,6 +670,7 @@ async function fetchRankingsBatch(batchIndex: number = 0): Promise<{
       totalGoals: 0,
       totalAssists: 0,
       errors: [`Failed to load leagues: ${leaguesError?.message}`],
+      warnings: [],
       hasMore: false,
       nextBatch: 0,
       totalLeagues: 0
@@ -579,6 +706,11 @@ async function fetchRankingsBatch(batchIndex: number = 0): Promise<{
         errors.push(`Assists failed for ${league.id}`)
       }
 
+      // Fehlende Tore/Vorlagen ergänzen und Werte prüfen
+      if (goalsResult.success || assistsResult.success) {
+        warnings.push(...(await completeFromTmapi(supabase, league)).warnings)
+      }
+
       leaguesProcessed++
       console.log(`Completed ${startIndex + leaguesProcessed}/${allLeagues.length}: ${league.name}`)
 
@@ -602,6 +734,7 @@ async function fetchRankingsBatch(batchIndex: number = 0): Promise<{
     totalGoals,
     totalAssists,
     errors,
+    warnings,
     hasMore,
     nextBatch: hasMore ? batchIndex + 1 : -1,
     totalLeagues: allLeagues.length
@@ -663,6 +796,7 @@ serve(async (req: Request) => {
           next: result.nextBatch,
         },
         errors: result.errors.length > 0 ? result.errors : undefined,
+        warnings: result.warnings.length > 0 ? result.warnings : undefined,
       }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       })

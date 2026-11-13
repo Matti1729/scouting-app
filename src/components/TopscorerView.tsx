@@ -9,7 +9,8 @@ import { loadTopscorers, addStatPlayerToWatchlist, TopscorerRow, PlayerStat } fr
 /**
  * Topscorer-Liste (Matti 2026-11-13): Tore und Vorlagen pro Liga und Jahrgang, nur für Berater.
  * Daten: berater_player_stats (Top 25 je Liga und Statistik, jeden Montag über fetch-player-rankings).
- * Ein Strich heißt: nicht unter den Top 25 dieser Statistik, die genaue Zahl kennen wir dann nicht.
+ * In der Liste steht, wer in seiner Liga bei Toren oder Vorlagen unter den Top 25 ist. Die jeweils andere
+ * Zahl und die Spiele kommen über tmapi dazu. Ein Strich heißt nur noch: Wert konnte nicht geladen werden.
  */
 
 type Sort = 'goals' | 'assists' | 'both';
@@ -283,7 +284,7 @@ export function TopscorerView({
             </View>
           ))}
         </ScrollView>
-        <Text style={s.foot}>Strich = nicht unter den 30 Besten dieser Liste. Klick auf den Namen öffnet das Spielerprofil.</Text>
+        <Text style={s.foot}>In der Liste steht, wer in seiner Liga bei Toren oder Vorlagen unter den 25 Besten ist. Klick auf den Namen öffnet das Spielerprofil.</Text>
       </View>
     </View>
   );
