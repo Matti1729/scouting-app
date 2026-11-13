@@ -1,6 +1,6 @@
 // Supabase Edge Function: Fetch Player Rankings
 // Scrapt Torschützen- und Vorlagengeber-Listen von Transfermarkt
-// Speichert Top 30 pro Liga in berater_player_stats
+// Speichert Top 25 pro Liga in berater_player_stats
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
@@ -10,7 +10,7 @@ import { denyUnlessAccess } from '../_shared/access.ts';
 // KONFIGURATION
 // ============================================================================
 
-const TOP_N = 30  // Top 30 pro Liga holen
+const TOP_N = 25  // TM zeigt 25 pro Seite (Top 25 pro Liga)
 const BATCH_SIZE = 5  // Ligen pro Batch (für Timeout-Vermeidung)
 
 // Ligen der Topscorer-Liste (1. und 2. Bundesliga dazu, Matti 2026-11-13)
@@ -165,8 +165,26 @@ function extractClubName(html: string, playerName?: string): string {
 }
 
 // Parse Torschützen- oder Assistenliste
-function parseRankingTable(html: string): RankedPlayer[] {
+// Nur die Haupttabelle (erste table.items) lesen. Die Seite hat daneben einen Kasten mit
+// 5 weiteren Spielern, deren Zeilen sonst als Platz 26 bis 30 mit Wert 1 bis 5 gespeichert
+// wurden (Iličević "1 Tor" in der 1. Bundesliga, Matti 2026-11-13).
+function mainItemsTable(html: string): string {
+  const start = html.search(/<table[^>]*class="[^"]*\bitems\b[^"]*"/i)
+  if (start < 0) return html
+  const tagPattern = /<table\b|<\/table>/gi
+  tagPattern.lastIndex = start
+  let depth = 0
+  let m
+  while ((m = tagPattern.exec(html)) !== null) {
+    depth += m[0].toLowerCase() === '</table>' ? -1 : 1
+    if (depth === 0) return html.substring(start, m.index)
+  }
+  return html.substring(start)
+}
+
+function parseRankingTable(fullHtml: string): RankedPlayer[] {
   const players: RankedPlayer[] = []
+  const html = mainItemsTable(fullHtml)
 
   // STRATEGIE: Splitte HTML bei jedem <tr class="odd|even">
   // um komplette Zeilen zu bekommen (inklusive nested tables)

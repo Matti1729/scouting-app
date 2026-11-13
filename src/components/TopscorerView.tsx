@@ -8,8 +8,8 @@ import { loadTopscorers, addStatPlayerToWatchlist, TopscorerRow, PlayerStat } fr
 
 /**
  * Topscorer-Liste (Matti 2026-11-13): Tore und Vorlagen pro Liga und Jahrgang, nur für Berater.
- * Daten: berater_player_stats (Top 30 je Liga und Statistik, jeden Montag über fetch-player-rankings).
- * Ein Strich heißt: nicht unter den Top 30 dieser Statistik, die genaue Zahl kennen wir dann nicht.
+ * Daten: berater_player_stats (Top 25 je Liga und Statistik, jeden Montag über fetch-player-rankings).
+ * Ein Strich heißt: nicht unter den Top 25 dieser Statistik, die genaue Zahl kennen wir dann nicht.
  */
 
 type Sort = 'goals' | 'assists' | 'both';
