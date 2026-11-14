@@ -11,6 +11,7 @@ import {
   Platform,
 } from 'react-native';
 import { HARD_SHADOW, RETRO } from '../theme/retro';
+import { placeDropdown } from '../utils/dropdownPlacement';
 
 // Farben wie das Liga-Dropdown der Suchmaschine (Retro-Blau statt des alten Grüns, Matti 2026-11-14)
 
@@ -44,7 +45,7 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
+  const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, minWidth: 220, maxWidth: 400 });
   const buttonRef = useRef<View>(null);
 
   const selectedValues = useMemo(
@@ -119,11 +120,7 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
 
   const handleOpen = useCallback(() => {
     buttonRef.current?.measureInWindow((x, y, width, height) => {
-      setDropdownPosition({
-        top: y + height + 4,
-        left: x,
-        width: width,
-      });
+      setDropdownPosition(placeDropdown(x, y, width, height, 220));
       setIsOpen(true);
     });
   }, []);
@@ -211,7 +208,8 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
                   {
                     top: dropdownPosition.top,
                     left: dropdownPosition.left,
-                    minWidth: Math.max(dropdownPosition.width, 220),
+                    minWidth: dropdownPosition.minWidth,
+                    maxWidth: dropdownPosition.maxWidth,
                   },
                 ]}
               >

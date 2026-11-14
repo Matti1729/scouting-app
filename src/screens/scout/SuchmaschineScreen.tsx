@@ -42,6 +42,7 @@ import { TeamLogo } from '../../components/ClubLogo';
 import { loadClubLogoMap } from '../../services/areaGamesService';
 import { loadLeagues, loadWatchlist, addToWatchlist, loadAllEvaluations, loadAlertSubscriptionIds } from '../../services/beraterService';
 import { MONO, RETRO_CHIP, RETRO_CHIP_TEXT } from '../../theme/retro';
+import { placeDropdown } from '../../utils/dropdownPlacement';
 import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
@@ -240,12 +241,12 @@ function LeagueDropdown({
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const [pos, setPos] = useState({ top: 0, left: 0, minWidth: 0, maxWidth: 400 });
   const btnRef = useRef<View>(null);
 
   const openModal = () => {
     btnRef.current?.measureInWindow((x, y, w, h) => {
-      setPos({ top: y + h + 4, left: x, width: w });
+      setPos(placeDropdown(x, y, w, h, 260));
       setOpen(true);
     });
   };
@@ -349,7 +350,8 @@ function LeagueDropdown({
                     borderColor: RETRO.shadowDark,
                     top: pos.top,
                     left: pos.left,
-                    minWidth: Math.max(pos.width, 260),
+                    minWidth: pos.minWidth,
+                    maxWidth: pos.maxWidth,
                   },
                 ]}
               >
@@ -525,12 +527,12 @@ function ClubDropdown({
   const [open, setOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [search, setSearch] = useState('');
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const [pos, setPos] = useState({ top: 0, left: 0, minWidth: 0, maxWidth: 400 });
   const btnRef = useRef<View>(null);
 
   const openModal = () => {
     btnRef.current?.measureInWindow((x, y, w, h) => {
-      setPos({ top: y + h + 4, left: x, width: w });
+      setPos(placeDropdown(x, y, w, h, 280));
       setSearch('');
       setOpen(true);
     });
@@ -635,7 +637,8 @@ function ClubDropdown({
                     borderColor: RETRO.shadowDark,
                     top: pos.top,
                     left: pos.left,
-                    minWidth: Math.max(pos.width, 280),
+                    minWidth: pos.minWidth,
+                    maxWidth: pos.maxWidth,
                   },
                 ]}
               >
@@ -739,12 +742,12 @@ function NationDropdown({
   onChange: (next: Set<string>) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const [pos, setPos] = useState({ top: 0, left: 0, minWidth: 0, maxWidth: 400 });
   const btnRef = useRef<View>(null);
 
   const openModal = () => {
     btnRef.current?.measureInWindow((x, y, w, h) => {
-      setPos({ top: y + h + 4, left: x, width: w });
+      setPos(placeDropdown(x, y, w, h, 200));
       setOpen(true);
     });
   };
@@ -791,7 +794,8 @@ function NationDropdown({
                     borderColor: RETRO.shadowDark,
                     top: pos.top,
                     left: pos.left,
-                    minWidth: Math.max(pos.width, 200),
+                    minWidth: pos.minWidth,
+                    maxWidth: pos.maxWidth,
                   },
                 ]}
               >
@@ -861,7 +865,7 @@ function MvField({
   onChange: (next: number | null) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 });
+  const [pos, setPos] = useState({ top: 0, left: 0, minWidth: 0, maxWidth: 400 });
   const [text, setText] = useState('');
   const [factor, setFactor] = useState(1_000_000);
   const btnRef = useRef<View>(null);
@@ -891,7 +895,7 @@ function MvField({
 
   const openModal = () => {
     btnRef.current?.measureInWindow((x, y, w, h) => {
-      setPos({ top: y + h + 4, left: x, width: w });
+      setPos(placeDropdown(x, y, w, h, 90));
       setOpen(true);
     });
   };
@@ -939,7 +943,8 @@ function MvField({
                     borderColor: RETRO.shadowDark,
                     top: pos.top,
                     left: pos.left,
-                    minWidth: Math.max(pos.width, 90),
+                    minWidth: pos.minWidth,
+                    maxWidth: pos.maxWidth,
                   },
                 ]}
               >
