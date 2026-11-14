@@ -232,6 +232,21 @@ export function PlayerDetailModal({
   // Pfeil an der Saison-Zeile: Spiele/Tore/Vorlagen je Wettbewerb (Matti 2026-11-14)
   const [seasonOpen, setSeasonOpen] = useState<'current' | 'last' | null>(null);
 
+  // Aufgeklappte Fenster (Beraterverlauf, Saison) schließen bei Klick irgendwo anders (Matti 2026-11-14).
+  // Auf Web sind die View-Refs DOM-Knoten; Klicks im offenen Bereich (Zeile + Fenster) zählen nicht.
+  const beraterAreaRef = useRef<any>(null);
+  const seasonAreaRef = useRef<any>(null);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || (!verlaufOpen && !seasonOpen)) return;
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (verlaufOpen && !beraterAreaRef.current?.contains?.(t)) setVerlaufOpen(false);
+      if (seasonOpen && !seasonAreaRef.current?.contains?.(t)) setSeasonOpen(null);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [verlaufOpen, seasonOpen]);
+
   // TM-Links der früheren Agenturen (Agenturname -> agent_url)
   const [verlaufUrls, setVerlaufUrls] = useState<Map<string, string>>(new Map());
 
@@ -527,7 +542,7 @@ export function PlayerDetailModal({
     }
     if (comps.length === 0) return cardRow(label, seasonStatsText(stats, games), !isCurrent);
     return (
-      <View style={{ zIndex: isCurrent ? 41 : 40 }}>
+      <View ref={open ? seasonAreaRef : undefined} style={{ zIndex: isCurrent ? 41 : 40 }}>
         {cardRow(
           label,
           <TouchableOpacity style={styles.agentValue} onPress={() => setSeasonOpen(open ? null : which)} activeOpacity={0.7} hitSlop={4}>
@@ -694,7 +709,7 @@ export function PlayerDetailModal({
                   {cardRow('Vertrag bis', contract || '—')}
                   {cardRow('Marktwert', p.market_value || '—')}
                   {/* Berater-Zeile: Klick klappt den Beraterverlauf auf */}
-                  <View style={{ zIndex: 40 }}>
+                  <View ref={beraterAreaRef} style={{ zIndex: 40 }}>
                     {cardRow(
                       'Berater',
                       <TouchableOpacity style={styles.agentValue} onPress={toggleVerlauf} activeOpacity={0.7} hitSlop={4}>

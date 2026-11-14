@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, TouchableOpacity, Image, Linking, StyleSheet, Platform, ActivityIndicator, TextInput, Modal, ScrollView, useWindowDimensions } from 'react-native';
 import { useTheme } from '../../contexts/ThemeContext';
 import { MONO, HARD_SHADOW, HARD_SHADOW_LG, RETRO_CHIP, RETRO_CHIP_TEXT, RETRO } from '../../theme/retro';
@@ -199,6 +199,17 @@ export function EvalHeader({
   const [verlauf, setVerlauf] = useState<BeraterChange[] | null>(null);
   const [verlaufUrls, setVerlaufUrls] = useState<Map<string, string>>(new Map());
 
+  // Beraterverlauf schließt bei Klick irgendwo anders (Matti 2026-11-14, wie im Spielerprofil)
+  const beraterAreaRef = useRef<any>(null);
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !verlaufOpen) return;
+    const onDown = (e: PointerEvent) => {
+      if (!beraterAreaRef.current?.contains?.(e.target as Node)) setVerlaufOpen(false);
+    };
+    document.addEventListener('pointerdown', onDown, true);
+    return () => document.removeEventListener('pointerdown', onDown, true);
+  }, [verlaufOpen]);
+
   const toggleVerlauf = () => {
     if (!beraterPlayerId) return;
     const next = !verlaufOpen;
@@ -396,7 +407,7 @@ export function EvalHeader({
         {row('Vertrag bis', formatIsoDate(contractUntil) || '—')}
         {row('Marktwert', marketValue || '—')}
         {/* Berater-Zeile: Klick klappt den Beraterverlauf auf */}
-        <View style={{ zIndex: 40 }}>
+        <View ref={beraterAreaRef} style={{ zIndex: 40 }}>
           {row(
             'Berater',
             <TouchableOpacity style={styles.clubValue} onPress={toggleVerlauf} activeOpacity={0.7} hitSlop={4}>
