@@ -17,13 +17,13 @@ import { loadTopscorers, addStatPlayerToWatchlist, TopscorerRow, PlayerStat } fr
 type Sort = 'goals' | 'assists' | 'both';
 
 // Ligen für die Anzeige: U19- und U17-Gruppen (Vorrunde und Hauptrunde) laufen als eine
-// "U19 Bundesliga" bzw. "U17 Bundesliga" (Matti 2026-11-13), Tore der Saison werden addiert.
+// "U19 Nachwuchsliga" bzw. "U17 Nachwuchsliga" (Matti 2026-11-13, Name seit 2026-11-14), Tore der Saison werden addiert.
 const leagueKey = (id: string): string =>
   id.startsWith('U19') || id.startsWith('19L') ? 'U19' : id.startsWith('U17') || id.startsWith('17L') ? 'U17' : id;
 const LEAGUE_LABELS: Record<string, string> = {
   L1: '1. Bundesliga', L2: '2. Bundesliga', L3: '3. Liga',
   RLN3: 'RL Nord', RLN4: 'RL Nordost', RLW3: 'RL West', RLSW: 'RL Südwest', RLB3: 'RL Bayern',
-  U19: 'U19 Bundesliga', U17: 'U17 Bundesliga',
+  U19: 'U19 Nachwuchsliga', U17: 'U17 Nachwuchsliga',
 };
 const leagueLabel = (key: string): string => LEAGUE_LABELS[key] || key;
 // Sammel-Eintrag im Liga-Dropdown
@@ -73,7 +73,6 @@ export function TopscorerView({
   const [rows, setRows] = useState<TopscorerRow[] | null>(null);
   const [leagueFilter, setLeagueFilter] = useState<string[]>([]);
   const [yearFilter, setYearFilter] = useState<string[]>([]);
-  const [onlyFree, setOnlyFree] = useState(false);
   const [sort, setSort] = useState<Sort>('goals');
   const [visible, setVisible] = useState(PAGE);
   const [addedTm, setAddedTm] = useState<Set<string>>(new Set());
@@ -82,7 +81,7 @@ export function TopscorerView({
   useEffect(() => {
     loadTopscorers().then(setRows).catch(() => setRows([]));
   }, []);
-  useEffect(() => setVisible(PAGE), [leagueFilter, yearFilter, onlyFree, sort]);
+  useEffect(() => setVisible(PAGE), [leagueFilter, yearFilter, sort]);
 
   const leagueKeys = useMemo(() => {
     const keys = Array.from(new Set((rows || []).map((r) => leagueKey(r.league_id))));
@@ -145,10 +144,9 @@ export function TopscorerView({
     return Array.from(map.values())
       .map((e) => ({ ...e, games: e.gamesByLeague.size ? Array.from(e.gamesByLeague.values()).reduce((a, b) => a + b, 0) : null }))
       .filter((e) => yearFilter.length === 0 || (e.year != null && yearFilter.includes(e.year)))
-      .filter((e) => !onlyFree || !e.agent_name || /kein beratereintrag|familie/i.test(e.agent_name))
       .filter((e) => (sort === 'goals' ? e.inGoals : sort === 'assists' ? e.inAssists : e.inGoals || e.inAssists))
       .sort((a, b) => value(b) - value(a) || (b.goals ?? 0) + (b.assists ?? 0) - ((a.goals ?? 0) + (a.assists ?? 0)) || a.player_name.localeCompare(b.player_name));
-  }, [rows, leagueFilter, yearFilter, onlyFree, sort]);
+  }, [rows, leagueFilter, yearFilter, sort]);
 
   const yearOptions = useMemo(() => {
     const years = Array.from(new Set((rows || []).map((r) => birthYear(r.birth_date)).filter(Boolean) as string[]));
@@ -185,7 +183,7 @@ export function TopscorerView({
   const filters = (
     <View style={[s.filters, isMobile && s.filtersMobile]}>
       <View style={isMobile ? s.filterHalf : s.filterBox}>
-        <Dropdown options={leagueOptions} value={leagueFilter} onChange={(v) => setLeagueFilter(v as string[])} placeholder="Alle Ligen" multiSelect compact />
+        <Dropdown options={leagueOptions} value={leagueFilter} onChange={(v) => setLeagueFilter(v as string[])} placeholder="Alle Wettbewerbe" multiSelect compact />
       </View>
       <View style={isMobile ? s.filterHalf : s.filterBox}>
         <Dropdown options={yearOptions} value={yearFilter} onChange={(v) => setYearFilter(v as string[])} placeholder="Alle Jahrgänge" multiSelect compact />
@@ -197,9 +195,6 @@ export function TopscorerView({
           </TouchableOpacity>
         ))}
       </View>
-      <TouchableOpacity onPress={() => setOnlyFree((v) => !v)} style={[s.check, HARD_SHADOW, isMobile && { flex: 1 }]} activeOpacity={0.7}>
-        <Text style={s.checkText}>{onlyFree ? '☑' : '☐'} nur ohne Berater</Text>
-      </TouchableOpacity>
       {lastUpdate && <Text style={[s.stand, isMobile && { alignSelf: 'center' }]}>{`STAND ${lastUpdate.toUpperCase()}`}</Text>}
     </View>
   );
@@ -318,8 +313,6 @@ const s = StyleSheet.create({
   segBtnOn: { backgroundColor: RETRO.headerBg },
   segText: { fontFamily: MONO, fontSize: 12, fontWeight: '700', letterSpacing: 1, color: RETRO.text },
   segTextOn: { color: RETRO.white },
-  check: { backgroundColor: RETRO.white, paddingVertical: 7, paddingHorizontal: 10 },
-  checkText: { fontSize: 13, color: RETRO.text },
   stand: { marginLeft: 'auto', fontFamily: MONO, fontSize: 11, color: RETRO.textMuted, letterSpacing: 1 },
   panel: { flex: 1, backgroundColor: RETRO.white, marginHorizontal: 16, marginTop: 10, marginBottom: 16, paddingTop: 14 },
   thead: { flexDirection: 'row', alignItems: 'center', backgroundColor: RETRO.headerBg, height: 32, paddingHorizontal: 12, gap: 8 },
