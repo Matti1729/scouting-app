@@ -10,8 +10,8 @@ import { denyUnlessAccess } from '../_shared/access.ts';
 // KONFIGURATION
 // ============================================================================
 
-const TOP_N = 25  // TM zeigt 25 pro Seite (Top 25 pro Liga)
-const BATCH_SIZE = 5  // Ligen pro Batch (für Timeout-Vermeidung)
+const TOP_N = 25  // TM zeigt 25 pro Seite (Top 25 pro Liga, bei Gleichstand auf Platz 25 mehr)
+const BATCH_SIZE = 3  // Ligen pro Batch (für Timeout-Vermeidung; 3 seit Seite 2 bei Gleichstand)
 
 // Ligen der Topscorer-Liste (1. und 2. Bundesliga dazu, Matti 2026-11-13)
 const ALLOWED_LEAGUE_IDS = [
@@ -387,6 +387,30 @@ async function fetchRankingsForLeague(
   const html = await response.text()
   const players = parseRankingTable(html)
 
+  // Gleichstand auf Platz 25: TM schneidet nach 25 Zeilen ab, wer gleich viel hat, steht auf Seite 2 ff.
+  // Die gehören mit in die Liste (Matti 2026-11-14). Link zur nächsten Seite aus dem Seiten-HTML, höchstens Seite 4.
+  let pageHtml = html
+  for (let page = 2; page <= 4 && players.length === (page - 1) * TOP_N; page++) {
+    const cutValue = players[players.length - 1].statValue
+    const link = pageHtml.match(new RegExp(`href="([^"]*/page/${page})"`))
+    if (!link) {
+      console.warn(`PRÜFUNG ${league.id} ${statType}: kein Link zu Seite ${page}, Gleichstand auf Platz ${players.length} nicht geprüft`)
+      break
+    }
+    await sleep(getRequestDelay())
+    const pageResponse = await fetchWithRetry(new URL(decodeHtmlEntities(link[1]), 'https://www.transfermarkt.de').toString())
+    if (!pageResponse || !pageResponse.ok) {
+      console.warn(`PRÜFUNG ${league.id} ${statType}: Seite ${page} nicht geladen (${pageResponse?.status})`)
+      break
+    }
+    pageHtml = await pageResponse.text()
+    const pagePlayers = parseRankingTable(pageHtml)
+    const tied = pagePlayers.filter((p) => p.statValue === cutValue && !players.some((q) => q.tmPlayerId === p.tmPlayerId))
+    for (const p of tied) players.push({ ...p, rank: players.length + 1 })
+    console.log(`[${statType}] ${league.id}: Seite ${page}, ${tied.length} gleichauf mit ${cutValue}`)
+    if (tied.length < pagePlayers.length) break
+  }
+
   console.log(`[${statType}] ${league.id}: Parsed ${players.length} players`)
 
   if (players.length === 0) {
@@ -609,7 +633,7 @@ async function completeFromTmapi(
         stat_type: statType,
         stat_value: value,
         games_played: t.games,
-        rank_in_league: null, // nicht in den Top 25 dieser Statistik
+        rank_in_league: null, // nicht in dieser Liste (Top 25 plus Gleichstand)
         season,
         tm_profile_url: first.tm_profile_url,
         birth_date: first.birth_date,

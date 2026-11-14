@@ -826,6 +826,7 @@ export interface TopscorerRow {
   stat_type: 'goals' | 'assists';
   stat_value: number;
   games_played: number | null;
+  rank_in_league: number | null; // null = Wert nur ergänzt, Spieler steht nicht in dieser Liste
   tm_profile_url: string | null;
   birth_date: string | null;
   position: string | null;
@@ -851,7 +852,7 @@ export async function loadTopscorers(season = currentRankingSeason()): Promise<T
     const { data, error } = await supabase
       .from('berater_player_stats')
       .select(`tm_player_id, player_id, player_name, league_id, club_name, stat_type, stat_value, games_played,
-        tm_profile_url, birth_date, position, updated_at,
+        rank_in_league, tm_profile_url, birth_date, position, updated_at,
         berater_players(birth_date, position, current_agent_name, berater_clubs(club_name, tm_club_id))`)
       .eq('season', season)
       .order('id')
@@ -875,6 +876,7 @@ export async function loadTopscorers(season = currentRankingSeason()): Promise<T
       stat_type: r.stat_type,
       stat_value: r.stat_value,
       games_played: r.games_played,
+      rank_in_league: r.rank_in_league,
       tm_profile_url: r.tm_profile_url,
       birth_date: bp?.birth_date || r.birth_date,
       position: bp?.position || r.position,

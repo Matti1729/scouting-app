@@ -9,8 +9,9 @@ import { loadTopscorers, addStatPlayerToWatchlist, TopscorerRow, PlayerStat } fr
 /**
  * Topscorer-Liste (Matti 2026-11-13): Tore und Vorlagen pro Liga und Jahrgang, nur für Berater.
  * Daten: berater_player_stats (Top 25 je Liga und Statistik, jeden Montag über fetch-player-rankings).
- * In der Liste steht, wer in seiner Liga bei Toren oder Vorlagen unter den Top 25 ist. Die jeweils andere
- * Zahl und die Spiele kommen über tmapi dazu. Ein Strich heißt nur noch: Wert konnte nicht geladen werden.
+ * Sortierung Tore zeigt nur die Torliste jeder Liga (Top 25, bei Gleichstand auf Platz 25 mehr), Vorlagen nur
+ * die Vorlagenliste, Tore + Vorlagen beide (Matti 2026-11-14: Vorlagengeber haben bei den Torjägern nichts
+ * verloren). Die jeweils andere Zahl und die Spiele kommen über tmapi dazu.
  */
 
 type Sort = 'goals' | 'assists' | 'both';
@@ -50,6 +51,8 @@ interface ScorerEntry {
   agent_name: string | null;
   tm_profile_url: string | null;
   birth_date: string | null;
+  inGoals: boolean;   // steht in der Torliste einer gewählten Liga
+  inAssists: boolean; // steht in der Vorlagenliste einer gewählten Liga
 }
 
 const PAGE = 60;
@@ -100,6 +103,15 @@ export function TopscorerView({
     const inLeague = (key: string) =>
       leagueFilter.length === 0 ||
       leagueFilter.some((f) => (LEAGUE_GROUPS[f] ? LEAGUE_GROUPS[f](key) : f === key));
+    // Schwelle je Liste = Wert auf dem letzten Listenplatz. Wer gleich viel hat, gehört mit in die Liste,
+    // auch wenn er nur über die andere Liste bei uns ist (TM schneidet nach Platz 25 ab).
+    const cut = new Map<string, number>();
+    for (const r of rows) {
+      if (r.rank_in_league == null) continue;
+      const k = `${r.league_id}|${r.stat_type}`;
+      cut.set(k, Math.min(cut.get(k) ?? Infinity, r.stat_value));
+    }
+    const inList = (r: TopscorerRow) => r.stat_value > 0 && r.stat_value >= (cut.get(`${r.league_id}|${r.stat_type}`) ?? Infinity);
     const map = new Map<string, ScorerEntry & { gamesByLeague: Map<string, number> }>();
     for (const r of rows) {
       const key = leagueKey(r.league_id);
@@ -111,6 +123,7 @@ export function TopscorerView({
           club_name: r.club_name, club_tm_id: r.club_tm_id, leagues: [], games: null, goals: null, assists: null,
           year: birthYear(r.birth_date), position: shortPosition(r.position), agent_name: r.agent_name,
           tm_profile_url: r.tm_profile_url, birth_date: r.birth_date, gamesByLeague: new Map(),
+          inGoals: false, inAssists: false,
         };
         map.set(r.tm_player_id, e);
       }
@@ -118,6 +131,10 @@ export function TopscorerView({
       if (r.games_played != null) e.gamesByLeague.set(r.league_id, r.games_played);
       if (r.stat_type === 'goals') e.goals = (e.goals ?? 0) + r.stat_value;
       else e.assists = (e.assists ?? 0) + r.stat_value;
+      if (inList(r)) {
+        if (r.stat_type === 'goals') e.inGoals = true;
+        else e.inAssists = true;
+      }
       e.player_id = e.player_id || r.player_id;
       e.year = e.year || birthYear(r.birth_date);
       e.position = e.position || shortPosition(r.position);
@@ -129,7 +146,7 @@ export function TopscorerView({
       .map((e) => ({ ...e, games: e.gamesByLeague.size ? Array.from(e.gamesByLeague.values()).reduce((a, b) => a + b, 0) : null }))
       .filter((e) => yearFilter.length === 0 || (e.year != null && yearFilter.includes(e.year)))
       .filter((e) => !onlyFree || !e.agent_name || /kein beratereintrag|familie/i.test(e.agent_name))
-      .filter((e) => value(e) > 0)
+      .filter((e) => (sort === 'goals' ? e.inGoals : sort === 'assists' ? e.inAssists : e.inGoals || e.inAssists))
       .sort((a, b) => value(b) - value(a) || (b.goals ?? 0) + (b.assists ?? 0) - ((a.goals ?? 0) + (a.assists ?? 0)) || a.player_name.localeCompare(b.player_name));
   }, [rows, leagueFilter, yearFilter, onlyFree, sort]);
 
@@ -284,7 +301,7 @@ export function TopscorerView({
             </View>
           ))}
         </ScrollView>
-        <Text style={s.foot}>In der Liste steht, wer in seiner Liga bei Toren oder Vorlagen unter den 25 Besten ist. Klick auf den Namen öffnet das Spielerprofil.</Text>
+        <Text style={s.foot}>Tore: die 25 besten Torschützen jeder Liga, Vorlagen: die 25 besten Vorlagengeber, bei Gleichstand auf Platz 25 auch mehr. Klick auf den Namen öffnet das Spielerprofil.</Text>
       </View>
     </View>
   );
