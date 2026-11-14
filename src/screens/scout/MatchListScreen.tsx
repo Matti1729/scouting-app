@@ -1478,16 +1478,24 @@ export function MatchListScreen({ navigation, route }: any) {
       return;
     }
     const [home, ...rest] = areaDetail.spiel.split(' - ');
-    // Duplikat-Schutz: gleiches Spiel (Teams + Datum) existiert schon als eigenes?
-    const { data: dupe } = await supabase
+    // Duplikat-Schutz: gleiches Spiel existiert schon als eigenes? Über den fussball.de-Link, sonst
+    // Teams + Datum + Altersklasse. Ohne Altersklasse galt U14 als Duplikat des U15-Spiels derselben
+    // Vereine am selben Tag und ließ sich nicht hinzufügen (Dortmund - Leverkusen, Matti 2026-11-14).
+    let dupeQuery = supabase
       .from('scouting_matches')
       .select('id')
-      .eq('home_team', home?.trim() || areaDetail.spiel)
-      .eq('away_team', rest.join(' - ').trim())
       .eq('match_date', areaDetail.datum)
       .is('source', null)
-      .or(`created_by.is.null,created_by.eq.${currentUserId()}`)
-      .limit(1);
+      .or(`created_by.is.null,created_by.eq.${currentUserId()}`);
+    if (areaDetail.fussballDeUrl) {
+      dupeQuery = dupeQuery.eq('fussball_de_url', areaDetail.fussballDeUrl);
+    } else {
+      dupeQuery = dupeQuery
+        .eq('home_team', home?.trim() || areaDetail.spiel)
+        .eq('away_team', rest.join(' - ').trim());
+      dupeQuery = areaDetail.mannschaft ? dupeQuery.eq('age_group', areaDetail.mannschaft) : dupeQuery.is('age_group', null);
+    }
+    const { data: dupe } = await dupeQuery.limit(1);
     if (dupe && dupe.length > 0) {
       await fetchMatches();
       setAddingAreaGame(false);

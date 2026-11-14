@@ -313,6 +313,15 @@ export function DashboardScreen() {
     return '#dc2626';
   };
 
+  // Eigenes Spiel zu gameDetail finden: über den fussball.de-Link, sonst Teams + Datum + Altersklasse
+  // (nur Teams + Datum verwechselte U14 und U15 derselben Vereine am selben Tag)
+  const sameGameQuery = (home: string | undefined, away: string, date: string) => {
+    let q = supabase.from('scouting_matches').select('id').eq('match_date', date);
+    if (gameDetail?.fussballDeUrl) return q.eq('fussball_de_url', gameDetail.fussballDeUrl);
+    q = q.eq('home_team', home?.trim() || gameDetail?.begegnung || '').eq('away_team', away.trim());
+    return gameDetail?.liga ? q.eq('age_group', gameDetail.liga) : q.is('age_group', null);
+  };
+
   // Spiel aus dem Popup zu "Meine Spiele" übernehmen (Aufstellung lädt der
   // Spiele-Screen beim Öffnen automatisch nach)
   const handleAddToMyGames = async () => {
@@ -320,13 +329,9 @@ export function DashboardScreen() {
     setAddingGame(true);
     const today = new Date().toISOString().slice(0, 10);
     const [home, ...rest] = gameDetail.begegnung.split(' - ');
-    // Duplikat-Schutz: gleiches Spiel (Teams + Datum) existiert schon als eigenes?
-    const { data: dupe } = await supabase
-      .from('scouting_matches')
-      .select('id')
-      .eq('home_team', home?.trim() || gameDetail.begegnung)
-      .eq('away_team', rest.join(' - ').trim())
-      .eq('match_date', today)
+    // Duplikat-Schutz: gleiches Spiel existiert schon als eigenes? (Link bzw. Teams + Altersklasse,
+    // sonst blockiert das U15-Spiel derselben Vereine das U14-Spiel, Matti 2026-11-14)
+    const { data: dupe } = await sameGameQuery(home, rest.join(' - '), today)
       .is('source', null)
       .or(`created_by.is.null,created_by.eq.${currentUserId()}`)
       .limit(1);
@@ -366,12 +371,8 @@ export function DashboardScreen() {
       // Über das Popup übernommen: eigenes Spiel über Teams + Datum finden
       const today = new Date().toISOString().slice(0, 10);
       const [home, ...rest] = gameDetail.begegnung.split(' - ');
-      const { data } = await supabase
-        .from('scouting_matches')
-        .select('id')
-        .eq('home_team', home?.trim() || gameDetail.begegnung)
-        .eq('away_team', rest.join(' - ').trim())
-        .eq('match_date', today)
+      const { data } = await sameGameQuery(home, rest.join(' - '), today)
+        .or(`created_by.is.null,created_by.eq.${currentUserId()}`)
         .limit(1);
       matchId = (data || [])[0]?.id || null;
     }
