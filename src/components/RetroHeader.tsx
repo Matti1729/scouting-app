@@ -13,6 +13,7 @@ import { supabase } from '../config/supabase';
 export function RetroHeader({
   title,
   subtitle,
+  subtitleMobile,
   onBack,
   right,
   tabs,
@@ -21,6 +22,8 @@ export function RetroHeader({
 }: {
   title: string;
   subtitle?: string;
+  /** Untertitel auf dem Handy (dort wird subtitle sonst nicht gezeigt) */
+  subtitleMobile?: string;
   onBack?: () => void;
   right?: React.ReactNode;
   /** Mobile Tab-Zeile unter dem Titel (Text-Tabs mit Unterstrich, volle Breite).
@@ -59,9 +62,10 @@ export function RetroHeader({
         )}
       </View>
       {/* Titel mittig im freien Bereich; Ebene fängt keine Klicks ab */}
-      <View style={[styles.titleLayer, pad]} pointerEvents="none">
+      <View style={[styles.titleLayer, pad, isMobile && subtitleMobile ? styles.titleLayerStacked : null]} pointerEvents="none">
         <Text style={styles.title} numberOfLines={1}>{title}</Text>
         {subtitle && !isMobile ? <Text style={styles.subtitle} numberOfLines={1}>{subtitle}</Text> : null}
+        {subtitleMobile && isMobile ? <Text style={styles.subtitle} numberOfLines={1}>{subtitleMobile}</Text> : null}
       </View>
       <View style={{ flex: 1 }} />
       <View style={styles.rightGroup} onLayout={(e) => setRightW(e.nativeEvent.layout.width)}>
@@ -121,6 +125,14 @@ const styles = StyleSheet.create({
     color: RETRO.text,
   },
   // Titel + MONO-Untertitel auf gemeinsamer Grundlinie, mittig im Balken
+  // Handy mit Untertitel: Titel und Untertitel untereinander, mittig im Balken
+  titleLayerStacked: {
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 0,
+    paddingTop: 0,
+  },
   titleLayer: {
     position: 'absolute',
     left: 0,

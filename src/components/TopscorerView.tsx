@@ -59,12 +59,15 @@ export function TopscorerView({
   watchlistIds,
   onOpenPlayer,
   onAddedToWatchlist,
+  onStandChange,
 }: {
   isMobile: boolean;
   clubLogoMap: Map<string, string>;
   watchlistIds: Set<string>;
   onOpenPlayer: (tmPlayerId: string, name: string) => void;
   onAddedToWatchlist: (playerId: string | null) => void;
+  /** Stand der Daten ("Sa, 14.11."), steht im gelben Kopf der Suchmaschine (Matti 2026-11-14) */
+  onStandChange?: (stand: string | null) => void;
 }) {
   const [rows, setRows] = useState<TopscorerRow[] | null>(null);
   const [leagueFilter, setLeagueFilter] = useState<string[]>([]);
@@ -147,6 +150,7 @@ export function TopscorerView({
     const max = (rows || []).reduce((m, r) => (r.updated_at > m ? r.updated_at : m), '');
     return max ? new Date(max).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' }) : null;
   }, [rows]);
+  useEffect(() => onStandChange?.(lastUpdate), [lastUpdate, onStandChange]);
 
   const onWatchlist = (e: ScorerEntry) => addedTm.has(e.tm_player_id) || (!!e.player_id && watchlistIds.has(e.player_id));
 
@@ -173,13 +177,13 @@ export function TopscorerView({
   const SORT_LABELS: Record<Sort, string> = { goals: 'TORE', assists: 'VORLAGEN', both: 'TORE + VORLAGEN' };
   const SORTS: Sort[] = ['goals', 'assists', 'both'];
 
-  // Reiter Tore / Vorlagen / Tore + Vorlagen (Matti 2026-11-14): Handy = Leiste volle Breite (Variante B),
-  // Desktop = Chips auf der Tabellenkante (Variante C, unten im Panel)
-  const mobileTabs = (
-    <View style={s.tabBar}>
+  // Reiter Tore / Vorlagen / Tore + Vorlagen als Chips (Matti 2026-11-14): Desktop auf der Tabellenkante,
+  // Handy als Reihe über den Karten
+  const sortChips = (mobile: boolean) => (
+    <View style={mobile ? s.chipsMobile : s.chips}>
       {SORTS.map((k) => (
-        <TouchableOpacity key={k} onPress={() => setSort(k)} style={[s.tab, sort === k && s.tabOn]} activeOpacity={0.7}>
-          <Text style={[s.tabText, sort === k && s.tabTextOn]} numberOfLines={1}>{SORT_LABELS[k]}</Text>
+        <TouchableOpacity key={k} onPress={() => setSort(k)} style={[s.chip, mobile && s.chipMobile, HARD_SHADOW, sort === k && s.chipOn]} activeOpacity={0.7}>
+          <Text style={[s.chipText, sort === k && s.chipTextOn]} numberOfLines={1}>{sort === k ? `${SORT_LABELS[k]} (${entries.length})` : SORT_LABELS[k]}</Text>
         </TouchableOpacity>
       ))}
     </View>
@@ -190,7 +194,6 @@ export function TopscorerView({
       <View style={isMobile ? s.filterFull : s.filterBox}>
         <Dropdown options={leagueOptions} value={leagueFilter} onChange={(v) => setLeagueFilter(v as string[])} placeholder="Alle Wettbewerbe" multiSelect compact />
       </View>
-      {lastUpdate && <Text style={s.stand}>{`STAND ${lastUpdate.toUpperCase()}`}</Text>}
     </View>
   );
 
@@ -219,8 +222,8 @@ export function TopscorerView({
   if (isMobile) {
     return (
       <View style={{ flex: 1 }}>
-        {mobileTabs}
         {filters}
+        {sortChips(true)}
         <ScrollView onScroll={onScroll} scrollEventThrottle={200} contentContainerStyle={{ paddingBottom: 24 + SAFE_BOTTOM }}>
           {shown.length === 0 && empty}
           {shown.map((e) => {
@@ -258,13 +261,7 @@ export function TopscorerView({
     <View style={{ flex: 1 }}>
       {filters}
       <View style={[s.panel, HARD_SHADOW]}>
-        <View style={s.chips}>
-          {SORTS.map((k) => (
-            <TouchableOpacity key={k} onPress={() => setSort(k)} style={[s.chip, HARD_SHADOW, sort === k && s.chipOn]} activeOpacity={0.7}>
-              <Text style={[s.chipText, sort === k && s.chipTextOn]}>{sort === k ? `${SORT_LABELS[k]} (${entries.length})` : SORT_LABELS[k]}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {sortChips(false)}
         <View style={s.thead}>
           <Text style={[s.th, s.cRank]}>#</Text>
           <Text style={[s.th, s.cName]}>SPIELER</Text>
@@ -310,17 +307,13 @@ const s = StyleSheet.create({
   filtersMobile: { paddingHorizontal: 12, paddingTop: 12, gap: 8 },
   filterBox: { width: 200 },
   filterFull: { flex: 1 },
-  tabBar: { flexDirection: 'row', backgroundColor: RETRO.white, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder },
-  tab: { flex: 1, alignItems: 'center', paddingTop: 11, paddingBottom: 8, borderBottomWidth: 3, borderBottomColor: 'transparent' },
-  tabOn: { borderBottomColor: RETRO.headerBg },
-  tabText: { fontFamily: MONO, fontSize: 12, fontWeight: '700', letterSpacing: 1, color: RETRO.textMuted },
-  tabTextOn: { color: RETRO.headerBg },
   chips: { position: 'absolute', top: -11, left: 10, flexDirection: 'row', gap: 6, zIndex: 2 },
+  chipsMobile: { flexDirection: 'row', gap: 6, paddingHorizontal: 12, paddingBottom: 10 },
+  chipMobile: { flexGrow: 1, alignItems: 'center', paddingVertical: 7 },
   chip: { backgroundColor: RETRO.face, borderRadius: 2, paddingHorizontal: 9, paddingVertical: 4 },
   chipOn: { backgroundColor: RETRO.headerBg },
   chipText: { fontFamily: MONO, fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: RETRO.textMuted },
   chipTextOn: { color: RETRO.white },
-  stand: { marginLeft: 'auto', fontFamily: MONO, fontSize: 11, color: RETRO.textMuted, letterSpacing: 1 },
   panel: { flex: 1, backgroundColor: RETRO.white, marginHorizontal: 16, marginTop: 16, marginBottom: 16, paddingTop: 14 },
   thead: { flexDirection: 'row', alignItems: 'center', backgroundColor: RETRO.headerBg, height: 32, paddingHorizontal: 12, gap: 8 },
   th: { fontFamily: MONO, fontSize: 11, fontWeight: '700', letterSpacing: 1.5, color: RETRO.headerText },

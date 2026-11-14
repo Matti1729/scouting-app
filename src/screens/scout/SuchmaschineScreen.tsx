@@ -1107,6 +1107,8 @@ export function SuchmaschineScreen() {
   // Spieler-Detail-Modal
   const [detailPlayer, setDetailPlayer] = useState<StipendiumSearchPlayer | null>(null);
   // Reiter: Suche oder Topscorer-Liste (Matti 2026-11-13)
+  // Stand der Topscorer-Daten steht im gelben Kopf, auch auf dem Handy (Matti 2026-11-14)
+  const [topscorerStand, setTopscorerStand] = useState<string | null>(null);
   const [mainTab, setMainTab] = useState<'suche' | 'topscorer'>('suche');
   // Nach Schließen der Spielbewertung zurück ins Spielerprofil
   const returnToPlayerRef = useRef<StipendiumSearchPlayer | null>(null);
@@ -1963,7 +1965,8 @@ export function SuchmaschineScreen() {
       {/* Header (gelber Titelbalken wie im Dashboard) */}
       <RetroHeader
         title="Suchmaschine"
-        subtitle={mainTab === 'topscorer' ? 'Tore und Vorlagen pro Liga' : 'Spielerdatenbank durchsuchen'}
+        subtitle={mainTab === 'topscorer' ? `Tore und Vorlagen pro Liga${topscorerStand ? ` · Stand ${topscorerStand}` : ''}` : 'Spielerdatenbank durchsuchen'}
+        subtitleMobile={mainTab === 'topscorer' && topscorerStand ? `Stand ${topscorerStand}` : undefined}
         onBack={() => navigation.goBack()}
         tabs={[{ key: 'suche', label: 'Suche' }, { key: 'topscorer', label: 'Topscorer' }]}
         activeTab={mainTab}
@@ -1989,6 +1992,7 @@ export function SuchmaschineScreen() {
       {mainTab === 'topscorer' ? (
         <TopscorerView
           isMobile={isMobile}
+          onStandChange={setTopscorerStand}
           clubLogoMap={clubLogoMap}
           watchlistIds={watchlistIds}
           onOpenPlayer={async (tmId, name) => {
