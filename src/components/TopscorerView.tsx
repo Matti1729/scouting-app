@@ -26,10 +26,6 @@ const LEAGUE_LABELS: Record<string, string> = {
   U19: 'U19 Nachwuchsliga', U17: 'U17 Nachwuchsliga',
 };
 const leagueLabel = (key: string): string => LEAGUE_LABELS[key] || key;
-// Sammel-Eintrag im Liga-Dropdown
-const LEAGUE_GROUPS: Record<string, (key: string) => boolean> = {
-  'grp:rl': (key) => key.startsWith('RL'),
-};
 const LEAGUE_ORDER = ['L1', 'L2', 'L3', 'RLN3', 'RLN4', 'RLW3', 'RLSW', 'RLB3', 'U19', 'U17'];
 
 const birthYear = (d: string | null): string | null => d?.match(/(\d{4})$/)?.[1] ?? null;
@@ -88,10 +84,12 @@ export function TopscorerView({
     return keys.sort((a, b) => rank(a) - rank(b));
   }, [rows]);
 
+  // Regionalligen als aufklappbare Gruppe: Häkchen wählt alle, Pfeil zeigt die einzelnen (Matti 2026-11-14)
   const leagueOptions = useMemo(() => {
-    const opts = leagueKeys.map((k) => ({ value: k, label: leagueLabel(k) }));
+    const opts: { value: string; label: string; isGroup?: boolean; group?: string }[] =
+      leagueKeys.map((k) => ({ value: k, label: leagueLabel(k), group: k.startsWith('RL') ? 'grp:rl' : undefined }));
     const firstRl = opts.findIndex((o) => o.value.startsWith('RL'));
-    if (firstRl >= 0) opts.splice(firstRl, 0, { value: 'grp:rl', label: 'Alle Regionalligen' });
+    if (firstRl >= 0) opts.splice(firstRl, 0, { value: 'grp:rl', label: 'Alle Regionalligen', isGroup: true });
     return opts;
   }, [leagueKeys]);
 
@@ -99,8 +97,7 @@ export function TopscorerView({
   const entries = useMemo(() => {
     if (!rows) return [];
     const inLeague = (key: string) =>
-      leagueFilter.length === 0 ||
-      leagueFilter.some((f) => (LEAGUE_GROUPS[f] ? LEAGUE_GROUPS[f](key) : f === key));
+      leagueFilter.length === 0 || leagueFilter.includes(key);
     // Schwelle je Liste = Wert auf dem letzten Listenplatz. Wer gleich viel hat, gehört mit in die Liste,
     // auch wenn er nur über die andere Liste bei uns ist (TM schneidet nach Platz 25 ab).
     const cut = new Map<string, number>();

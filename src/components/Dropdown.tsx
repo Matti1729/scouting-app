@@ -16,6 +16,10 @@ import { HARD_SHADOW } from '../theme/retro';
 interface DropdownOption {
   value: string;
   label: string;
+  /** Sammel-Eintrag (nur multiSelect): Häkchen wählt alle Einträge mit group = value, Pfeil klappt sie auf */
+  isGroup?: boolean;
+  /** gehört zu diesem Sammel-Eintrag, wird erst nach dem Aufklappen gezeigt */
+  group?: string;
 }
 
 interface DropdownProps {
@@ -39,6 +43,7 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
 }) {
   const { colors } = useTheme();
   const [isOpen, setIsOpen] = useState(false);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
   const buttonRef = useRef<View>(null);
 
@@ -47,17 +52,44 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
     [value]
   );
 
+  const groupChildren = useCallback(
+    (group: string) => options.filter(o => o.group === group).map(o => o.value),
+    [options]
+  );
+
   const displayText = useMemo(() => {
     if (selectedValues.length === 0) return placeholder;
 
-    const selectedLabels = selectedValues
-      .map(v => options.find(o => o.value === v)?.label || v)
-      .join(', ');
-
-    return selectedLabels;
-  }, [selectedValues, options, placeholder]);
+    // Ganz gewählte Gruppe als ein Name ("Alle Regionalligen" statt fünf Einzelnamen)
+    const labels: string[] = [];
+    const covered = new Set<string>();
+    for (const o of options) {
+      if (o.isGroup) {
+        const kids = groupChildren(o.value);
+        if (kids.length > 0 && kids.every(k => selectedValues.includes(k))) {
+          labels.push(o.label);
+          kids.forEach(k => covered.add(k));
+        }
+      } else if (selectedValues.includes(o.value) && !covered.has(o.value)) {
+        labels.push(o.label);
+      }
+    }
+    for (const v of selectedValues) {
+      if (!options.some(o => o.value === v)) labels.push(v);
+    }
+    return labels.join(', ');
+  }, [selectedValues, options, placeholder, groupChildren]);
 
   const handleSelect = useCallback((optionValue: string) => {
+    const opt = options.find(o => o.value === optionValue);
+    if (multiSelect && opt?.isGroup) {
+      // Sammel-Eintrag: alle an oder alle aus
+      const currentValues = Array.isArray(value) ? value : [];
+      const kids = groupChildren(optionValue);
+      const allOn = kids.every(k => currentValues.includes(k));
+      onChange(allOn ? currentValues.filter(v => !kids.includes(v)) : [...currentValues, ...kids.filter(k => !currentValues.includes(k))]);
+      return;
+    }
     if (multiSelect) {
       const currentValues = Array.isArray(value) ? value : [];
       if (currentValues.includes(optionValue)) {
@@ -69,7 +101,21 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
       onChange(optionValue);
       setIsOpen(false);
     }
-  }, [multiSelect, value, onChange]);
+  }, [multiSelect, value, onChange, options, groupChildren]);
+
+  const toggleExpanded = useCallback((group: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev);
+      if (next.has(group)) next.delete(group); else next.add(group);
+      return next;
+    });
+  }, []);
+
+  // Untereinträge nur bei aufgeklappter Gruppe
+  const visibleOptions = useMemo(
+    () => options.filter(o => !o.group || expanded.has(o.group)),
+    [options, expanded]
+  );
 
   const handleOpen = useCallback(() => {
     buttonRef.current?.measureInWindow((x, y, width, height) => {
@@ -93,11 +139,15 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
   const keyExtractor = useCallback((item: DropdownOption) => item.value, []);
 
   const renderItem = useCallback(({ item }: ListRenderItemInfo<DropdownOption>) => {
-    const selected = selectedValues.includes(item.value);
+    const kids = item.isGroup ? groupChildren(item.value) : [];
+    const kidsOn = kids.filter(k => selectedValues.includes(k)).length;
+    const selected = item.isGroup ? kids.length > 0 && kidsOn === kids.length : selectedValues.includes(item.value);
+    const partial = item.isGroup && kidsOn > 0 && !selected;
     return (
       <TouchableOpacity
         style={[
           styles.option,
+          item.group ? styles.optionChild : null,
           {
             backgroundColor: selected
               ? colors.primary + '20'
@@ -123,6 +173,9 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
             {selected && (
               <Text style={styles.checkmark}>✓</Text>
             )}
+            {partial && (
+              <Text style={[styles.checkmark, { color: colors.primary }]}>–</Text>
+            )}
           </View>
         )}
         <Text
@@ -138,9 +191,16 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
         >
           {item.label}
         </Text>
+        {item.isGroup && (
+          <TouchableOpacity onPress={() => toggleExpanded(item.value)} hitSlop={8} style={styles.groupChevron}>
+            <Text style={[styles.groupChevronText, { color: colors.textSecondary }]}>
+              {expanded.has(item.value) ? '▾' : '▸'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </TouchableOpacity>
     );
-  }, [selectedValues, colors, multiSelect, handleSelect]);
+  }, [selectedValues, colors, multiSelect, handleSelect, groupChildren, expanded, toggleExpanded]);
 
   return (
     <View style={styles.container}>
@@ -202,7 +262,8 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
                 ]}
               >
                 <FlatList
-                  data={options}
+                  data={visibleOptions}
+                  extraData={expanded}
                   keyExtractor={keyExtractor}
                   renderItem={renderItem}
                   style={styles.optionList}
@@ -310,6 +371,17 @@ const styles = StyleSheet.create({
   optionText: {
     fontSize: 14,
     flexShrink: 1,
+  },
+  optionChild: {
+    paddingLeft: 40,
+  },
+  groupChevron: {
+    marginLeft: 'auto',
+    paddingLeft: 12,
+    paddingVertical: 2,
+  },
+  groupChevronText: {
+    fontSize: 14,
   },
   doneButton: {
     margin: 8,
