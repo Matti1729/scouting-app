@@ -11,10 +11,14 @@ export interface DropdownPlacement {
   maxWidth: number;
 }
 
-/** Position unter dem Knopf (x, y, w, h aus measureInWindow), mindestens minWidth breit, nie über den Rand */
-export function placeDropdown(x: number, y: number, w: number, h: number, minWidth: number): DropdownPlacement {
+/**
+ * Position unter dem Knopf (x, y, w, h aus measureInWindow), mindestens minWidth breit, nie über den Rand.
+ * align 'right': rechte Kante der Liste an der rechten Kante des Knopfs (beim Pfeil ▼).
+ */
+export function placeDropdown(x: number, y: number, w: number, h: number, minWidth: number, align: 'left' | 'right' = 'left'): DropdownPlacement {
   const screenW = Dimensions.get('window').width;
-  const width = Math.min(Math.max(w, minWidth), screenW - 2 * EDGE);
-  const left = Math.max(EDGE, Math.min(x, screenW - width - EDGE));
+  const width = Math.min(Math.max(minWidth, align === 'right' ? 0 : w), screenW - 2 * EDGE);
+  const wanted = align === 'right' ? x + w - width : x;
+  const left = Math.max(EDGE, Math.min(wanted, screenW - width - EDGE));
   return { top: y + h + 4, left, minWidth: width, maxWidth: screenW - left - EDGE };
 }

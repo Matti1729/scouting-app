@@ -823,7 +823,8 @@ export function PlayerDetailModal({
 
               {/* Zeile 2: Einsätze · Berichte (zIndex: Wettbewerbs-Dropdown liegt über Zeile 3) */}
               <View style={[styles.cardGrid, { zIndex: 20 }]}>
-                <View style={[styles.card, styles.cardEinsaetze, HARD_SHADOW, isMobile && { minWidth: 0, flexBasis: '100%' }]}>
+                {/* zIndex: Wettbewerbs-Fenster liegt über der Berichte-Karte (RN-Web: jede View eigene Ebene) */}
+                <View style={[styles.card, styles.cardEinsaetze, HARD_SHADOW, { zIndex: 30 }, isMobile && { minWidth: 0, flexBasis: '100%' }]}>
                   {cardChip('EINSÄTZE')}
                   {seasonRow('current')}
                   {seasonRow('last')}

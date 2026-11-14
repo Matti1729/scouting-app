@@ -32,6 +32,8 @@ interface DropdownProps {
   multiSelect?: boolean;
   label?: string;
   compact?: boolean;
+  /** Liste rechtsbündig unter dem Knopf öffnen (beim Pfeil), z. B. Alle Wettbewerbe */
+  alignRight?: boolean;
 }
 
 export const Dropdown = memo<DropdownProps>(function Dropdown({
@@ -42,6 +44,7 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
   multiSelect = false,
   label,
   compact = false,
+  alignRight = false,
 }) {
   const [isOpen, setIsOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -124,10 +127,10 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
       // sonst steht der Pfeil bei "Alle Regionalligen" weit weg am rechten Rand). ~7,5 px je Zeichen bei 13 px
       const longest = Math.max(...options.map(o => o.label.length + (o.group ? 3 : 0)), multiSelect ? 'Auswahl leeren'.length : 0);
       const extras = 24 + (multiSelect ? 26 : 0) + (options.some(o => o.isGroup) ? 24 : 0);
-      setDropdownPosition(placeDropdown(x, y, 0, height, Math.max(160, Math.ceil(longest * 7.5) + extras)));
+      setDropdownPosition(placeDropdown(x, y, 0, height, Math.max(160, Math.ceil(longest * 7.5) + extras), alignRight ? 'right' : 'left'));
       setIsOpen(true);
     });
-  }, [options, multiSelect]);
+  }, [options, multiSelect, alignRight]);
 
   const handleClose = useCallback(() => {
     setIsOpen(false);

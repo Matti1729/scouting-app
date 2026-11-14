@@ -192,7 +192,7 @@ export function TopscorerView({
   const filters = (
     <View style={[s.filters, isMobile && s.filtersMobile]}>
       <View style={isMobile ? s.filterFull : s.filterBox}>
-        <Dropdown options={leagueOptions} value={leagueFilter} onChange={(v) => setLeagueFilter(v as string[])} placeholder="Alle Wettbewerbe" multiSelect compact />
+        <Dropdown options={leagueOptions} value={leagueFilter} onChange={(v) => setLeagueFilter(v as string[])} placeholder="Alle Wettbewerbe" multiSelect compact alignRight />
       </View>
     </View>
   );
