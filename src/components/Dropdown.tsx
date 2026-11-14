@@ -120,10 +120,14 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
 
   const handleOpen = useCallback(() => {
     buttonRef.current?.measureInWindow((x, y, width, height) => {
-      setDropdownPosition(placeDropdown(x, y, width, height, 220));
+      // Liste nur so breit wie die längste Beschriftung, nicht so breit wie der Knopf (Matti 2026-11-14:
+      // sonst steht der Pfeil bei "Alle Regionalligen" weit weg am rechten Rand). ~7,5 px je Zeichen bei 13 px
+      const longest = Math.max(...options.map(o => o.label.length + (o.group ? 3 : 0)), multiSelect ? 'Auswahl leeren'.length : 0);
+      const extras = 24 + (multiSelect ? 26 : 0) + (options.some(o => o.isGroup) ? 24 : 0);
+      setDropdownPosition(placeDropdown(x, y, 0, height, Math.max(160, Math.ceil(longest * 7.5) + extras)));
       setIsOpen(true);
     });
-  }, []);
+  }, [options, multiSelect]);
 
   const handleClose = useCallback(() => {
     setIsOpen(false);
@@ -208,15 +212,14 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
                   {
                     top: dropdownPosition.top,
                     left: dropdownPosition.left,
-                    minWidth: dropdownPosition.minWidth,
-                    maxWidth: dropdownPosition.maxWidth,
+                    width: dropdownPosition.minWidth,
                   },
                 ]}
               >
                 {multiSelect && (
                   <TouchableOpacity style={styles.clearRow} onPress={() => onChange([])}>
                     <Text style={[styles.clearText, selectedValues.length > 0 && styles.clearTextActive]}>
-                      Alle Häkchen entfernen
+                      Auswahl leeren
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -314,7 +317,8 @@ const styles = StyleSheet.create({
     paddingLeft: 36,
   },
   optionMain: {
-    flex: 1,
+    flexGrow: 1,
+    flexShrink: 1,
     flexDirection: 'row',
     alignItems: 'center',
     paddingVertical: 10,
@@ -350,7 +354,8 @@ const styles = StyleSheet.create({
     color: RETRO.headerBg,
   },
   groupChevron: {
-    paddingHorizontal: 8,
+    paddingLeft: 4,
+    paddingRight: 8,
     paddingVertical: 10,
   },
   groupChevronText: {
