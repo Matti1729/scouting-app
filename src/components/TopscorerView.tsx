@@ -183,7 +183,7 @@ export function TopscorerView({
     <View style={mobile ? s.chipsMobile : s.chips}>
       {SORTS.map((k) => (
         <TouchableOpacity key={k} onPress={() => setSort(k)} style={[s.chip, mobile && s.chipMobile, HARD_SHADOW, sort === k && s.chipOn]} activeOpacity={0.7}>
-          <Text style={[s.chipText, sort === k && s.chipTextOn]} numberOfLines={1}>{sort === k ? `${SORT_LABELS[k]} (${entries.length})` : SORT_LABELS[k]}</Text>
+          <Text style={[s.chipText, sort === k && s.chipTextOn]} numberOfLines={1}>{SORT_LABELS[k]}</Text>
         </TouchableOpacity>
       ))}
     </View>
