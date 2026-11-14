@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import { Dropdown } from './Dropdown';
 import { TeamLogo } from './ClubLogo';
-import { RETRO, MONO, HARD_SHADOW, RETRO_CHIP, RETRO_CHIP_TEXT } from '../theme/retro';
+import { RETRO, MONO, HARD_SHADOW } from '../theme/retro';
 import { SAFE_BOTTOM } from '../utils/safeArea';
 import { loadTopscorers, addStatPlayerToWatchlist, TopscorerRow, PlayerStat } from '../services/beraterService';
 
@@ -72,7 +72,6 @@ export function TopscorerView({
 }) {
   const [rows, setRows] = useState<TopscorerRow[] | null>(null);
   const [leagueFilter, setLeagueFilter] = useState<string[]>([]);
-  const [yearFilter, setYearFilter] = useState<string[]>([]);
   const [sort, setSort] = useState<Sort>('goals');
   const [visible, setVisible] = useState(PAGE);
   const [addedTm, setAddedTm] = useState<Set<string>>(new Set());
@@ -81,7 +80,7 @@ export function TopscorerView({
   useEffect(() => {
     loadTopscorers().then(setRows).catch(() => setRows([]));
   }, []);
-  useEffect(() => setVisible(PAGE), [leagueFilter, yearFilter, sort]);
+  useEffect(() => setVisible(PAGE), [leagueFilter, sort]);
 
   const leagueKeys = useMemo(() => {
     const keys = Array.from(new Set((rows || []).map((r) => leagueKey(r.league_id))));
@@ -143,15 +142,9 @@ export function TopscorerView({
       sort === 'goals' ? e.goals ?? -1 : sort === 'assists' ? e.assists ?? -1 : (e.goals ?? 0) + (e.assists ?? 0);
     return Array.from(map.values())
       .map((e) => ({ ...e, games: e.gamesByLeague.size ? Array.from(e.gamesByLeague.values()).reduce((a, b) => a + b, 0) : null }))
-      .filter((e) => yearFilter.length === 0 || (e.year != null && yearFilter.includes(e.year)))
       .filter((e) => (sort === 'goals' ? e.inGoals : sort === 'assists' ? e.inAssists : e.inGoals || e.inAssists))
       .sort((a, b) => value(b) - value(a) || (b.goals ?? 0) + (b.assists ?? 0) - ((a.goals ?? 0) + (a.assists ?? 0)) || a.player_name.localeCompare(b.player_name));
-  }, [rows, leagueFilter, yearFilter, sort]);
-
-  const yearOptions = useMemo(() => {
-    const years = Array.from(new Set((rows || []).map((r) => birthYear(r.birth_date)).filter(Boolean) as string[]));
-    return years.sort((a, b) => b.localeCompare(a)).map((y) => ({ value: y, label: y }));
-  }, [rows]);
+  }, [rows, leagueFilter, sort]);
 
   const lastUpdate = useMemo(() => {
     const max = (rows || []).reduce((m, r) => (r.updated_at > m ? r.updated_at : m), '');
@@ -180,22 +173,27 @@ export function TopscorerView({
   const sortLabel = sort === 'goals' ? 'TORE' : sort === 'assists' ? 'VORL.' : 'T+V';
   const num = (v: number | null) => (v == null ? '–' : String(v));
 
+  const SORT_LABELS: Record<Sort, string> = { goals: 'TORE', assists: 'VORLAGEN', both: 'TORE + VORLAGEN' };
+  const SORTS: Sort[] = ['goals', 'assists', 'both'];
+
+  // Reiter Tore / Vorlagen / Tore + Vorlagen (Matti 2026-11-14): Handy = Leiste volle Breite (Variante B),
+  // Desktop = Chips auf der Tabellenkante (Variante C, unten im Panel)
+  const mobileTabs = (
+    <View style={s.tabBar}>
+      {SORTS.map((k) => (
+        <TouchableOpacity key={k} onPress={() => setSort(k)} style={[s.tab, sort === k && s.tabOn]} activeOpacity={0.7}>
+          <Text style={[s.tabText, sort === k && s.tabTextOn]} numberOfLines={1}>{SORT_LABELS[k]}</Text>
+        </TouchableOpacity>
+      ))}
+    </View>
+  );
+
   const filters = (
     <View style={[s.filters, isMobile && s.filtersMobile]}>
-      <View style={isMobile ? s.filterHalf : s.filterBox}>
+      <View style={isMobile ? s.filterFull : s.filterBox}>
         <Dropdown options={leagueOptions} value={leagueFilter} onChange={(v) => setLeagueFilter(v as string[])} placeholder="Alle Wettbewerbe" multiSelect compact />
       </View>
-      <View style={isMobile ? s.filterHalf : s.filterBox}>
-        <Dropdown options={yearOptions} value={yearFilter} onChange={(v) => setYearFilter(v as string[])} placeholder="Alle Jahrgänge" multiSelect compact />
-      </View>
-      <View style={[s.seg, HARD_SHADOW, isMobile && { width: '100%' }]}>
-        {(['goals', 'assists', 'both'] as Sort[]).map((k) => (
-          <TouchableOpacity key={k} onPress={() => setSort(k)} style={[s.segBtn, isMobile && { flex: 1 }, sort === k && s.segBtnOn]} activeOpacity={0.7}>
-            <Text style={[s.segText, sort === k && s.segTextOn]}>{k === 'goals' ? 'TORE' : k === 'assists' ? 'VORLAGEN' : 'T+V'}</Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-      {lastUpdate && <Text style={[s.stand, isMobile && { alignSelf: 'center' }]}>{`STAND ${lastUpdate.toUpperCase()}`}</Text>}
+      {lastUpdate && <Text style={s.stand}>{`STAND ${lastUpdate.toUpperCase()}`}</Text>}
     </View>
   );
 
@@ -224,6 +222,7 @@ export function TopscorerView({
   if (isMobile) {
     return (
       <View style={{ flex: 1 }}>
+        {mobileTabs}
         {filters}
         <ScrollView onScroll={onScroll} scrollEventThrottle={200} contentContainerStyle={{ paddingBottom: 24 + SAFE_BOTTOM }}>
           {shown.length === 0 && empty}
@@ -262,7 +261,13 @@ export function TopscorerView({
     <View style={{ flex: 1 }}>
       {filters}
       <View style={[s.panel, HARD_SHADOW]}>
-        <View style={RETRO_CHIP as any}><Text style={RETRO_CHIP_TEXT as any}>{`TOPSCORER (${entries.length})`}</Text></View>
+        <View style={s.chips}>
+          {SORTS.map((k) => (
+            <TouchableOpacity key={k} onPress={() => setSort(k)} style={[s.chip, HARD_SHADOW, sort === k && s.chipOn]} activeOpacity={0.7}>
+              <Text style={[s.chipText, sort === k && s.chipTextOn]}>{sort === k ? `${SORT_LABELS[k]} (${entries.length})` : SORT_LABELS[k]}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
         <View style={s.thead}>
           <Text style={[s.th, s.cRank]}>#</Text>
           <Text style={[s.th, s.cName]}>SPIELER</Text>
@@ -307,14 +312,19 @@ const s = StyleSheet.create({
   filters: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 10, paddingHorizontal: 16, paddingTop: 16, paddingBottom: 12 },
   filtersMobile: { paddingHorizontal: 12, paddingTop: 12, gap: 8 },
   filterBox: { width: 200 },
-  filterHalf: { flexBasis: '45%', flexGrow: 1 },
-  seg: { flexDirection: 'row' },
-  segBtn: { backgroundColor: RETRO.face, paddingVertical: 7, paddingHorizontal: 12, alignItems: 'center' },
-  segBtnOn: { backgroundColor: RETRO.headerBg },
-  segText: { fontFamily: MONO, fontSize: 12, fontWeight: '700', letterSpacing: 1, color: RETRO.text },
-  segTextOn: { color: RETRO.white },
+  filterFull: { flex: 1 },
+  tabBar: { flexDirection: 'row', backgroundColor: RETRO.white, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder },
+  tab: { flex: 1, alignItems: 'center', paddingTop: 11, paddingBottom: 8, borderBottomWidth: 3, borderBottomColor: 'transparent' },
+  tabOn: { borderBottomColor: RETRO.headerBg },
+  tabText: { fontFamily: MONO, fontSize: 12, fontWeight: '700', letterSpacing: 1, color: RETRO.textMuted },
+  tabTextOn: { color: RETRO.headerBg },
+  chips: { position: 'absolute', top: -11, left: 10, flexDirection: 'row', gap: 6, zIndex: 2 },
+  chip: { backgroundColor: RETRO.face, borderRadius: 2, paddingHorizontal: 9, paddingVertical: 4 },
+  chipOn: { backgroundColor: RETRO.headerBg },
+  chipText: { fontFamily: MONO, fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: RETRO.textMuted },
+  chipTextOn: { color: RETRO.white },
   stand: { marginLeft: 'auto', fontFamily: MONO, fontSize: 11, color: RETRO.textMuted, letterSpacing: 1 },
-  panel: { flex: 1, backgroundColor: RETRO.white, marginHorizontal: 16, marginTop: 10, marginBottom: 16, paddingTop: 14 },
+  panel: { flex: 1, backgroundColor: RETRO.white, marginHorizontal: 16, marginTop: 16, marginBottom: 16, paddingTop: 14 },
   thead: { flexDirection: 'row', alignItems: 'center', backgroundColor: RETRO.headerBg, height: 32, paddingHorizontal: 12, gap: 8 },
   th: { fontFamily: MONO, fontSize: 11, fontWeight: '700', letterSpacing: 1.5, color: RETRO.headerText },
   tr: { flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingHorizontal: 12, gap: 8, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder },
