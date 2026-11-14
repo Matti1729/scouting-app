@@ -85,21 +85,10 @@ function formatDateDE(dateStr: string | null): string | null {
   return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
 }
 
-/** Dauer zwischen zwei ISO-Daten, z.B. "4 Monate" */
-function formatDurationBetween(fromDate: string, toDate: string): string {
-  const diffDays = Math.floor((new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000);
-  if (diffDays < 1) return '< 1 Tag';
-  if (diffDays < 7) return `${diffDays} ${diffDays === 1 ? 'Tag' : 'Tage'}`;
-  if (diffDays < 30) {
-    const weeks = Math.floor(diffDays / 7);
-    return `${weeks} ${weeks === 1 ? 'Woche' : 'Wochen'}`;
-  }
-  if (diffDays < 365) {
-    const months = Math.floor(diffDays / 30);
-    return `${months} ${months === 1 ? 'Monat' : 'Monate'}`;
-  }
-  const years = Math.floor(diffDays / 365);
-  return `${years} ${years === 1 ? 'Jahr' : 'Jahre'}`;
+/** "12.03.25" für die einzeilige Beraterverlauf-Zeile */
+function formatDateShort(dateStr: string | null): string | null {
+  const full = formatDateDE(dateStr);
+  return full ? full.slice(0, 6) + full.slice(8) : null;
 }
 
 /** Farbe wie im Potential-Schiebebalken (1-3 rot, 4-6 orange, 7-9 grün, 10 gold) */
@@ -444,8 +433,8 @@ export function EvalHeader({
                         </TouchableOpacity>
                       ) : null}
                     </View>
-                    <Text style={styles.verlaufMeta}>
-                      {verlauf[0] ? `seit ${formatDateDE(verlauf[0].detected_at)}` : 'aktuell'}
+                    <Text style={styles.verlaufMeta} numberOfLines={1}>
+                      {verlauf[0] ? `seit ${formatDateShort(verlauf[0].detected_at)}` : 'aktuell'}
                     </Text>
                   </View>
                   {/* Frühere Phasen (neueste zuerst) */}
@@ -469,10 +458,10 @@ export function EvalHeader({
                             </TouchableOpacity>
                           ) : null}
                         </View>
-                        <Text style={styles.verlaufMeta}>
+                        <Text style={styles.verlaufMeta} numberOfLines={1}>
                           {start
-                            ? `${formatDateDE(start)} - ${formatDateDE(change.detected_at)} · ${formatDurationBetween(start, change.detected_at)}`
-                            : `bis ${formatDateDE(change.detected_at)}`}
+                            ? `${formatDateShort(start)} - ${formatDateShort(change.detected_at)}`
+                            : `bis ${formatDateShort(change.detected_at)}`}
                         </Text>
                       </View>
                     );
@@ -880,7 +869,10 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
     borderBottomWidth: 1,
     borderBottomColor: '#e5e1d8',
-    gap: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
   },
   verlaufRowCurrent: {
     backgroundColor: '#f7f0da',
@@ -889,6 +881,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    flexShrink: 1,
+    minWidth: 0,
   },
   verlaufAgent: {
     fontSize: 13,
@@ -905,6 +899,7 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: MONO,
     color: '#4a4a55',
+    flexShrink: 0,
   },
   potentialNumber: {
     fontSize: 52,

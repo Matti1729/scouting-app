@@ -112,21 +112,10 @@ function formatDateDE(dateStr: string | null): string | null {
   return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
 }
 
-/** Dauer zwischen zwei ISO-Daten, z.B. "4 Monate" */
-function formatDurationBetween(fromDate: string, toDate: string): string {
-  const diffDays = Math.floor((new Date(toDate).getTime() - new Date(fromDate).getTime()) / 86400000);
-  if (diffDays < 1) return '< 1 Tag';
-  if (diffDays < 7) return `${diffDays} ${diffDays === 1 ? 'Tag' : 'Tage'}`;
-  if (diffDays < 30) {
-    const weeks = Math.floor(diffDays / 7);
-    return `${weeks} ${weeks === 1 ? 'Woche' : 'Wochen'}`;
-  }
-  if (diffDays < 365) {
-    const months = Math.floor(diffDays / 30);
-    return `${months} ${months === 1 ? 'Monat' : 'Monate'}`;
-  }
-  const years = Math.floor(diffDays / 365);
-  return `${years} ${years === 1 ? 'Jahr' : 'Jahre'}`;
+/** "12.03.25" für die einzeilige Beraterverlauf-Zeile */
+function formatDateShort(dateStr: string | null): string | null {
+  const full = formatDateDE(dateStr);
+  return full ? full.slice(0, 6) + full.slice(8) : null;
 }
 
 /** "3 Spiele | 4 Tore | 3 Vorlagen" (Fallback nur Spiele, wenn keine Detailstatistik da ist) */
@@ -556,10 +545,19 @@ export function PlayerDetailModal({
             <View style={styles.verlaufHeader}>
               <Text style={styles.verlaufHeaderText}>{`${label.toUpperCase()} · NACH WETTBEWERB`}</Text>
             </View>
+            {/* Variante C (Matti 2026-11-14): eine Zeile je Wettbewerb, Zahlen in Kästchen, Mannschaft nur bei Länderspielen */}
+            <View style={styles.compLegend}>
+              {['SP', 'T', 'V'].map((h) => <Text key={h} style={styles.compLegendText}>{h}</Text>)}
+            </View>
             {comps.map((c, index) => (
-              <View key={`${c.competitionId}|${c.club}`} style={[styles.verlaufRow, index === comps.length - 1 && { borderBottomWidth: 0 }]}>
-                <Text style={styles.verlaufAgent} numberOfLines={1}>{c.competition}</Text>
-                <Text style={styles.verlaufMeta}>{[c.club, seasonStatsText(c, c.games)].filter(Boolean).join(' · ')}</Text>
+              <View key={`${c.competitionId}|${c.club}`} style={[styles.compLine, index === comps.length - 1 && { borderBottomWidth: 0 }]}>
+                <Text style={styles.compName} numberOfLines={1}>{c.competition}</Text>
+                {c.national && c.club ? <Text style={styles.compTeam} numberOfLines={1}>{c.club}</Text> : null}
+                <View style={styles.compBoxes}>
+                  {[c.games, c.goals, c.assists].map((n, i) => (
+                    <Text key={i} style={styles.compBox}>{n}</Text>
+                  ))}
+                </View>
               </View>
             ))}
           </View>
@@ -758,8 +756,8 @@ export function PlayerDetailModal({
                                   </TouchableOpacity>
                                 ) : null}
                               </View>
-                              <Text style={styles.verlaufMeta}>
-                                {verlauf[0] ? `seit ${formatDateDE(verlauf[0].detected_at)}` : 'aktuell'}
+                              <Text style={styles.verlaufMeta} numberOfLines={1}>
+                                {verlauf[0] ? `seit ${formatDateShort(verlauf[0].detected_at)}` : 'aktuell'}
                               </Text>
                             </View>
                             {/* Frühere Phasen (neueste zuerst) */}
@@ -783,10 +781,10 @@ export function PlayerDetailModal({
                                       </TouchableOpacity>
                                     ) : null}
                                   </View>
-                                  <Text style={styles.verlaufMeta}>
+                                  <Text style={styles.verlaufMeta} numberOfLines={1}>
                                     {start
-                                      ? `${formatDateDE(start)} - ${formatDateDE(change.detected_at)} · ${formatDurationBetween(start, change.detected_at)}`
-                                      : `bis ${formatDateDE(change.detected_at)}`}
+                                      ? `${formatDateShort(start)} - ${formatDateShort(change.detected_at)}`
+                                      : `bis ${formatDateShort(change.detected_at)}`}
                                   </Text>
                                 </View>
                               );
@@ -1464,6 +1462,58 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
     ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : {}),
   },
+  // Saison je Wettbewerb (Variante C): eine Zeile, Zahlen in Kästchen
+  compLegend: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 4,
+    paddingHorizontal: 12,
+    paddingTop: 5,
+  },
+  compLegendText: {
+    width: 30,
+    textAlign: 'center',
+    fontSize: 9,
+    fontWeight: '700',
+    letterSpacing: 1,
+    fontFamily: MONO,
+    color: '#4a4a55',
+  },
+  compLine: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e5e1d8',
+  },
+  compName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: RETRO.text,
+    flexShrink: 1,
+  },
+  compTeam: {
+    fontSize: 12,
+    color: '#4a4a55',
+    flexShrink: 1,
+  },
+  compBoxes: {
+    flexDirection: 'row',
+    gap: 4,
+    marginLeft: 'auto',
+  },
+  compBox: {
+    width: 30,
+    textAlign: 'center',
+    fontSize: 12,
+    fontFamily: MONO,
+    color: RETRO.text,
+    backgroundColor: '#e9e5dd',
+    borderRadius: 2,
+    paddingVertical: 2,
+  },
   // Aufklappbarer Beraterverlauf (Dropdown unter der Berater-Zeile)
   verlaufChevron: {
     fontSize: 14,
@@ -1496,7 +1546,10 @@ const styles = StyleSheet.create({
     paddingVertical: 9,
     borderBottomWidth: 1,
     borderBottomColor: '#e5e1d8',
-    gap: 2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
   },
   verlaufRowCurrent: {
     backgroundColor: '#f7f0da',
@@ -1505,6 +1558,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    flexShrink: 1,
+    minWidth: 0,
   },
   verlaufAgent: {
     fontSize: 14,
@@ -1521,6 +1576,7 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontFamily: MONO,
     color: '#4a4a55',
+    flexShrink: 0,
   },
   detailFooter: {
     flexDirection: 'row',

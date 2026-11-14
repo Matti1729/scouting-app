@@ -59,6 +59,7 @@ interface CompetitionStats extends SeasonStats {
   competitionId: string
   competition: string
   club: string | null
+  national: boolean // Länderspiel (Mannschaft ist eine Nationalmannschaft)
 }
 
 interface SeasonPerformance {
@@ -120,6 +121,10 @@ function germanCompetitionName(id: string, shortName: string | null): string {
     .replace(/^European Qualifiers$/, 'EM-Qualifikation')
     .replace(/World Cup qualification/i, 'WM-Qualifikation')
     .replace(/^(International )?Friendlies$/, 'Testspiele')
+    // kurz für eine Zeile: "U19 Nachwuchsliga - Gr. D" -> "U19 Nachwuchsliga", "... - Liga A" -> "... Liga A"
+    .replace(/ - (Gr\.|Vorrunde Gruppe) \w+$/, '')
+    .replace(/ - (Liga [AB])$/, ' $1')
+    .replace(/^DFB-Pokal der Junioren$/, 'DFB-Pokal Junioren')
 }
 
 /** Namen für Wettbewerbe und Vereine der gezeigten Saisons (je ein Sammelabruf) */
@@ -154,6 +159,7 @@ async function competitionBreakdown(perf: SeasonPerformance, seasons: number[]):
         competition: germanCompetitionName(e.competitionId, comps.get(e.competitionId)?.shortName ?? comps.get(e.competitionId)?.name ?? null),
         // "VfB Stuttgart UEFA U19" (Youth-League-Mannschaft) -> "VfB Stuttgart U19"
         club: e.clubId ? clubs.get(e.clubId)?.name?.replace(/ UEFA (?=U\d+)/, ' ') ?? null : null,
+        national: !!(e.clubId && clubs.get(e.clubId)?.baseDetails?.isNationalTeam),
         games: e.games,
         goals: e.goals,
         assists: e.assists,

@@ -140,6 +140,7 @@ export interface PlayerTmCompetitionStats extends PlayerTmSeasonStats {
   competitionId: string;
   competition: string;   // z. B. "3. Liga", "U19-EM-Qualifikation"
   club: string | null;   // Mannschaft, z. B. "VfB Stuttgart II", "Kosovo U19"
+  national?: boolean;    // Länderspiel: Mannschaft wird in der Zeile gezeigt
 }
 
 export interface PlayerNationalTeam {
