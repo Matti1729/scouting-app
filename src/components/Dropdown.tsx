@@ -10,8 +10,9 @@ import {
   ListRenderItemInfo,
   Platform,
 } from 'react-native';
-import { useTheme } from '../contexts/ThemeContext';
-import { HARD_SHADOW } from '../theme/retro';
+import { HARD_SHADOW, RETRO } from '../theme/retro';
+
+// Farben wie das Liga-Dropdown der Suchmaschine (Retro-Blau statt des alten Grüns, Matti 2026-11-14)
 
 interface DropdownOption {
   value: string;
@@ -41,7 +42,6 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
   label,
   compact = false,
 }) {
-  const { colors } = useTheme();
   const [isOpen, setIsOpen] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [dropdownPosition, setDropdownPosition] = useState({ top: 0, left: 0, width: 0 });
@@ -144,68 +144,31 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
     const selected = item.isGroup ? kids.length > 0 && kidsOn === kids.length : selectedValues.includes(item.value);
     const partial = item.isGroup && kidsOn > 0 && !selected;
     return (
-      <TouchableOpacity
-        style={[
-          styles.option,
-          item.group ? styles.optionChild : null,
-          {
-            backgroundColor: selected
-              ? colors.primary + '20'
-              : 'transparent',
-          },
-        ]}
-        onPress={() => handleSelect(item.value)}
-      >
-        {multiSelect && (
-          <View
-            style={[
-              styles.checkbox,
-              {
-                borderColor: selected
-                  ? colors.primary
-                  : colors.border,
-                backgroundColor: selected
-                  ? colors.primary
-                  : 'transparent',
-              },
-            ]}
-          >
-            {selected && (
-              <Text style={styles.checkmark}>✓</Text>
-            )}
-            {partial && (
-              <Text style={[styles.checkmark, { color: colors.primary }]}>–</Text>
-            )}
-          </View>
-        )}
-        <Text
-          style={[
-            styles.optionText,
-            {
-              color: selected
-                ? colors.primary
-                : colors.text,
-              fontWeight: selected ? '600' : '400',
-            },
-          ]}
-        >
-          {item.label}
-        </Text>
+      <View style={[styles.option, item.group ? styles.optionChild : null]}>
+        <TouchableOpacity style={styles.optionMain} onPress={() => handleSelect(item.value)}>
+          {multiSelect && (
+            <View style={[styles.checkbox, (selected || partial) && styles.checkboxOn]}>
+              {selected && <Text style={styles.checkmark}>✓</Text>}
+              {partial && <Text style={styles.checkmark}>−</Text>}
+            </View>
+          )}
+          <Text style={[styles.optionText, !multiSelect && selected && styles.optionTextSelected]} numberOfLines={1}>
+            {item.label}
+          </Text>
+        </TouchableOpacity>
         {item.isGroup && (
           <TouchableOpacity onPress={() => toggleExpanded(item.value)} hitSlop={8} style={styles.groupChevron}>
-            <Text style={[styles.groupChevronText, { color: colors.textSecondary }]}>
-              {expanded.has(item.value) ? '▾' : '▸'}
-            </Text>
+            <Text style={styles.groupChevronText}>{expanded.has(item.value) ? '▾' : '▸'}</Text>
           </TouchableOpacity>
         )}
-      </TouchableOpacity>
+      </View>
     );
-  }, [selectedValues, colors, multiSelect, handleSelect, groupChildren, expanded, toggleExpanded]);
+  }, [selectedValues, multiSelect, handleSelect, groupChildren, expanded, toggleExpanded]);
 
   return (
     <View style={styles.container}>
       {label && (
-        <Text style={[styles.label, { color: colors.textSecondary }]}>{label}</Text>
+        <Text style={styles.label}>{label}</Text>
       )}
 
       <TouchableOpacity
@@ -213,10 +176,6 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
         style={[
           styles.button,
           HARD_SHADOW,
-          {
-            // graue Retro-Fläche wie die übrigen Buttons, randlos
-            backgroundColor: colors.surfaceSecondary,
-          },
           compact && styles.buttonCompact,
         ]}
         onPress={handleOpen}
@@ -226,15 +185,13 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
           style={[
             styles.buttonText,
             compact && styles.buttonTextCompact,
-            {
-              color: selectedValues.length > 0 ? colors.text : colors.textSecondary,
-            },
+            { color: selectedValues.length > 0 ? RETRO.text : RETRO.textMuted },
           ]}
           numberOfLines={1}
         >
           {displayText}
         </Text>
-        <Text style={[styles.chevron, { color: colors.textSecondary }]}>
+        <Text style={styles.chevron}>
           {isOpen ? '▲' : '▼'}
         </Text>
       </TouchableOpacity>
@@ -252,15 +209,19 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
                 style={[
                   styles.dropdown,
                   {
-                    backgroundColor: colors.surface,
-                    borderColor: colors.border,
                     top: dropdownPosition.top,
                     left: dropdownPosition.left,
-                    minWidth: Math.max(dropdownPosition.width, 200),
-                    maxHeight: 250,
+                    minWidth: Math.max(dropdownPosition.width, 220),
                   },
                 ]}
               >
+                {multiSelect && (
+                  <TouchableOpacity style={styles.clearRow} onPress={() => onChange([])}>
+                    <Text style={[styles.clearText, selectedValues.length > 0 && styles.clearTextActive]}>
+                      Alle Häkchen entfernen
+                    </Text>
+                  </TouchableOpacity>
+                )}
                 <FlatList
                   data={visibleOptions}
                   extraData={expanded}
@@ -268,13 +229,10 @@ export const Dropdown = memo<DropdownProps>(function Dropdown({
                   renderItem={renderItem}
                   style={styles.optionList}
                 />
-                {multiSelect && selectedValues.length > 0 && (
-                  <TouchableOpacity
-                    style={[styles.doneButton, { backgroundColor: colors.primary }]}
-                    onPress={handleClose}
-                  >
-                    <Text style={[styles.doneButtonText, { color: colors.primaryText }]}>
-                      Fertig ({selectedValues.length})
+                {multiSelect && (
+                  <TouchableOpacity style={styles.doneButton} onPress={handleClose}>
+                    <Text style={styles.doneButtonText}>
+                      Fertig{selectedValues.length > 0 ? ` (${selectedValues.length})` : ''}
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -296,12 +254,15 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 13,
     fontWeight: '600',
+    color: RETRO.textMuted,
   },
+  // randlos, weiß wie das Liga-Dropdown der Suche — Tiefe kommt vom HARD_SHADOW
   button: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    borderRadius: 2, // Anstoss-Optik: eckig, randlos
+    borderRadius: 0,
+    backgroundColor: RETRO.inputBg,
     paddingHorizontal: 12,
     paddingVertical: 12,
     minHeight: 44,
@@ -323,6 +284,7 @@ const styles = StyleSheet.create({
   chevron: {
     fontSize: 10,
     marginLeft: 8,
+    color: RETRO.textMuted,
   },
   overlay: {
     flex: 1,
@@ -330,67 +292,95 @@ const styles = StyleSheet.create({
   },
   dropdown: {
     position: 'absolute',
+    backgroundColor: RETRO.white,
     borderWidth: 1,
-    borderRadius: 2, // Anstoss-Optik: eckig
-    ...(Platform.OS === 'web'
-      ? ({ boxShadow: '2px 2px 3px rgba(20, 20, 45, 0.45)' } as any)
-      : {
-          shadowColor: '#14142d',
-          shadowOffset: { width: 2, height: 2 },
-          shadowOpacity: 0.45,
-          shadowRadius: 2,
-          elevation: 5,
-        }),
+    borderColor: RETRO.shadowDark,
+    borderRadius: 0,
     overflow: 'hidden',
+    ...(Platform.OS === 'web'
+      ? ({ boxShadow: '3px 3px 0px rgba(20, 20, 45, 0.55)' } as any)
+      : { shadowColor: '#14142d', shadowOffset: { width: 3, height: 3 }, shadowOpacity: 0.55, shadowRadius: 0, elevation: 5 }),
   },
   optionList: {
-    maxHeight: 200,
+    maxHeight: 320,
     // RN-Web rendert die Liste sonst mit overflow:hidden — Mausrad-Scroll erzwingen
     ...(Platform.OS === 'web' ? ({ overflowY: 'auto' } as any) : {}),
   },
   option: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingLeft: 12,
+    paddingRight: 12,
+  },
+  optionChild: {
+    paddingLeft: 36,
+  },
+  optionMain: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
   },
   checkbox: {
-    width: 18,
-    height: 18,
-    borderRadius: 2, // eckig
-    borderWidth: 2,
+    width: 16,
+    height: 16,
+    borderRadius: 0,
+    borderWidth: 1,
+    borderColor: RETRO.shadowDark,
     marginRight: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
+  checkboxOn: {
+    backgroundColor: RETRO.headerBg,
+    borderColor: RETRO.headerBg,
+  },
   checkmark: {
-    color: '#fff',
+    color: RETRO.white,
     fontSize: 11,
     fontWeight: '700',
+    lineHeight: 15,
   },
   optionText: {
-    fontSize: 14,
+    fontSize: 13,
+    fontWeight: '500',
+    color: RETRO.text,
     flexShrink: 1,
   },
-  optionChild: {
-    paddingLeft: 40,
+  optionTextSelected: {
+    fontWeight: '700',
+    color: RETRO.headerBg,
   },
   groupChevron: {
-    marginLeft: 'auto',
-    paddingLeft: 12,
-    paddingVertical: 2,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
   },
   groupChevronText: {
-    fontSize: 14,
+    fontSize: 13,
+    color: RETRO.textMuted,
+  },
+  clearRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: RETRO.rowBorder,
+  },
+  clearText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: RETRO.textMuted,
+  },
+  clearTextActive: {
+    color: '#b02020',
   },
   doneButton: {
-    margin: 8,
-    paddingVertical: 8,
-    borderRadius: 2, // eckig
+    paddingVertical: 10,
     alignItems: 'center',
+    backgroundColor: RETRO.headerBg,
   },
   doneButtonText: {
     fontSize: 14,
     fontWeight: '600',
+    color: RETRO.white,
   },
 });
