@@ -27,6 +27,7 @@ import {
   StipendiumSearchPlayer,
   PlayerTmDetails,
   PlayerTmSeasonStats,
+  PlayerTmCompetitionStats,
   fetchPlayerTmDetails,
   tmFlagUrl,
   flagForNationalTeam,
@@ -227,6 +228,9 @@ export function PlayerDetailModal({
   const [verlaufOpen, setVerlaufOpen] = useState(false);
   const [verlaufLoading, setVerlaufLoading] = useState(false);
   const [verlauf, setVerlauf] = useState<BeraterChange[] | null>(null);
+
+  // Pfeil an der Saison-Zeile: Spiele/Tore/Vorlagen je Wettbewerb (Matti 2026-11-14)
+  const [seasonOpen, setSeasonOpen] = useState<'current' | 'last' | null>(null);
 
   // TM-Links der früheren Agenturen (Agenturname -> agent_url)
   const [verlaufUrls, setVerlaufUrls] = useState<Map<string, string>>(new Map());
@@ -510,6 +514,45 @@ export function PlayerDetailModal({
     </View>
   );
 
+  // Saison-Zeile der EINSÄTZE-Karte; Pfeil klappt die Werte je Wettbewerb auf (wie der Beraterverlauf)
+  const seasonRow = (which: 'current' | 'last') => {
+    const isCurrent = which === 'current';
+    const label = `Saison ${tmDetails ? seasonLabel(tmDetails.seasonYear - (isCurrent ? 0 : 1)) : isCurrent ? 'aktuell' : 'letzte'}`;
+    const stats = isCurrent ? tmDetails?.statsCurrentSeason : tmDetails?.statsLastSeason;
+    const games = isCurrent ? tmDetails?.gamesCurrentSeason : tmDetails?.gamesLastSeason;
+    const comps: PlayerTmCompetitionStats[] = (isCurrent ? tmDetails?.competitionsCurrentSeason : tmDetails?.competitionsLastSeason) || [];
+    const open = seasonOpen === which;
+    if (tmLoading) {
+      return cardRow(label, isCurrent ? <ActivityIndicator size="small" color={RETRO.headerBg} /> : ' ', !isCurrent);
+    }
+    if (comps.length === 0) return cardRow(label, seasonStatsText(stats, games), !isCurrent);
+    return (
+      <View style={{ zIndex: isCurrent ? 41 : 40 }}>
+        {cardRow(
+          label,
+          <TouchableOpacity style={styles.agentValue} onPress={() => setSeasonOpen(open ? null : which)} activeOpacity={0.7} hitSlop={4}>
+            <Text style={styles.cardRowValue} numberOfLines={1}>{seasonStatsText(stats, games)}</Text>
+            <Text style={styles.verlaufChevron}>{open ? '▾' : '▸'}</Text>
+          </TouchableOpacity>,
+          !isCurrent
+        )}
+        {open && (
+          <View style={[styles.verlaufDropdown, HARD_SHADOW_LG, isMobile && { right: undefined, width: Math.min(windowWidth - 72, 360) }]}>
+            <View style={styles.verlaufHeader}>
+              <Text style={styles.verlaufHeaderText}>{`${label.toUpperCase()} · NACH WETTBEWERB`}</Text>
+            </View>
+            {comps.map((c, index) => (
+              <View key={`${c.competitionId}|${c.club}`} style={[styles.verlaufRow, index === comps.length - 1 && { borderBottomWidth: 0 }]}>
+                <Text style={styles.verlaufAgent} numberOfLines={1}>{c.competition}</Text>
+                <Text style={styles.verlaufMeta}>{[c.club, seasonStatsText(c, c.games)].filter(Boolean).join(' · ')}</Text>
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   // Bericht ohne Spiel anlegen: Betreff ersetzt die Partie, Datum = heute
   const handleCreateReport = () => {
     const betreff = newReportBetreff.trim();
@@ -765,23 +808,12 @@ export function PlayerDetailModal({
                 </View>
               </View>
 
-              {/* Zeile 2: Einsätze · Berichte */}
-              <View style={styles.cardGrid}>
+              {/* Zeile 2: Einsätze · Berichte (zIndex: Wettbewerbs-Dropdown liegt über Zeile 3) */}
+              <View style={[styles.cardGrid, { zIndex: 20 }]}>
                 <View style={[styles.card, styles.cardEinsaetze, HARD_SHADOW, isMobile && { minWidth: 0, flexBasis: '100%' }]}>
                   {cardChip('EINSÄTZE')}
-                  {cardRow(
-                    `Saison ${tmDetails ? seasonLabel(tmDetails.seasonYear) : 'aktuell'}`,
-                    tmLoading ? (
-                      <ActivityIndicator size="small" color={RETRO.headerBg} />
-                    ) : (
-                      seasonStatsText(tmDetails?.statsCurrentSeason, tmDetails?.gamesCurrentSeason)
-                    )
-                  )}
-                  {cardRow(
-                    `Saison ${tmDetails ? seasonLabel(tmDetails.seasonYear - 1) : 'letzte'}`,
-                    tmLoading ? ' ' : seasonStatsText(tmDetails?.statsLastSeason, tmDetails?.gamesLastSeason),
-                    true
-                  )}
+                  {seasonRow('current')}
+                  {seasonRow('last')}
                 </View>
                 <View style={[styles.card, styles.cardBerichte, HARD_SHADOW, isMobile && { minWidth: 0, flexBasis: '100%' }]}>
                   {cardChip(`BERICHTE${matchEvals.length > 0 ? ` (${matchEvals.length})` : ''}`)}

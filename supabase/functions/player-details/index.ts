@@ -1,6 +1,6 @@
 // player-details: Lädt on-demand Zusatzinfos zu einem Spieler von Transfermarkt
 // - Transferhistorie (JSON-API von TM) -> letzter Verein + Datum/Saison
-// - Einsätze aktuelle + letzte Saison (aus der Leistungsdaten-Seite)
+// - Einsätze aktuelle + letzte Saison (tmapi performance-game), aufgeschlüsselt nach Wettbewerb
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { denyUnlessAccess } from '../_shared/access.ts';
 
@@ -54,8 +54,21 @@ interface SeasonStats {
   assists: number
 }
 
-/** Einsätze/Tore/Vorlagen pro Saison (gespielte Spiele) über die TM-Performance-API */
-async function fetchGamesBySeason(playerId: string): Promise<Record<number, SeasonStats> | null> {
+/** Ein Wettbewerb einer Saison, z. B. "3. Liga · VfB Stuttgart II · 8 Spiele" (Pfeil im Spielerprofil) */
+interface CompetitionStats extends SeasonStats {
+  competitionId: string
+  competition: string
+  club: string | null
+}
+
+interface SeasonPerformance {
+  totals: Record<number, SeasonStats>
+  // Saison -> "Wettbewerb|Verein" -> Werte
+  byCompetition: Record<number, Map<string, SeasonStats & { competitionId: string; clubId: string | null }>>
+}
+
+/** Einsätze/Tore/Vorlagen pro Saison (gespielte Spiele) über die TM-Performance-API, auch je Wettbewerb */
+async function fetchGamesBySeason(playerId: string): Promise<SeasonPerformance | null> {
   try {
     const r = await fetch(`https://tmapi.transfermarkt.technology/player/${playerId}/performance-game`, {
       headers: { ...FETCH_HEADERS, Accept: 'application/json' },
@@ -63,21 +76,91 @@ async function fetchGamesBySeason(playerId: string): Promise<Record<number, Seas
     if (!r.ok) return null
     const j = await r.json()
     const perf: any[] = j?.data?.performance || []
-    const played: Record<number, SeasonStats> = {}
+    const totals: Record<number, SeasonStats> = {}
+    const byCompetition: SeasonPerformance['byCompetition'] = {}
     for (const g of perf) {
-      const sid = g?.gameInformation?.seasonId
+      // Saison nach Spieldatum (Wechsel im Juli). TM führt Länderspiel-Wettbewerbe nach Kalenderjahr
+      // (U19-EM-Quali März 2026 hat seasonId 2026), die gehören aber zur Saison 25/26 (Redzepi, Matti 2026-11-14)
+      const date = g?.gameInformation?.date?.dateTimeUTC
+      const d = date ? new Date(date) : null
+      const sid = d && !isNaN(d.getTime())
+        ? (d.getUTCMonth() + 1 >= 7 ? d.getUTCFullYear() : d.getUTCFullYear() - 1)
+        : g?.gameInformation?.seasonId
       const state = g?.statistics?.generalStatistics?.participationState
       if (typeof sid === 'number' && state === 'played') {
-        const s = (played[sid] ||= { games: 0, goals: 0, assists: 0 })
+        const goals = g?.statistics?.goalStatistics?.goalsScoredTotal || 0
+        const assists = g?.statistics?.goalStatistics?.assists || 0
+        const s = (totals[sid] ||= { games: 0, goals: 0, assists: 0 })
         s.games += 1
-        s.goals += g?.statistics?.goalStatistics?.goalsScoredTotal || 0
-        s.assists += g?.statistics?.goalStatistics?.assists || 0
+        s.goals += goals
+        s.assists += assists
+        const competitionId = String(g?.gameInformation?.competitionId || '?')
+        const clubId = g?.clubsInformation?.club?.clubId ? String(g.clubsInformation.club.clubId) : null
+        const comps = (byCompetition[sid] ||= new Map())
+        const c = comps.get(`${competitionId}|${clubId}`) || { games: 0, goals: 0, assists: 0, competitionId, clubId }
+        c.games += 1
+        c.goals += goals
+        c.assists += assists
+        comps.set(`${competitionId}|${clubId}`, c)
       }
     }
-    return played
+    return { totals, byCompetition }
   } catch {
     return null
   }
+}
+
+// tmapi liefert internationale Wettbewerbe auch mit locale=de auf Englisch
+const COMPETITION_NAMES: Record<string, string> = { L1: '1. Bundesliga', L2: '2. Bundesliga' }
+function germanCompetitionName(id: string, shortName: string | null): string {
+  if (COMPETITION_NAMES[id]) return COMPETITION_NAMES[id]
+  if (!shortName) return id
+  return shortName
+    .replace(/^(U\d+) Euro qualification$/, '$1-EM-Qualifikation')
+    .replace(/^European Qualifiers$/, 'EM-Qualifikation')
+    .replace(/World Cup qualification/i, 'WM-Qualifikation')
+    .replace(/^(International )?Friendlies$/, 'Testspiele')
+}
+
+/** Namen für Wettbewerbe und Vereine der gezeigten Saisons (je ein Sammelabruf) */
+async function namesFor(path: 'competitions' | 'clubs', ids: string[]): Promise<Map<string, any>> {
+  const out = new Map<string, any>()
+  if (ids.length === 0) return out
+  try {
+    const q = ids.map((id) => `ids[]=${encodeURIComponent(id)}`).join('&')
+    const r = await fetch(`https://tmapi.transfermarkt.technology/${path}?${q}&locale=de`, {
+      headers: { ...FETCH_HEADERS, Accept: 'application/json' },
+    })
+    if (!r.ok) return out
+    const j = await r.json()
+    for (const item of j?.data || []) out.set(String(item.id), item)
+  } catch {
+    // ohne Namen geht es mit der Kennung weiter
+  }
+  return out
+}
+
+async function competitionBreakdown(perf: SeasonPerformance, seasons: number[]): Promise<Record<number, CompetitionStats[]>> {
+  const entries = seasons.flatMap((sid) => [...(perf.byCompetition[sid]?.values() || [])])
+  const [comps, clubs] = await Promise.all([
+    namesFor('competitions', [...new Set(entries.map((e) => e.competitionId))]),
+    namesFor('clubs', [...new Set(entries.map((e) => e.clubId).filter(Boolean) as string[])]),
+  ])
+  const out: Record<number, CompetitionStats[]> = {}
+  for (const sid of seasons) {
+    out[sid] = [...(perf.byCompetition[sid]?.values() || [])]
+      .map((e) => ({
+        competitionId: e.competitionId,
+        competition: germanCompetitionName(e.competitionId, comps.get(e.competitionId)?.shortName ?? comps.get(e.competitionId)?.name ?? null),
+        // "VfB Stuttgart UEFA U19" (Youth-League-Mannschaft) -> "VfB Stuttgart U19"
+        club: e.clubId ? clubs.get(e.clubId)?.name?.replace(/ UEFA (?=U\d+)/, ' ') ?? null : null,
+        games: e.games,
+        goals: e.goals,
+        assists: e.assists,
+      }))
+      .sort((a, b) => b.games - a.games || b.goals - a.goals)
+  }
+  return out
 }
 
 interface NationalTeamInfo {
@@ -182,8 +265,9 @@ serve(async (req: Request) => {
       fetchCurrentClub(pid),
     ])
 
-    const cur = gamesBySeason ? gamesBySeason[seasonYear] : null
-    const last = gamesBySeason ? gamesBySeason[seasonYear - 1] : null
+    const cur = gamesBySeason ? gamesBySeason.totals[seasonYear] : null
+    const last = gamesBySeason ? gamesBySeason.totals[seasonYear - 1] : null
+    const breakdown = gamesBySeason ? await competitionBreakdown(gamesBySeason, [seasonYear, seasonYear - 1]) : null
     return json({
       success: true,
       seasonYear,
@@ -191,6 +275,8 @@ serve(async (req: Request) => {
       gamesLastSeason: gamesBySeason ? last?.games || 0 : null,
       statsCurrentSeason: gamesBySeason ? cur || { games: 0, goals: 0, assists: 0 } : null,
       statsLastSeason: gamesBySeason ? last || { games: 0, goals: 0, assists: 0 } : null,
+      competitionsCurrentSeason: breakdown ? breakdown[seasonYear] : null,
+      competitionsLastSeason: breakdown ? breakdown[seasonYear - 1] : null,
       transfers,
       nationalTeam,
       currentClub,

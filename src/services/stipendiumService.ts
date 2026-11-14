@@ -135,6 +135,13 @@ export interface PlayerTmSeasonStats {
   assists: number;
 }
 
+/** Saisonwerte eines Wettbewerbs (Pfeil an der Saison im Spielerprofil) */
+export interface PlayerTmCompetitionStats extends PlayerTmSeasonStats {
+  competitionId: string;
+  competition: string;   // z. B. "3. Liga", "U19-EM-Qualifikation"
+  club: string | null;   // Mannschaft, z. B. "VfB Stuttgart II", "Kosovo U19"
+}
+
 export interface PlayerNationalTeam {
   name: string;             // z.B. "England U21", "Deutschland U16"
   countryId: number | null; // TM-Land-ID für die Länderflagge (CDN)
@@ -146,6 +153,8 @@ export interface PlayerTmDetails {
   gamesLastSeason: number | null;
   statsCurrentSeason: PlayerTmSeasonStats | null;
   statsLastSeason: PlayerTmSeasonStats | null;
+  competitionsCurrentSeason?: PlayerTmCompetitionStats[] | null;
+  competitionsLastSeason?: PlayerTmCompetitionStats[] | null;
   transfers: PlayerTmTransfer[];
   nationalTeam: PlayerNationalTeam | null;
   /** aktueller Verein laut TM (z. B. "1. FC Nürnberg U17") */
