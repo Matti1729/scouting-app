@@ -5,6 +5,10 @@ import { TeamLogo } from './ClubLogo';
 import { RETRO, MONO, HARD_SHADOW } from '../theme/retro';
 import { SAFE_BOTTOM } from '../utils/safeArea';
 import { loadTopscorers, TopscorerRow } from '../services/beraterService';
+import { ColumnDef } from '../types/tableColumns';
+import { useTableColumns } from '../hooks/useTableColumns';
+import { TableHeader } from './table/TableHeader';
+import { TableRow } from './table/TableRow';
 
 /**
  * Topscorer-Liste (Matti 2026-11-13): Tore und Vorlagen pro Liga und Jahrgang, nur für Berater.
@@ -66,6 +70,25 @@ interface ScorerEntry {
 
 const PAGE = 60;
 
+// Spalten am Desktop: Breite ziehen und Reihenfolge per Drag tauschen wie in der KMH-App (Matti 2026-11-15),
+// der Stand bleibt gespeichert
+const COLUMNS: ColumnDef[] = [
+  { key: 'rank', label: '#', defaultFlex: 0.25, minWidth: 30 },
+  { key: 'name', label: 'Name', defaultFlex: 1.6, minWidth: 150 },
+  { key: 'geb', label: 'Geb.', defaultFlex: 0.7, minWidth: 80 },
+  { key: 'pos', label: 'Position', defaultFlex: 1, minWidth: 90 },
+  { key: 'verein', label: 'Verein', defaultFlex: 1.4, minWidth: 120 },
+  { key: 'liga', label: 'Liga', defaultFlex: 0.9, minWidth: 80 },
+  { key: 'sp', label: 'SP', defaultFlex: 0.35, minWidth: 40 },
+  { key: 'tore', label: 'Tore', defaultFlex: 0.4, minWidth: 44 },
+  { key: 'vorl', label: 'Vorl.', defaultFlex: 0.4, minWidth: 44 },
+  { key: 'berater', label: 'Berater', defaultFlex: 1.1, minWidth: 90 },
+];
+const HEADER_COLORS = {
+  surfaceSecondary: RETRO.headerBg, border: RETRO.headerBg, text: RETRO.yellow,
+  textSecondary: RETRO.headerText, primary: RETRO.yellow,
+};
+
 export function TopscorerView({
   isMobile,
   clubLogoMap,
@@ -82,6 +105,8 @@ export function TopscorerView({
   const [leagueFilter, setLeagueFilter] = useState<string[]>([]);
   const [sort, setSort] = useState<Sort>('goals');
   const [visible, setVisible] = useState(PAGE);
+  const [tableWidth, setTableWidth] = useState(0);
+  const table = useTableColumns(COLUMNS, tableWidth, 'topscorer_v1');
 
   useEffect(() => {
     loadTopscorers().then(setRows).catch(() => setRows([]));
@@ -257,38 +282,60 @@ export function TopscorerView({
       {filters}
       <View style={[s.panel, HARD_SHADOW]}>
         {sortChips(false)}
-        <View style={s.thead}>
-          <Text style={[s.th, s.cRank]}>#</Text>
-          <Text style={[s.th, s.cName]}>NAME</Text>
-          <Text style={[s.th, s.cBirth]}>GEB.</Text>
-          <Text style={[s.th, s.cPos]}>POSITION</Text>
-          <Text style={[s.th, s.cClub]}>VEREIN</Text>
-          <Text style={[s.th, s.cLeague]}>LIGA</Text>
-          <Text style={[s.th, s.cNum]}>SP</Text>
-          <Text style={[s.th, s.cNum]}>TORE</Text>
-          <Text style={[s.th, s.cNum]}>VORL.</Text>
-          <Text style={[s.th, s.cAgent]}>BERATER</Text>
+        <View onLayout={(ev) => setTableWidth(ev.nativeEvent.layout.width - 24)}>
+          {tableWidth > 0 && (
+            <TableHeader
+              columnDefs={COLUMNS}
+              columnOrder={table.columnOrder}
+              getColumnWidth={table.getColumnWidth}
+              onResizeStart={table.onResizeStart}
+              onDragStart={table.onDragStart}
+              resizingKey={table.resizingKey}
+              draggingKey={table.draggingKey}
+              dragOverKey={table.dragOverKey}
+              colors={HEADER_COLORS}
+              setHeaderRef={table.setHeaderRef}
+              style={s.thead}
+              textStyle={s.th}
+              lineColor="rgba(255,255,255,0.5)"
+            />
+          )}
         </View>
         <ScrollView onScroll={onScroll} scrollEventThrottle={200} style={{ flex: 1 }}>
           {shown.length === 0 && empty}
-          {shown.map((e, i) => (
-            <View key={e.tm_player_id} style={s.tr}>
-              <Text style={[s.rank, s.cRank]}>{i + 1}</Text>
-              <TouchableOpacity style={s.cName} onPress={() => onOpenPlayer(e.tm_player_id, e.player_name)} activeOpacity={0.7}>
-                {nameText(e.player_name)}
-              </TouchableOpacity>
-              <Text style={[s.mono, s.cBirth]} numberOfLines={1}>{birthLabel(e.birth_date) || '–'}</Text>
-              <Text style={[s.cell, s.cPos]} numberOfLines={1}>{e.position || '–'}</Text>
-              <View style={[s.cClub, s.clubCell]}>
-                {!!e.club_name && <TeamLogo name={e.club_name} map={clubLogoMap} size={16} teamId={e.club_tm_id} />}
-                <Text style={s.cell} numberOfLines={1}>{e.club_name || ''}</Text>
-              </View>
-              <Text style={[s.cell, s.muted, s.cLeague]} numberOfLines={1}>{e.leagues.map(leagueLabel).join(' / ')}</Text>
-              <Text style={[s.numCell, s.muted, s.cNum]}>{num(e.games)}</Text>
-              <Text style={[s.numCell, s.cNum, sort !== 'assists' && s.hi, e.goals == null && s.muted]}>{num(e.goals)}</Text>
-              <Text style={[s.numCell, s.cNum, sort !== 'goals' && s.hi, e.assists == null && s.muted]}>{num(e.assists)}</Text>
-              <Text style={[s.agent, s.cAgent]} numberOfLines={1}>{e.agent_name || ''}</Text>
-            </View>
+          {tableWidth > 0 && shown.map((e, i) => (
+            <TableRow
+              key={e.tm_player_id}
+              columnOrder={table.columnOrder}
+              getColumnWidth={table.getColumnWidth}
+              style={s.tr}
+              renderCell={(key) => {
+                switch (key) {
+                  case 'rank': return <Text style={s.rank}>{i + 1}</Text>;
+                  case 'name':
+                    return (
+                      <TouchableOpacity style={s.full} onPress={() => onOpenPlayer(e.tm_player_id, e.player_name)} activeOpacity={0.7}>
+                        {nameText(e.player_name)}
+                      </TouchableOpacity>
+                    );
+                  case 'geb': return <Text style={s.mono} numberOfLines={1}>{birthLabel(e.birth_date) || '–'}</Text>;
+                  case 'pos': return <Text style={s.cell} numberOfLines={1}>{e.position || '–'}</Text>;
+                  case 'verein':
+                    return (
+                      <View style={[s.full, s.clubCell]}>
+                        {!!e.club_name && <TeamLogo name={e.club_name} map={clubLogoMap} size={16} teamId={e.club_tm_id} />}
+                        <Text style={s.cell} numberOfLines={1}>{e.club_name || ''}</Text>
+                      </View>
+                    );
+                  case 'liga': return <Text style={[s.cell, s.muted]} numberOfLines={1}>{e.leagues.map(leagueLabel).join(' / ')}</Text>;
+                  case 'sp': return <Text style={[s.numCell, s.muted]}>{num(e.games)}</Text>;
+                  case 'tore': return <Text style={[s.numCell, sort !== 'assists' && s.hi, e.goals == null && s.muted]}>{num(e.goals)}</Text>;
+                  case 'vorl': return <Text style={[s.numCell, sort !== 'goals' && s.hi, e.assists == null && s.muted]}>{num(e.assists)}</Text>;
+                  case 'berater': return <Text style={s.agent} numberOfLines={1}>{e.agent_name || ''}</Text>;
+                  default: return null;
+                }
+              }}
+            />
           ))}
         </ScrollView>
         <Text style={s.foot}>Tore: die 25 besten Torschützen jeder Liga, Vorlagen: die 25 besten Vorlagengeber, bei Gleichstand auf Platz 25 auch mehr. Klick auf den Namen öffnet das Spielerprofil.</Text>
@@ -311,17 +358,10 @@ const s = StyleSheet.create({
   chipText: { fontFamily: MONO, fontSize: 10, fontWeight: '700', letterSpacing: 1.5, color: RETRO.textMuted },
   chipTextOn: { color: RETRO.white },
   panel: { flex: 1, backgroundColor: RETRO.white, marginHorizontal: 16, marginTop: 16, marginBottom: 16, paddingTop: 14 },
-  thead: { flexDirection: 'row', alignItems: 'center', backgroundColor: RETRO.headerBg, height: 32, paddingHorizontal: 12, gap: 8 },
+  thead: { height: 32, paddingVertical: 0, paddingHorizontal: 12, borderBottomWidth: 0 },
   th: { fontFamily: MONO, fontSize: 11, fontWeight: '700', letterSpacing: 1.5, color: RETRO.headerText },
-  tr: { flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingHorizontal: 12, gap: 8, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder },
-  cRank: { width: 34 },
-  cName: { flex: 1.5, minWidth: 0 },
-  cBirth: { width: 84 },
-  cPos: { width: 140 },
-  cClub: { flex: 1.2, minWidth: 0 },
-  cLeague: { width: 110 },
-  cNum: { width: 46, textAlign: 'center' },
-  cAgent: { flex: 1, minWidth: 0 },
+  tr: { minHeight: 48, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder },
+  full: { alignSelf: 'stretch', minWidth: 0 },
   clubCell: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   rank: { fontFamily: MONO, fontWeight: '700', color: RETRO.textMuted },
   name: { fontSize: 14, fontWeight: '800', color: RETRO.text, lineHeight: 18 },
@@ -329,7 +369,7 @@ const s = StyleSheet.create({
   mono: { fontFamily: MONO, fontSize: 12, color: RETRO.text },
   cell: { fontSize: 13, color: RETRO.text, flexShrink: 1 },
   muted: { color: RETRO.textMuted },
-  numCell: { fontSize: 14, fontWeight: '700', color: RETRO.text, fontVariant: ['tabular-nums'] },
+  numCell: { alignSelf: 'stretch', textAlign: 'center', fontSize: 14, fontWeight: '700', color: RETRO.text, fontVariant: ['tabular-nums'] },
   hi: { backgroundColor: RETRO.yellow, paddingVertical: 3 },
   agent: { fontSize: 12, color: RETRO.textMuted },
   foot: { fontFamily: MONO, fontSize: 11, color: RETRO.textMuted, padding: 10 },

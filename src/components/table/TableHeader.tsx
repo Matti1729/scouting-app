@@ -18,6 +18,10 @@ interface TableHeaderProps {
   style?: any;
   renderHeaderExtra?: (key: string) => React.ReactNode;
   setHeaderRef?: (ref: any) => void;
+  /** Eigene Schrift für die Spaltennamen, z. B. Retro-Kopf in der Topscorer-Liste */
+  textStyle?: any;
+  /** Farbe des Ziehstrichs zwischen den Spalten (Standard schwarz) */
+  lineColor?: string;
 }
 
 const DIVIDER_WIDTH = 12;
@@ -38,6 +42,8 @@ export function TableHeader({
   style,
   renderHeaderExtra,
   setHeaderRef,
+  textStyle,
+  lineColor,
 }: TableHeaderProps) {
   const defMap = new Map(columnDefs.map(d => [d.key, d]));
 
@@ -83,6 +89,7 @@ export function TableHeader({
                     style={[
                       styles.headerText,
                       { color: colors.textSecondary },
+                      textStyle,
                       sortKey === key && { color: colors.text },
                       Platform.OS === 'web' &&
                         ({ cursor: draggingKey ? 'grabbing' : 'grab', userSelect: 'none' } as any),
@@ -108,6 +115,7 @@ export function TableHeader({
                   columnKey={key}
                   isResizing={resizingKey === key}
                   onResizeStart={onResizeStart}
+                  lineColor={lineColor}
                 />
               ))}
           </React.Fragment>
@@ -121,10 +129,12 @@ function ResizeHandle({
   columnKey,
   isResizing,
   onResizeStart,
+  lineColor,
 }: {
   columnKey: string;
   isResizing: boolean;
   onResizeStart: (key: string, e: any) => void;
+  lineColor?: string;
 }) {
   const [hovered, setHovered] = useState(false);
   const visible = hovered || isResizing;
@@ -145,6 +155,7 @@ function ResizeHandle({
         style={[
           styles.resizeLine,
           { width: visible ? 3 : 1 },
+          lineColor ? { backgroundColor: lineColor } : null,
         ]}
       />
     </View>
