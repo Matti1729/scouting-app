@@ -831,8 +831,6 @@ export interface TopscorerRow {
   birth_date: string | null;
   position: string | null;
   agent_name: string | null;
-  contract_until: string | null; // "2028-06-30"
-  market_value: string | null;   // "5,00 Mio. €"
   updated_at: string;
 }
 
@@ -855,7 +853,7 @@ export async function loadTopscorers(season = currentRankingSeason()): Promise<T
       .from('berater_player_stats')
       .select(`tm_player_id, player_id, player_name, league_id, club_name, stat_type, stat_value, games_played,
         rank_in_league, tm_profile_url, birth_date, position, updated_at,
-        berater_players(birth_date, position, current_agent_name, contract_until, market_value, berater_clubs(club_name, tm_club_id))`)
+        berater_players(birth_date, position, current_agent_name, berater_clubs(club_name, tm_club_id))`)
       .eq('season', season)
       .order('id')
       .range(from, from + 999);
@@ -883,8 +881,6 @@ export async function loadTopscorers(season = currentRankingSeason()): Promise<T
       birth_date: bp?.birth_date || r.birth_date,
       position: bp?.position || r.position,
       agent_name: bp?.current_agent_name ?? null,
-      contract_until: bp?.contract_until ?? null,
-      market_value: bp?.market_value ?? null,
       updated_at: r.updated_at,
     };
   });

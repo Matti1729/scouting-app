@@ -13,7 +13,7 @@ import { loadTopscorers, TopscorerRow } from '../services/beraterService';
  * die Vorlagenliste, Tore + Vorlagen beide (Matti 2026-11-14: Vorlagengeber haben bei den Torjägern nichts
  * verloren). Die jeweils andere Zahl und die Spiele kommen über tmapi dazu.
  * Spalten (Matti 2026-11-15): Name wie in der KMH-App (NACHNAME fett, Vorname dünn), Geburtsdatum,
- * Position, Verein, Liga, Spiele, Tore, Vorlagen, Vertrag, Marktwert, Berater. Watchlist nur im Spielerprofil.
+ * Position, Verein, Liga, Spiele, Tore, Vorlagen, Berater. Vertrag, Marktwert und Watchlist nur im Spielerprofil.
  */
 
 type Sort = 'goals' | 'assists' | 'both';
@@ -33,13 +33,6 @@ const LEAGUE_ORDER = ['L1', 'L2', 'L3', 'RLN3', 'RLN4', 'RLW3', 'RLSW', 'RLB3', 
 const birthYear = (d: string | null): string | null => d?.match(/(\d{4})$/)?.[1] ?? null;
 // Volles Datum "05.04.2011", sonst nur der Jahrgang
 const birthLabel = (d: string | null): string | null => (d && /^\d{2}\.\d{2}\.\d{4}$/.test(d) ? d : birthYear(d));
-// "2028-06-30" -> "06/2028"
-const contractLabel = (d: string | null): string | null => {
-  const m = d?.match(/^(\d{4})-(\d{2})/);
-  return m ? `${m[2]}/${m[1]}` : null;
-};
-// "5,00 Mio. €" -> "5 Mio. €"
-const marketLabel = (v: string | null): string | null => (v ? v.replace(/,00(?= )/, '') : null);
 // Nachname wie in der KMH-App: letztes Wort samt Namenszusatz ("van den Heuvel", "Ben Balla")
 const NAME_PARTICLES = new Set(['van', 'von', 'de', 'da', 'di', 'del', 'der', 'den', 'dos', 'das', 'ter', 'ten', 'le', 'la', 'el', 'al', 'ben']);
 const splitName = (full: string): { first: string; last: string } => {
@@ -65,8 +58,6 @@ interface ScorerEntry {
   year: string | null;
   position: string | null;
   agent_name: string | null;
-  contract_until: string | null;
-  market_value: string | null;
   tm_profile_url: string | null;
   birth_date: string | null;
   inGoals: boolean;   // steht in der Torliste einer gewählten Liga
@@ -136,7 +127,6 @@ export function TopscorerView({
           tm_player_id: r.tm_player_id, player_id: r.player_id, player_name: r.player_name,
           club_name: r.club_name, club_tm_id: r.club_tm_id, leagues: [], games: null, goals: null, assists: null,
           year: birthYear(r.birth_date), position: shortPosition(r.position), agent_name: r.agent_name,
-          contract_until: r.contract_until, market_value: r.market_value,
           tm_profile_url: r.tm_profile_url, birth_date: r.birth_date, gamesByLeague: new Map(),
           inGoals: false, inAssists: false,
         };
@@ -154,8 +144,6 @@ export function TopscorerView({
       e.year = e.year || birthYear(r.birth_date);
       e.position = e.position || shortPosition(r.position);
       e.agent_name = e.agent_name || r.agent_name;
-      e.contract_until = e.contract_until || r.contract_until;
-      e.market_value = e.market_value || r.market_value;
     }
     const value = (e: ScorerEntry) =>
       sort === 'goals' ? e.goals ?? -1 : sort === 'assists' ? e.assists ?? -1 : (e.goals ?? 0) + (e.assists ?? 0);
@@ -252,8 +240,6 @@ export function TopscorerView({
                     {[
                       e.games != null ? `${e.games} Sp.` : null,
                       extra,
-                      contractLabel(e.contract_until) ? `Vertrag ${contractLabel(e.contract_until)}` : null,
-                      marketLabel(e.market_value),
                       e.agent_name,
                     ].filter(Boolean).join(' · ')}
                   </Text>
@@ -281,8 +267,6 @@ export function TopscorerView({
           <Text style={[s.th, s.cNum]}>SP</Text>
           <Text style={[s.th, s.cNum]}>TORE</Text>
           <Text style={[s.th, s.cNum]}>VORL.</Text>
-          <Text style={[s.th, s.cContract]}>VERTRAG</Text>
-          <Text style={[s.th, s.cValue]}>MARKTWERT</Text>
           <Text style={[s.th, s.cAgent]}>BERATER</Text>
         </View>
         <ScrollView onScroll={onScroll} scrollEventThrottle={200} style={{ flex: 1 }}>
@@ -303,8 +287,6 @@ export function TopscorerView({
               <Text style={[s.numCell, s.muted, s.cNum]}>{num(e.games)}</Text>
               <Text style={[s.numCell, s.cNum, sort !== 'assists' && s.hi, e.goals == null && s.muted]}>{num(e.goals)}</Text>
               <Text style={[s.numCell, s.cNum, sort !== 'goals' && s.hi, e.assists == null && s.muted]}>{num(e.assists)}</Text>
-              <Text style={[s.mono, s.cContract]} numberOfLines={1}>{contractLabel(e.contract_until) || '–'}</Text>
-              <Text style={[s.cell, s.cValue]} numberOfLines={1}>{marketLabel(e.market_value) || '–'}</Text>
               <Text style={[s.agent, s.cAgent]} numberOfLines={1}>{e.agent_name || ''}</Text>
             </View>
           ))}
@@ -339,8 +321,6 @@ const s = StyleSheet.create({
   cClub: { flex: 1.2, minWidth: 0 },
   cLeague: { width: 110 },
   cNum: { width: 46, textAlign: 'center' },
-  cContract: { width: 74 },
-  cValue: { width: 92 },
   cAgent: { flex: 1, minWidth: 0 },
   clubCell: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   rank: { fontFamily: MONO, fontWeight: '700', color: RETRO.textMuted },
