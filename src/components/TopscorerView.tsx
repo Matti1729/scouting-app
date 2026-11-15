@@ -4,7 +4,7 @@ import { Dropdown } from './Dropdown';
 import { TeamLogo } from './ClubLogo';
 import { RETRO, MONO, HARD_SHADOW } from '../theme/retro';
 import { SAFE_BOTTOM } from '../utils/safeArea';
-import { loadTopscorers, addStatPlayerToWatchlist, TopscorerRow, PlayerStat } from '../services/beraterService';
+import { loadTopscorers, TopscorerRow } from '../services/beraterService';
 
 /**
  * Topscorer-Liste (Matti 2026-11-13): Tore und Vorlagen pro Liga und Jahrgang, nur für Berater.
@@ -12,6 +12,8 @@ import { loadTopscorers, addStatPlayerToWatchlist, TopscorerRow, PlayerStat } fr
  * Sortierung Tore zeigt nur die Torliste jeder Liga (Top 25, bei Gleichstand auf Platz 25 mehr), Vorlagen nur
  * die Vorlagenliste, Tore + Vorlagen beide (Matti 2026-11-14: Vorlagengeber haben bei den Torjägern nichts
  * verloren). Die jeweils andere Zahl und die Spiele kommen über tmapi dazu.
+ * Spalten (Matti 2026-11-15): Name wie in der KMH-App (NACHNAME fett, Vorname dünn), Geburtsdatum,
+ * Position, Verein, Liga, Spiele, Tore, Vorlagen, Vertrag, Marktwert, Berater. Watchlist nur im Spielerprofil.
  */
 
 type Sort = 'goals' | 'assists' | 'both';
@@ -29,6 +31,24 @@ const leagueLabel = (key: string): string => LEAGUE_LABELS[key] || key;
 const LEAGUE_ORDER = ['L1', 'L2', 'L3', 'RLN3', 'RLN4', 'RLW3', 'RLSW', 'RLB3', 'U19', 'U17'];
 
 const birthYear = (d: string | null): string | null => d?.match(/(\d{4})$/)?.[1] ?? null;
+// Volles Datum "05.04.2011", sonst nur der Jahrgang
+const birthLabel = (d: string | null): string | null => (d && /^\d{2}\.\d{2}\.\d{4}$/.test(d) ? d : birthYear(d));
+// "2028-06-30" -> "06/2028"
+const contractLabel = (d: string | null): string | null => {
+  const m = d?.match(/^(\d{4})-(\d{2})/);
+  return m ? `${m[2]}/${m[1]}` : null;
+};
+// "5,00 Mio. €" -> "5 Mio. €"
+const marketLabel = (v: string | null): string | null => (v ? v.replace(/,00(?= )/, '') : null);
+// Nachname wie in der KMH-App: letztes Wort samt Namenszusatz ("van den Heuvel", "Ben Balla")
+const NAME_PARTICLES = new Set(['van', 'von', 'de', 'da', 'di', 'del', 'der', 'den', 'dos', 'das', 'ter', 'ten', 'le', 'la', 'el', 'al', 'ben']);
+const splitName = (full: string): { first: string; last: string } => {
+  const parts = full.trim().split(/\s+/);
+  if (parts.length < 2) return { first: '', last: full };
+  let i = parts.length - 1;
+  while (i > 1 && NAME_PARTICLES.has(parts[i - 1].toLowerCase())) i--;
+  return { first: parts.slice(0, i).join(' '), last: parts.slice(i).join(' ') };
+};
 // "Sturm - Mittelstürmer" -> "Mittelstürmer"
 const shortPosition = (p: string | null): string | null => (p ? p.split(' - ').pop() || p : null);
 
@@ -45,6 +65,8 @@ interface ScorerEntry {
   year: string | null;
   position: string | null;
   agent_name: string | null;
+  contract_until: string | null;
+  market_value: string | null;
   tm_profile_url: string | null;
   birth_date: string | null;
   inGoals: boolean;   // steht in der Torliste einer gewählten Liga
@@ -56,16 +78,12 @@ const PAGE = 60;
 export function TopscorerView({
   isMobile,
   clubLogoMap,
-  watchlistIds,
   onOpenPlayer,
-  onAddedToWatchlist,
   onStandChange,
 }: {
   isMobile: boolean;
   clubLogoMap: Map<string, string>;
-  watchlistIds: Set<string>;
   onOpenPlayer: (tmPlayerId: string, name: string) => void;
-  onAddedToWatchlist: (playerId: string | null) => void;
   /** Stand der Daten ("Sa, 14.11."), steht im gelben Kopf der Suchmaschine (Matti 2026-11-14) */
   onStandChange?: (stand: string | null) => void;
 }) {
@@ -73,8 +91,6 @@ export function TopscorerView({
   const [leagueFilter, setLeagueFilter] = useState<string[]>([]);
   const [sort, setSort] = useState<Sort>('goals');
   const [visible, setVisible] = useState(PAGE);
-  const [addedTm, setAddedTm] = useState<Set<string>>(new Set());
-  const [adding, setAdding] = useState<string | null>(null);
 
   useEffect(() => {
     loadTopscorers().then(setRows).catch(() => setRows([]));
@@ -120,6 +136,7 @@ export function TopscorerView({
           tm_player_id: r.tm_player_id, player_id: r.player_id, player_name: r.player_name,
           club_name: r.club_name, club_tm_id: r.club_tm_id, leagues: [], games: null, goals: null, assists: null,
           year: birthYear(r.birth_date), position: shortPosition(r.position), agent_name: r.agent_name,
+          contract_until: r.contract_until, market_value: r.market_value,
           tm_profile_url: r.tm_profile_url, birth_date: r.birth_date, gamesByLeague: new Map(),
           inGoals: false, inAssists: false,
         };
@@ -137,6 +154,8 @@ export function TopscorerView({
       e.year = e.year || birthYear(r.birth_date);
       e.position = e.position || shortPosition(r.position);
       e.agent_name = e.agent_name || r.agent_name;
+      e.contract_until = e.contract_until || r.contract_until;
+      e.market_value = e.market_value || r.market_value;
     }
     const value = (e: ScorerEntry) =>
       sort === 'goals' ? e.goals ?? -1 : sort === 'assists' ? e.assists ?? -1 : (e.goals ?? 0) + (e.assists ?? 0);
@@ -151,25 +170,6 @@ export function TopscorerView({
     return max ? new Date(max).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit' }) : null;
   }, [rows]);
   useEffect(() => onStandChange?.(lastUpdate), [lastUpdate, onStandChange]);
-
-  const onWatchlist = (e: ScorerEntry) => addedTm.has(e.tm_player_id) || (!!e.player_id && watchlistIds.has(e.player_id));
-
-  const addToWatchlist = async (e: ScorerEntry) => {
-    if (adding) return;
-    setAdding(e.tm_player_id);
-    const stat: PlayerStat = {
-      id: '', player_id: e.player_id, tm_player_id: e.tm_player_id, player_name: e.player_name,
-      league_id: e.leagues[0], club_name: e.club_name, stat_type: 'goals', stat_value: e.goals ?? 0,
-      games_played: e.games, rank_in_league: null, season: null, tm_profile_url: e.tm_profile_url,
-      birth_date: e.birth_date, position: e.position, updated_at: '',
-    };
-    const ok = await addStatPlayerToWatchlist(stat);
-    if (ok) {
-      setAddedTm((prev) => new Set(prev).add(e.tm_player_id));
-      onAddedToWatchlist(e.player_id);
-    }
-    setAdding(null);
-  };
 
   const sortLabel = sort === 'goals' ? 'TORE' : sort === 'assists' ? 'VORL.' : 'T+V';
   const num = (v: number | null) => (v == null ? '–' : String(v));
@@ -210,14 +210,17 @@ export function TopscorerView({
   };
   const empty = <Text style={s.empty}>Keine Spieler für diese Auswahl.</Text>;
 
-  const watchBtn = (e: ScorerEntry, short: boolean) =>
-    onWatchlist(e) ? (
-      <View style={[s.btn, s.btnDone]}><Text style={[s.btnText, s.btnTextDone]}>{short ? '✓' : '✓ AUF WATCHLIST'}</Text></View>
-    ) : (
-      <TouchableOpacity style={[s.btn, HARD_SHADOW]} onPress={() => addToWatchlist(e)} disabled={adding === e.tm_player_id} activeOpacity={0.7}>
-        <Text style={s.btnText}>{adding === e.tm_player_id ? '…' : short ? '+ WL' : '+ WATCHLIST'}</Text>
-      </TouchableOpacity>
+
+  // Name wie in der KMH-App: NACHNAME groß und fett, Vorname dünn in Grau dahinter (Matti 2026-11-15)
+  const nameText = (full: string) => {
+    const { first, last } = splitName(full);
+    return (
+      <Text style={s.name} numberOfLines={1}>
+        {last.toUpperCase()}
+        {!!first && <Text style={s.first}> {first}</Text>}
+      </Text>
     );
+  };
 
   if (isMobile) {
     return (
@@ -237,17 +240,23 @@ export function TopscorerView({
                 </View>
                 <View style={s.cardRight}>
                   <TouchableOpacity onPress={() => onOpenPlayer(e.tm_player_id, e.player_name)} activeOpacity={0.7}>
-                    <Text style={s.name} numberOfLines={1}>{e.player_name}</Text>
+                    {nameText(e.player_name)}
                   </TouchableOpacity>
                   <Text style={s.meta} numberOfLines={1}>
-                    {[e.year, e.club_name, e.leagues.map(leagueLabel).join(' / ')].filter(Boolean).join(' · ')}
+                    {[birthLabel(e.birth_date), e.position].filter(Boolean).join(' · ')}
                   </Text>
-                  <View style={s.cardRow}>
-                    <Text style={[s.meta, { flex: 1 }]} numberOfLines={1}>
-                      {[e.games != null ? `${e.games} Sp.` : null, extra, e.agent_name].filter(Boolean).join(' · ')}
-                    </Text>
-                    {watchBtn(e, true)}
-                  </View>
+                  <Text style={s.meta} numberOfLines={1}>
+                    {[e.club_name, e.leagues.map(leagueLabel).join(' / ')].filter(Boolean).join(' · ')}
+                  </Text>
+                  <Text style={s.meta} numberOfLines={1}>
+                    {[
+                      e.games != null ? `${e.games} Sp.` : null,
+                      extra,
+                      contractLabel(e.contract_until) ? `Vertrag ${contractLabel(e.contract_until)}` : null,
+                      marketLabel(e.market_value),
+                      e.agent_name,
+                    ].filter(Boolean).join(' · ')}
+                  </Text>
                 </View>
               </View>
             );
@@ -264,14 +273,17 @@ export function TopscorerView({
         {sortChips(false)}
         <View style={s.thead}>
           <Text style={[s.th, s.cRank]}>#</Text>
-          <Text style={[s.th, s.cName]}>SPIELER</Text>
+          <Text style={[s.th, s.cName]}>NAME</Text>
+          <Text style={[s.th, s.cBirth]}>GEB.</Text>
+          <Text style={[s.th, s.cPos]}>POSITION</Text>
           <Text style={[s.th, s.cClub]}>VEREIN</Text>
           <Text style={[s.th, s.cLeague]}>LIGA</Text>
           <Text style={[s.th, s.cNum]}>SP</Text>
           <Text style={[s.th, s.cNum]}>TORE</Text>
           <Text style={[s.th, s.cNum]}>VORL.</Text>
+          <Text style={[s.th, s.cContract]}>VERTRAG</Text>
+          <Text style={[s.th, s.cValue]}>MARKTWERT</Text>
           <Text style={[s.th, s.cAgent]}>BERATER</Text>
-          <View style={s.cBtn} />
         </View>
         <ScrollView onScroll={onScroll} scrollEventThrottle={200} style={{ flex: 1 }}>
           {shown.length === 0 && empty}
@@ -279,9 +291,10 @@ export function TopscorerView({
             <View key={e.tm_player_id} style={s.tr}>
               <Text style={[s.rank, s.cRank]}>{i + 1}</Text>
               <TouchableOpacity style={s.cName} onPress={() => onOpenPlayer(e.tm_player_id, e.player_name)} activeOpacity={0.7}>
-                <Text style={s.name} numberOfLines={1}>{e.player_name}</Text>
-                <Text style={s.sub} numberOfLines={1}>{[e.year, e.position].filter(Boolean).join(' · ') || ' '}</Text>
+                {nameText(e.player_name)}
               </TouchableOpacity>
+              <Text style={[s.mono, s.cBirth]} numberOfLines={1}>{birthLabel(e.birth_date) || '–'}</Text>
+              <Text style={[s.cell, s.cPos]} numberOfLines={1}>{e.position || '–'}</Text>
               <View style={[s.cClub, s.clubCell]}>
                 {!!e.club_name && <TeamLogo name={e.club_name} map={clubLogoMap} size={16} teamId={e.club_tm_id} />}
                 <Text style={s.cell} numberOfLines={1}>{e.club_name || ''}</Text>
@@ -290,8 +303,9 @@ export function TopscorerView({
               <Text style={[s.numCell, s.muted, s.cNum]}>{num(e.games)}</Text>
               <Text style={[s.numCell, s.cNum, sort !== 'assists' && s.hi, e.goals == null && s.muted]}>{num(e.goals)}</Text>
               <Text style={[s.numCell, s.cNum, sort !== 'goals' && s.hi, e.assists == null && s.muted]}>{num(e.assists)}</Text>
+              <Text style={[s.mono, s.cContract]} numberOfLines={1}>{contractLabel(e.contract_until) || '–'}</Text>
+              <Text style={[s.cell, s.cValue]} numberOfLines={1}>{marketLabel(e.market_value) || '–'}</Text>
               <Text style={[s.agent, s.cAgent]} numberOfLines={1}>{e.agent_name || ''}</Text>
-              <View style={s.cBtn}>{watchBtn(e, false)}</View>
             </View>
           ))}
         </ScrollView>
@@ -319,25 +333,25 @@ const s = StyleSheet.create({
   th: { fontFamily: MONO, fontSize: 11, fontWeight: '700', letterSpacing: 1.5, color: RETRO.headerText },
   tr: { flexDirection: 'row', alignItems: 'center', minHeight: 48, paddingHorizontal: 12, gap: 8, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder },
   cRank: { width: 34 },
-  cName: { flex: 1.4, minWidth: 0 },
+  cName: { flex: 1.5, minWidth: 0 },
+  cBirth: { width: 84 },
+  cPos: { width: 140 },
   cClub: { flex: 1.2, minWidth: 0 },
   cLeague: { width: 110 },
-  cNum: { width: 50, textAlign: 'center' },
+  cNum: { width: 46, textAlign: 'center' },
+  cContract: { width: 74 },
+  cValue: { width: 92 },
   cAgent: { flex: 1, minWidth: 0 },
-  cBtn: { width: 128, alignItems: 'flex-end' },
   clubCell: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   rank: { fontFamily: MONO, fontWeight: '700', color: RETRO.textMuted },
-  name: { fontSize: 14, fontWeight: '700', color: RETRO.text, lineHeight: 18 },
-  sub: { fontFamily: MONO, fontSize: 11, color: RETRO.textMuted },
+  name: { fontSize: 14, fontWeight: '800', color: RETRO.text, lineHeight: 18 },
+  first: { fontSize: 13, fontWeight: '400', color: RETRO.textMuted },
+  mono: { fontFamily: MONO, fontSize: 12, color: RETRO.text },
   cell: { fontSize: 13, color: RETRO.text, flexShrink: 1 },
   muted: { color: RETRO.textMuted },
   numCell: { fontSize: 14, fontWeight: '700', color: RETRO.text, fontVariant: ['tabular-nums'] },
   hi: { backgroundColor: RETRO.yellow, paddingVertical: 3 },
   agent: { fontSize: 12, color: RETRO.textMuted },
-  btn: { backgroundColor: RETRO.face, paddingVertical: 6, paddingHorizontal: 8 },
-  btnDone: { backgroundColor: '#e3efe4' },
-  btnText: { fontFamily: MONO, fontSize: 11, fontWeight: '700', letterSpacing: 1, color: RETRO.text },
-  btnTextDone: { color: '#1a5f2a' },
   foot: { fontFamily: MONO, fontSize: 11, color: RETRO.textMuted, padding: 10 },
   empty: { padding: 24, textAlign: 'center', color: RETRO.textMuted },
   card: { flexDirection: 'row', backgroundColor: RETRO.white, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder },
@@ -345,6 +359,5 @@ const s = StyleSheet.create({
   cardBig: { fontSize: 24, fontWeight: '800', color: RETRO.text, lineHeight: 30 },
   cardLbl: { fontFamily: MONO, fontSize: 9, letterSpacing: 1, color: RETRO.text },
   cardRight: { flex: 1, minWidth: 0, paddingVertical: 9, paddingHorizontal: 12, gap: 3 },
-  cardRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   meta: { fontSize: 12, color: RETRO.textMuted },
 });

@@ -1999,14 +1999,10 @@ export function SuchmaschineScreen() {
           isMobile={isMobile}
           onStandChange={setTopscorerStand}
           clubLogoMap={clubLogoMap}
-          watchlistIds={watchlistIds}
           onOpenPlayer={async (tmId, name) => {
             const p = await fetchSearchPlayer(tmId, name);
             if (p) setDetailPlayer(p);
             else Linking.openURL(`https://www.transfermarkt.de/-/profil/spieler/${tmId}`);
-          }}
-          onAddedToWatchlist={(pid) => {
-            if (pid) setWatchlistIds((prev) => new Set(prev).add(pid));
           }}
         />
       ) : loading ? (
