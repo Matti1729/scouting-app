@@ -10,6 +10,7 @@ import { useTableColumns } from '../hooks/useTableColumns';
 import { TableHeader } from './table/TableHeader';
 import { TableRow } from './table/TableRow';
 import { WatchlistBadge } from './WatchlistBadge';
+import { formatAlter } from '../utils/formatAlter';
 
 /**
  * Topscorer-Liste (Matti 2026-11-13): Tore und Vorlagen pro Liga und Jahrgang, nur für Berater.
@@ -36,8 +37,10 @@ const leagueLabel = (key: string): string => LEAGUE_LABELS[key] || key;
 const LEAGUE_ORDER = ['L1', 'L2', 'L3', 'RLN3', 'RLN4', 'RLW3', 'RLSW', 'RLB3', 'U19', 'U17'];
 
 const birthYear = (d: string | null): string | null => d?.match(/(\d{4})$/)?.[1] ?? null;
-// Volles Datum "05.04.2011", sonst nur der Jahrgang
-const birthLabel = (d: string | null): string | null => (d && /^\d{2}\.\d{2}\.\d{4}$/.test(d) ? d : birthYear(d));
+// Alter wie in der Watchlist: "16 J. (08.03.10)", ohne volles Datum nur der Jahrgang (Matti 2026-11-15)
+const alterLabel = (d: string | null): string => (d && /^\d{2}\.\d{2}\.\d{4}$/.test(d) ? formatAlter(d) : birthYear(d) || '–');
+// Nur das Alter für die Handy-Karte: "16 J."
+const ageOnly = (d: string | null): string | null => alterLabel(d).match(/^\d+ J\./)?.[0] ?? null;
 // Nachname wie in der KMH-App: letztes Wort samt Namenszusatz ("van den Heuvel", "Ben Balla")
 const NAME_PARTICLES = new Set(['van', 'von', 'de', 'da', 'di', 'del', 'der', 'den', 'dos', 'das', 'ter', 'ten', 'le', 'la', 'el', 'al', 'ben']);
 const splitName = (full: string): { first: string; last: string } => {
@@ -76,7 +79,7 @@ const PAGE = 60;
 const COLUMNS: ColumnDef[] = [
   { key: 'rank', label: '#', defaultFlex: 0.25, minWidth: 30 },
   { key: 'name', label: 'Name', defaultFlex: 1.6, minWidth: 150 },
-  { key: 'geb', label: 'Geb.', defaultFlex: 0.7, minWidth: 80 },
+  { key: 'alter', label: 'Alter', defaultFlex: 0.8, minWidth: 95 },
   { key: 'pos', label: 'Position', defaultFlex: 1, minWidth: 90 },
   { key: 'verein', label: 'Verein', defaultFlex: 1.4, minWidth: 120 },
   { key: 'liga', label: 'Liga', defaultFlex: 0.9, minWidth: 80 },
@@ -109,7 +112,7 @@ export function TopscorerView({
   const [sort, setSort] = useState<Sort>('goals');
   const [visible, setVisible] = useState(PAGE);
   const [tableWidth, setTableWidth] = useState(0);
-  const table = useTableColumns(COLUMNS, tableWidth, 'topscorer_v2');
+  const table = useTableColumns(COLUMNS, tableWidth, 'topscorer_v3');
 
   useEffect(() => {
     loadTopscorers().then(setRows).catch(() => setRows([]));
@@ -228,13 +231,13 @@ export function TopscorerView({
 
 
   // Name wie in der KMH-App: NACHNAME groß und fett, Vorname dünn in Grau dahinter (Matti 2026-11-15)
-  const nameText = (e: ScorerEntry) => {
+  const nameText = (e: ScorerEntry, mobile = false) => {
     const { first, last } = splitName(e.player_name);
     return (
-      <View style={s.nameRow}>
-        <Text style={[s.name, { flexShrink: 1 }]} numberOfLines={1}>
+      <View style={[s.nameRow, { flexShrink: 1 }]}>
+        <Text style={[s.name, mobile && s.nameMobile, { flexShrink: 1 }]} numberOfLines={1}>
           {last.toUpperCase()}
-          {!!first && <Text style={s.first}> {first}</Text>}
+          {!!first && <Text style={[s.first, mobile && s.firstMobile]}> {first}</Text>}
         </Text>
         {!!e.player_id && watchlistIds.has(e.player_id) && <WatchlistBadge />}
       </View>
@@ -258,13 +261,12 @@ export function TopscorerView({
                   <Text style={s.cardLbl}>{sortLabel}</Text>
                 </View>
                 <View style={s.cardRight}>
-                  <TouchableOpacity onPress={() => onOpenPlayer(e.tm_player_id, e.player_name)} activeOpacity={0.7}>
-                    {nameText(e)}
+                  <TouchableOpacity onPress={() => onOpenPlayer(e.tm_player_id, e.player_name)} activeOpacity={0.7} style={s.nameRow}>
+                    {nameText(e, true)}
+                    {!!ageOnly(e.birth_date) && <Text style={s.ageMeta}>{`(${ageOnly(e.birth_date)})`}</Text>}
                   </TouchableOpacity>
-                  <Text style={s.meta} numberOfLines={1}>
-                    {[birthLabel(e.birth_date), e.position].filter(Boolean).join(' · ')}
-                  </Text>
-                  <Text style={s.meta} numberOfLines={1}>
+                  {!!e.position && <Text style={s.meta} numberOfLines={1}>{e.position}</Text>}
+                  <Text style={s.club} numberOfLines={1}>
                     {[e.club_name, e.leagues.map(leagueLabel).join(' / ')].filter(Boolean).join(' · ')}
                   </Text>
                   <Text style={s.meta} numberOfLines={1}>
@@ -331,7 +333,7 @@ export function TopscorerView({
                         {nameText(e)}
                       </TouchableOpacity>
                     );
-                  case 'geb': return <Text style={s.mono} numberOfLines={1}>{birthLabel(e.birth_date) || '–'}</Text>;
+                  case 'alter': return <Text style={s.cell} numberOfLines={1}>{alterLabel(e.birth_date)}</Text>;
                   case 'pos': return <Text style={s.cell} numberOfLines={1}>{e.position || '–'}</Text>;
                   case 'verein':
                     return (
@@ -340,7 +342,7 @@ export function TopscorerView({
                         <Text style={s.cell} numberOfLines={1}>{e.club_name || ''}</Text>
                       </View>
                     );
-                  case 'liga': return <Text style={[s.cell, s.muted]} numberOfLines={1}>{e.leagues.map(leagueLabel).join(' / ')}</Text>;
+                  case 'liga': return <Text style={s.cell} numberOfLines={1}>{e.leagues.map(leagueLabel).join(' / ')}</Text>;
                   case 'stats':
                     return (
                       <View style={s.statsRow}>
@@ -377,7 +379,7 @@ const s = StyleSheet.create({
   chipTextOn: { color: RETRO.white },
   panel: { flex: 1, backgroundColor: RETRO.white, marginHorizontal: 16, marginTop: 16, marginBottom: 16, paddingTop: 14 },
   thead: { height: 32, paddingVertical: 0, paddingHorizontal: 12, borderBottomWidth: 0 },
-  th: { fontFamily: MONO, fontSize: 11, fontWeight: '700', letterSpacing: 1.5, color: RETRO.headerText },
+  th: { fontSize: 11, fontWeight: '600', letterSpacing: 0.3, color: RETRO.headerText },
   tr: { minHeight: 48, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder },
   full: { alignSelf: 'stretch', minWidth: 0 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
@@ -385,15 +387,18 @@ const s = StyleSheet.create({
   statsHead: { flex: 1, textAlign: 'center' },
   statsCell: { flex: 1, alignSelf: 'auto' },
   clubCell: { flexDirection: 'row', alignItems: 'center', gap: 6 },
-  rank: { fontFamily: MONO, fontWeight: '700', color: RETRO.textMuted },
-  name: { fontSize: 14, fontWeight: '800', color: RETRO.text, lineHeight: 18 },
+  rank: { fontSize: 13, fontFamily: MONO, color: RETRO.textMuted },
+  name: { fontSize: 13, fontWeight: '700', color: RETRO.text, lineHeight: 17 },
   first: { fontSize: 13, fontWeight: '400', color: RETRO.textMuted },
-  mono: { fontFamily: MONO, fontSize: 12, color: RETRO.text },
+  nameMobile: { fontSize: 14, fontWeight: '600', lineHeight: 18 },
+  firstMobile: { fontSize: 14 },
+  ageMeta: { fontSize: 11, fontFamily: MONO, fontWeight: '600', color: RETRO.textMuted, flexShrink: 0 },
+  club: { fontSize: 13, color: RETRO.text },
   cell: { fontSize: 13, color: RETRO.text, flexShrink: 1 },
   muted: { color: RETRO.textMuted },
-  numCell: { alignSelf: 'stretch', textAlign: 'center', fontSize: 14, fontWeight: '700', color: RETRO.text, fontVariant: ['tabular-nums'] },
-  hi: { backgroundColor: RETRO.yellow, paddingVertical: 3 },
-  agent: { fontSize: 12, color: RETRO.textMuted },
+  numCell: { alignSelf: 'stretch', textAlign: 'center', fontSize: 13, fontFamily: MONO, color: RETRO.text, fontVariant: ['tabular-nums'] },
+  hi: { backgroundColor: RETRO.yellow, paddingVertical: 3, fontWeight: '700' },
+  agent: { fontSize: 13, color: RETRO.text },
   foot: { fontFamily: MONO, fontSize: 11, color: RETRO.textMuted, padding: 10 },
   empty: { padding: 24, textAlign: 'center', color: RETRO.textMuted },
   card: { flexDirection: 'row', backgroundColor: RETRO.white, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder },

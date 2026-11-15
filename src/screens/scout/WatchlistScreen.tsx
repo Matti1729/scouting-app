@@ -62,6 +62,7 @@ import { PlayerDetailModal } from '../../components/PlayerDetailModal';
 import { RatingBar } from '../../components/evaluation/RatingBar';
 import { fetchAgentInfo } from '../../services/transfermarktService';
 import { SAFE_BOTTOM } from '../../utils/safeArea';
+import { formatAlter } from '../../utils/formatAlter';
 
 const MATCH_EVAL_COLUMNS: ColumnDef[] = [
   { key: 'date', label: 'Datum', defaultFlex: 0.8, minWidth: 70 },
@@ -115,21 +116,6 @@ function reportTs(d: string | null): number {
   return new Date(year, parseInt(m[2], 10) - 1, parseInt(m[1], 10)).getTime();
 }
 
-/** "16 J. (08.03.10)" — Alter + Geburtsdatum kurz für die Alter-Spalte */
-function formatAlter(birthDate: string | null): string {
-  if (!birthDate) return '–';
-  const parts = birthDate.split('.');
-  if (parts.length !== 3) return birthDate;
-  const birth = new Date(parseInt(parts[2], 10), parseInt(parts[1], 10) - 1, parseInt(parts[0], 10));
-  const now = new Date();
-  let age = now.getFullYear() - birth.getFullYear();
-  if (now.getMonth() < birth.getMonth() || (now.getMonth() === birth.getMonth() && now.getDate() < birth.getDate())) {
-    age--;
-  }
-  const short = birthDate.replace(/\.(\d{2})(\d{2})$/, '.$2');
-  if (age < 10 || age > 50) return short; // unplausibel -> nur das Datum zeigen
-  return `${age} J. (${short})`;
-}
 
 /** Berichtsdatum einheitlich deutsch anzeigen */
 function formatReportDate(d: string | null): string {
