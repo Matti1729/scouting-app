@@ -10,6 +10,8 @@ import { useTableColumns } from '../hooks/useTableColumns';
 import { TableHeader } from './table/TableHeader';
 import { TableRow } from './table/TableRow';
 import { WatchlistBadge } from './WatchlistBadge';
+import { PlayerName } from './PlayerName';
+import { RETRO_TABLE_HEADER_COLORS, RETRO_TABLE_HEADER_TEXT, RETRO_TABLE_LINE } from '../theme/retroTable';
 import { formatAlter } from '../utils/formatAlter';
 import { potentialColor } from '../utils/potentialColor';
 
@@ -42,15 +44,6 @@ const birthYear = (d: string | null): string | null => d?.match(/(\d{4})$/)?.[1]
 const alterLabel = (d: string | null): string => (d && /^\d{2}\.\d{2}\.\d{4}$/.test(d) ? formatAlter(d) : birthYear(d) || '–');
 // Nur das Alter für die Handy-Karte: "16 J."
 const ageOnly = (d: string | null): string | null => alterLabel(d).match(/^\d+ J\./)?.[0] ?? null;
-// Nachname wie in der KMH-App: letztes Wort samt Namenszusatz ("van den Heuvel", "Ben Balla")
-const NAME_PARTICLES = new Set(['van', 'von', 'de', 'da', 'di', 'del', 'der', 'den', 'dos', 'das', 'ter', 'ten', 'le', 'la', 'el', 'al', 'ben']);
-const splitName = (full: string): { first: string; last: string } => {
-  const parts = full.trim().split(/\s+/);
-  if (parts.length < 2) return { first: '', last: full };
-  let i = parts.length - 1;
-  while (i > 1 && NAME_PARTICLES.has(parts[i - 1].toLowerCase())) i--;
-  return { first: parts.slice(0, i).join(' '), last: parts.slice(i).join(' ') };
-};
 // "Sturm - Mittelstürmer" -> "Mittelstürmer"
 const shortPosition = (p: string | null): string | null => (p ? p.split(' - ').pop() || p : null);
 
@@ -89,10 +82,6 @@ const COLUMNS: ColumnDef[] = [
   { key: 'berater', label: 'Berater', defaultFlex: 1.1, minWidth: 90 },
   { key: 'pot', label: 'Pot.', defaultFlex: 0.4, minWidth: 48 },
 ];
-const HEADER_COLORS = {
-  surfaceSecondary: RETRO.headerBg, border: RETRO.headerBg, text: RETRO.yellow,
-  textSecondary: RETRO.headerText, primary: RETRO.yellow,
-};
 
 export function TopscorerView({
   isMobile,
@@ -237,13 +226,9 @@ export function TopscorerView({
 
   // Name wie in der KMH-App: NACHNAME groß und fett, Vorname dünn in Grau dahinter (Matti 2026-11-15)
   const nameText = (e: ScorerEntry, mobile = false) => {
-    const { first, last } = splitName(e.player_name);
     return (
       <View style={[s.nameRow, { flexShrink: 1 }]}>
-        <Text style={[s.name, mobile && s.nameMobile, { flexShrink: 1 }]} numberOfLines={1}>
-          {last.toUpperCase()}
-          {!!first && <Text style={[s.first, mobile && s.firstMobile]}> {first}</Text>}
-        </Text>
+        <PlayerName name={e.player_name} mobile={mobile} />
         {!!e.player_id && watchlistIds.has(e.player_id) && <WatchlistBadge />}
       </View>
     );
@@ -318,15 +303,15 @@ export function TopscorerView({
               resizingKey={table.resizingKey}
               draggingKey={table.draggingKey}
               dragOverKey={table.dragOverKey}
-              colors={HEADER_COLORS}
+              colors={RETRO_TABLE_HEADER_COLORS}
               setHeaderRef={table.setHeaderRef}
               style={s.thead}
-              textStyle={s.th}
-              lineColor="rgba(255,255,255,0.5)"
+              textStyle={RETRO_TABLE_HEADER_TEXT}
+              lineColor={RETRO_TABLE_LINE}
               renderHeaderExtra={(key) =>
                 key === 'stats' ? (
                   <View style={s.statsRow}>
-                    {['SP', 'TORE', 'VORL.'].map((l) => <Text key={l} style={[s.th, s.statsHead]} numberOfLines={1}>{l}</Text>)}
+                    {['SP', 'TORE', 'VORL.'].map((l) => <Text key={l} style={[RETRO_TABLE_HEADER_TEXT, s.statsHead]} numberOfLines={1}>{l}</Text>)}
                   </View>
                 ) : null
               }
@@ -397,7 +382,6 @@ const s = StyleSheet.create({
   chipTextOn: { color: RETRO.white },
   panel: { flex: 1, backgroundColor: RETRO.white, marginHorizontal: 16, marginTop: 16, marginBottom: 16, paddingTop: 14 },
   thead: { height: 32, paddingVertical: 0, paddingHorizontal: 12, borderBottomWidth: 0 },
-  th: { fontSize: 11, fontWeight: '600', letterSpacing: 0.3, color: RETRO.headerText },
   tr: { minHeight: 48, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder },
   full: { alignSelf: 'stretch', minWidth: 0 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
@@ -408,10 +392,6 @@ const s = StyleSheet.create({
   statsCell: { flex: 1, alignSelf: 'auto' },
   clubCell: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   rank: { fontSize: 13, fontFamily: MONO, color: RETRO.textMuted },
-  name: { fontSize: 13, fontWeight: '700', color: RETRO.text, lineHeight: 17 },
-  first: { fontSize: 13, fontWeight: '400', color: RETRO.textMuted },
-  nameMobile: { fontSize: 14, fontWeight: '600', lineHeight: 18 },
-  firstMobile: { fontSize: 14 },
   ageMeta: { fontSize: 11, fontFamily: MONO, fontWeight: '600', color: RETRO.textMuted, flexShrink: 0 },
   club: { fontSize: 13, color: RETRO.text },
   cell: { fontSize: 13, color: RETRO.text, flexShrink: 1 },

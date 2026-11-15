@@ -48,13 +48,16 @@ import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
 import { TableRow } from '../../components/table/TableRow';
 import { WatchlistBadge } from '../../components/WatchlistBadge';
+import { PlayerName } from '../../components/PlayerName';
+import { formatAlter } from '../../utils/formatAlter';
+import { RETRO_TABLE_HEADER_COLORS, RETRO_TABLE_HEADER_STYLE, RETRO_TABLE_HEADER_TEXT, RETRO_TABLE_LINE } from '../../theme/retroTable';
 
 // Ergebnistabelle: Spalten sind per Drag tauschbar und per Klick sortierbar
 const RESULT_COLUMNS: ColumnDef[] = [
   { key: 'name', label: 'Name', defaultFlex: 1.6, minWidth: 140 },
   { key: 'pos', label: 'Pos', defaultFlex: 0.4, minWidth: 44 },
   { key: 'verein', label: 'Verein', defaultFlex: 1.6, minWidth: 140 },
-  { key: 'alter', label: 'Alter', defaultFlex: 0.5, minWidth: 50 },
+  { key: 'alter', label: 'Alter', defaultFlex: 0.8, minWidth: 95 },
   { key: 'mv', label: 'Marktwert', defaultFlex: 0.8, minWidth: 80 },
   { key: 'berater', label: 'Berater', defaultFlex: 1.1, minWidth: 100 },
   { key: 'potential', label: 'Pot.', defaultFlex: 0.4, minWidth: 48 },
@@ -65,7 +68,7 @@ const WECHSEL_COLUMNS: ColumnDef[] = [
   { key: 'name', label: 'Name', defaultFlex: 1.4, minWidth: 130 },
   { key: 'pos', label: 'Pos', defaultFlex: 0.4, minWidth: 44 },
   { key: 'verein', label: 'Verein', defaultFlex: 1.2, minWidth: 110 },
-  { key: 'alter', label: 'Alter', defaultFlex: 0.5, minWidth: 50 },
+  { key: 'alter', label: 'Alter', defaultFlex: 0.8, minWidth: 95 },
   { key: 'mv', label: 'Marktwert', defaultFlex: 0.7, minWidth: 80 },
   { key: 'wvorher', label: 'Berater vorher', defaultFlex: 1.1, minWidth: 100 },
   { key: 'wneu', label: 'Berater neu', defaultFlex: 1.1, minWidth: 100 },
@@ -156,17 +159,6 @@ const HARD_SHADOW_LG = Platform.OS === 'web'
   : { shadowColor: '#0a0a2d', shadowOffset: { width: 3, height: 4 }, shadowOpacity: 0.5, shadowRadius: 5, elevation: 4 };
 
 // Helle Farbwerte für die geteilten Tabellen-Komponenten (Anstoss-Look)
-const TABLE_COLORS = {
-  surface: RETRO.page,
-  surfaceSecondary: 'rgba(222, 218, 210, 0.85)',
-  background: RETRO.page,
-  border: RETRO.rowBorder,
-  text: RETRO.text,
-  textSecondary: RETRO.textMuted,
-  primary: RETRO.headerBg,
-  primaryText: '#ffffff',
-};
-
 /** Saison-Kurzlabel aus TM-Saisonstartjahr: 2026 -> "26/27" */
 function seasonLabel(startYear: number): string {
   const a = String(startYear).slice(-2);
@@ -1026,8 +1018,8 @@ export function SuchmaschineScreen() {
   // Ergebnisse mit aktivem Wechsel-Filter? (steuert Spalten + Standard-Sortierung)
   const [resultsWechsel, setResultsWechsel] = useState(false);
   const activeColumns = resultsWechsel ? WECHSEL_COLUMNS : RESULT_COLUMNS;
-  const tableStandard = useTableColumns(RESULT_COLUMNS, tableWidth, 'suchmaschine_results_v6');
-  const tableWechsel = useTableColumns(WECHSEL_COLUMNS, tableWidth, 'suchmaschine_results_wechsel_v3');
+  const tableStandard = useTableColumns(RESULT_COLUMNS, tableWidth, 'suchmaschine_results_v7');
+  const tableWechsel = useTableColumns(WECHSEL_COLUMNS, tableWidth, 'suchmaschine_results_wechsel_v4');
   const table = resultsWechsel ? tableWechsel : tableStandard;
   const [sortKey, setSortKey] = useState<ResultSortKey>('name');
   const [sortAsc, setSortAsc] = useState(true);
@@ -1492,7 +1484,6 @@ export function SuchmaschineScreen() {
   const renderSearchResult = useCallback(
     ({ item }: { item: StipendiumSearchPlayer }) => {
       const added = !!(item.tm_player_id && addedTmIds.has(item.tm_player_id));
-      const { first, last } = splitName(item.player_name);
       const pos = item.position ? (POSITION_FULL[item.position] || item.position) : null;
       const rating = ratingsMap.get(item.id) ?? null;
       const status = statusMap.get(item.id);
@@ -1514,7 +1505,7 @@ export function SuchmaschineScreen() {
         >
           <View style={mc.header}>
             <View style={mc.nameRow}>
-              <Text style={mc.name} numberOfLines={1}>{first ? `${last}, ${first}` : last}</Text>
+              <PlayerName name={item.player_name} mobile />
               {item.age != null ? <Text style={mc.meta}>{`(${item.age} J.)`}</Text> : null}
               {onWatchlist && <WatchlistBadge />}
             </View>
@@ -1576,7 +1567,6 @@ export function SuchmaschineScreen() {
   const renderTableRow = useCallback(
     ({ item }: { item: StipendiumSearchPlayer }) => {
       const added = !!(item.tm_player_id && addedTmIds.has(item.tm_player_id));
-      const { first, last } = splitName(item.player_name);
       const uninteresting = statusMap.get(item.id) === 'nicht_interessant';
 
       return (
@@ -1595,9 +1585,7 @@ export function SuchmaschineScreen() {
               case 'name':
                 return (
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0, alignSelf: 'stretch' }}>
-                    <Text style={[styles.tableCellBold, { color: RETRO.text, flexShrink: 1 }]} numberOfLines={1}>
-                      {first ? `${last}, ${first}` : last}
-                    </Text>
+                    <PlayerName name={item.player_name} />
                     {watchlistIds.has(item.id) && <WatchlistBadge />}
                   </View>
                 );
@@ -1609,20 +1597,23 @@ export function SuchmaschineScreen() {
                 );
               case 'verein':
                 return (
-                  <Text
-                    style={[
-                      styles.tableCell,
-                      { color: RETRO.text, fontStyle: item.is_vereinslos ? 'italic' : 'normal' },
-                    ]}
-                    numberOfLines={1}
-                  >
-                    {item.is_vereinslos ? 'vereinslos' : item.club_name || ''}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0, alignSelf: 'stretch' }}>
+                    {!!item.club_name && !item.is_vereinslos && <TeamLogo name={item.club_name} map={clubLogoMap} size={16} />}
+                    <Text
+                      style={[
+                        styles.tableCell,
+                        { color: RETRO.text, flexShrink: 1, fontStyle: item.is_vereinslos ? 'italic' : 'normal' },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {item.is_vereinslos ? 'vereinslos' : item.club_name || ''}
+                    </Text>
+                  </View>
                 );
               case 'alter':
                 return (
                   <Text style={[styles.tableCell, { color: RETRO.text }]} numberOfLines={1}>
-                    {item.age !== null ? item.age : ''}
+                    {item.birth_date ? formatAlter(item.birth_date) : item.age !== null ? `${item.age} J.` : ''}
                   </Text>
                 );
               case 'mv':
@@ -1913,8 +1904,11 @@ export function SuchmaschineScreen() {
                     onSort={handleSort}
                     sortKey={sortKey}
                     sortAsc={sortAsc}
-                    colors={TABLE_COLORS}
+                    colors={RETRO_TABLE_HEADER_COLORS}
                     setHeaderRef={table.setHeaderRef}
+                    style={RETRO_TABLE_HEADER_STYLE}
+                    textStyle={RETRO_TABLE_HEADER_TEXT}
+                    lineColor={RETRO_TABLE_LINE}
                   />
                 )}
               </View>

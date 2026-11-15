@@ -63,6 +63,8 @@ import { RatingBar } from '../../components/evaluation/RatingBar';
 import { fetchAgentInfo } from '../../services/transfermarktService';
 import { SAFE_BOTTOM } from '../../utils/safeArea';
 import { formatAlter } from '../../utils/formatAlter';
+import { PlayerName } from '../../components/PlayerName';
+import { RETRO_TABLE_HEADER_COLORS, RETRO_TABLE_HEADER_STYLE, RETRO_TABLE_HEADER_TEXT, RETRO_TABLE_LINE } from '../../theme/retroTable';
 
 const MATCH_EVAL_COLUMNS: ColumnDef[] = [
   { key: 'date', label: 'Datum', defaultFlex: 0.8, minWidth: 70 },
@@ -646,9 +648,7 @@ export function WatchlistScreen() {
         {/* Zeile 1 */}
         <View style={styles.mobileCardHeader}>
           <View style={styles.mobileCardNameRow}>
-            <Text style={[styles.mobileCardName, { color: colors.text }]} numberOfLines={1}>
-              {formatNameLastFirst(player.player_name)}
-            </Text>
+            <PlayerName name={player.player_name} mobile />
             {age ? <Text style={styles.mobileCardMeta} numberOfLines={1}>{`(${age})`}</Text> : null}
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -715,9 +715,7 @@ export function WatchlistScreen() {
             case 'name':
               return (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={[styles.playerColName, { color: RETRO.text }]} numberOfLines={1}>
-                    {formatNameLastFirst(player.player_name)}
-                  </Text>
+                  <PlayerName name={player.player_name} />
                   {/* Nur EIN Badge: Top-Ziel (Potential 8+) schlägt Zielspieler */}
                   {rating != null && rating >= 8 ? (
                     <View style={styles.topZielBadge}>
@@ -744,9 +742,12 @@ export function WatchlistScreen() {
               );
             case 'club':
               return (
-                <Text style={[{ fontSize: 13, color: RETRO.text, fontStyle: player.is_vereinslos ? 'italic' : 'normal' }]} numberOfLines={1}>
-                  {player.is_vereinslos ? `zuletzt: ${player.club_name || ''}` : (player.club_name || '')}
-                </Text>
+                <View style={styles.clubCell}>
+                  {!!player.club_name && !player.is_vereinslos && <TeamLogo name={player.club_name} map={clubLogoMap} size={16} />}
+                  <Text style={[{ fontSize: 13, color: RETRO.text, flexShrink: 1, fontStyle: player.is_vereinslos ? 'italic' : 'normal' }]} numberOfLines={1}>
+                    {player.is_vereinslos ? `zuletzt: ${player.club_name || ''}` : (player.club_name || '')}
+                  </Text>
+                </View>
               );
             case 'agent':
               return (
@@ -790,9 +791,7 @@ export function WatchlistScreen() {
             case 'name':
               return (
                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                  <Text style={[styles.playerColName, { color: RETRO.text }]} numberOfLines={1}>
-                    {formatNameLastFirst(player.player_name)}
-                  </Text>
+                  <PlayerName name={player.player_name} />
                   {/* Top-Ziel automatisch ab Potential 8 */}
                   {item.lastRating != null && item.lastRating >= 8 && (
                     <View style={styles.topZielBadge}>
@@ -815,9 +814,12 @@ export function WatchlistScreen() {
               );
             case 'club':
               return (
-                <Text style={[{ fontSize: 13, color: RETRO.text, fontStyle: (player as any).is_vereinslos ? 'italic' : 'normal' }]} numberOfLines={1}>
-                  {(player as any).is_vereinslos ? `zuletzt: ${(player as any).club_name || ''}` : ((player as any).club_name || '')}
-                </Text>
+                <View style={styles.clubCell}>
+                  {!!(player as any).club_name && !(player as any).is_vereinslos && <TeamLogo name={(player as any).club_name} map={clubLogoMap} size={16} />}
+                  <Text style={[{ fontSize: 13, color: RETRO.text, flexShrink: 1, fontStyle: (player as any).is_vereinslos ? 'italic' : 'normal' }]} numberOfLines={1}>
+                    {(player as any).is_vereinslos ? `zuletzt: ${(player as any).club_name || ''}` : ((player as any).club_name || '')}
+                  </Text>
+                </View>
               );
             case 'agent':
               return (
@@ -1134,8 +1136,11 @@ export function WatchlistScreen() {
               onSort={(key) => toggleObsSort(key as ObsSortKey)}
               sortKey={obsSortKey}
               sortAsc={obsSortAsc}
-              colors={colors}
+              colors={RETRO_TABLE_HEADER_COLORS}
               setHeaderRef={observedTable.setHeaderRef}
+              style={RETRO_TABLE_HEADER_STYLE}
+              textStyle={RETRO_TABLE_HEADER_TEXT}
+              lineColor={RETRO_TABLE_LINE}
             />
           )}
           <WebSafeList
@@ -1209,8 +1214,11 @@ export function WatchlistScreen() {
               onSort={(key) => toggleSort(key as SortKey)}
               sortKey={sortKey}
               sortAsc={sortAsc}
-              colors={colors}
+              colors={RETRO_TABLE_HEADER_COLORS}
               setHeaderRef={table.setHeaderRef}
+              style={RETRO_TABLE_HEADER_STYLE}
+              textStyle={RETRO_TABLE_HEADER_TEXT}
+              lineColor={RETRO_TABLE_LINE}
             />
           )}
           <WebSafeList
@@ -1452,6 +1460,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
   },
+  clubCell: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0, alignSelf: 'stretch' },
   playerColName: {
     fontSize: 13,
     fontWeight: '700',
