@@ -9,6 +9,7 @@ import { ColumnDef } from '../types/tableColumns';
 import { useTableColumns } from '../hooks/useTableColumns';
 import { TableHeader } from './table/TableHeader';
 import { TableRow } from './table/TableRow';
+import { WatchlistBadge } from './WatchlistBadge';
 
 /**
  * Topscorer-Liste (Matti 2026-11-13): Tore und Vorlagen pro Liga und Jahrgang, nur für Berater.
@@ -91,11 +92,14 @@ const HEADER_COLORS = {
 export function TopscorerView({
   isMobile,
   clubLogoMap,
+  watchlistIds,
   onOpenPlayer,
   onStandChange,
 }: {
   isMobile: boolean;
   clubLogoMap: Map<string, string>;
+  /** berater_players-IDs auf der Watchlist: grünes W hinter dem Namen */
+  watchlistIds: Set<string>;
   onOpenPlayer: (tmPlayerId: string, name: string) => void;
   /** Stand der Daten ("Sa, 14.11."), steht im gelben Kopf der Suchmaschine (Matti 2026-11-14) */
   onStandChange?: (stand: string | null) => void;
@@ -224,13 +228,16 @@ export function TopscorerView({
 
 
   // Name wie in der KMH-App: NACHNAME groß und fett, Vorname dünn in Grau dahinter (Matti 2026-11-15)
-  const nameText = (full: string) => {
-    const { first, last } = splitName(full);
+  const nameText = (e: ScorerEntry) => {
+    const { first, last } = splitName(e.player_name);
     return (
-      <Text style={s.name} numberOfLines={1}>
-        {last.toUpperCase()}
-        {!!first && <Text style={s.first}> {first}</Text>}
-      </Text>
+      <View style={s.nameRow}>
+        <Text style={[s.name, { flexShrink: 1 }]} numberOfLines={1}>
+          {last.toUpperCase()}
+          {!!first && <Text style={s.first}> {first}</Text>}
+        </Text>
+        {!!e.player_id && watchlistIds.has(e.player_id) && <WatchlistBadge />}
+      </View>
     );
   };
 
@@ -252,7 +259,7 @@ export function TopscorerView({
                 </View>
                 <View style={s.cardRight}>
                   <TouchableOpacity onPress={() => onOpenPlayer(e.tm_player_id, e.player_name)} activeOpacity={0.7}>
-                    {nameText(e.player_name)}
+                    {nameText(e)}
                   </TouchableOpacity>
                   <Text style={s.meta} numberOfLines={1}>
                     {[birthLabel(e.birth_date), e.position].filter(Boolean).join(' · ')}
@@ -321,7 +328,7 @@ export function TopscorerView({
                   case 'name':
                     return (
                       <TouchableOpacity style={s.full} onPress={() => onOpenPlayer(e.tm_player_id, e.player_name)} activeOpacity={0.7}>
-                        {nameText(e.player_name)}
+                        {nameText(e)}
                       </TouchableOpacity>
                     );
                   case 'geb': return <Text style={s.mono} numberOfLines={1}>{birthLabel(e.birth_date) || '–'}</Text>;
@@ -373,6 +380,7 @@ const s = StyleSheet.create({
   th: { fontFamily: MONO, fontSize: 11, fontWeight: '700', letterSpacing: 1.5, color: RETRO.headerText },
   tr: { minHeight: 48, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder },
   full: { alignSelf: 'stretch', minWidth: 0 },
+  nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
   statsRow: { flex: 1, alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', gap: 4 },
   statsHead: { flex: 1, textAlign: 'center' },
   statsCell: { flex: 1, alignSelf: 'auto' },

@@ -36,6 +36,8 @@ export interface LineupListProps {
   evalColors?: Map<string, { bg: string; border: string }>;
   /** Berichte-Anzahl je lineup_player_id ("schon X-mal gesehen") */
   reportCounts?: Map<string, number>;
+  /** Aufstellungs-Spieler (id) auf der Watchlist */
+  watchlistPlayerIds?: Set<string>;
   /** Abstand unter dem letzten Spieler (mobil: schwebende Knöpfe Notiz/⋮ verdecken sonst die letzten Zeilen) */
   bottomInset?: number;
 }
@@ -53,6 +55,7 @@ export const LineupList = memo<LineupListProps>(({
   evaluatedPlayerIds,
   evalColors,
   reportCounts,
+  watchlistPlayerIds,
   bottomInset,
 }) => {
   const { colors } = useTheme();
@@ -114,9 +117,10 @@ export const LineupList = memo<LineupListProps>(({
         isEvaluated={evaluatedPlayerIds?.has(player.id) ?? false}
         evalColor={evalColors?.get(player.id)}
         reportCount={reportCounts?.get(player.id) ?? 0}
+        onWatchlist={watchlistPlayerIds?.has(player.id) ?? false}
       />
     );
-  }, [colors.textSecondary, onPlayerPress, onFieldChange, isEditMode, sortedSubs, evaluatedPlayerIds, evalColors, reportCounts]);
+  }, [colors.textSecondary, onPlayerPress, onFieldChange, isEditMode, sortedSubs, evaluatedPlayerIds, evalColors, reportCounts, watchlistPlayerIds]);
 
   // Key extractor
   const keyExtractor = useCallback((item: typeof combinedData[0]) => {

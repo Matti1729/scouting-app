@@ -1318,6 +1318,8 @@ interface LineupPlayerInput {
 export interface BeraterStatusResult {
   status: 'interessant' | 'nicht_interessant' | 'watchlist';
   beraterPlayerId: string;
+  /** Steht auf der Watchlist, auch wenn eine Bewertung den Status bestimmt (grünes W) */
+  onWatchlist?: boolean;
 }
 
 /**
@@ -1423,6 +1425,10 @@ export async function loadBeraterStatusForLineup(
     }
   }
 
+  const watchlistIds = new Set((watchlist || []).map((w: any) => w.player_id));
+  for (const [id, entry] of result) {
+    if (watchlistIds.has(entry.beraterPlayerId)) result.set(id, { ...entry, onWatchlist: true });
+  }
   return result;
 }
 

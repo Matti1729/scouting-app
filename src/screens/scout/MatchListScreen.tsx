@@ -953,6 +953,13 @@ export function MatchListScreen({ navigation, route }: any) {
     return map;
   }, [beraterStatusMap, colors]);
 
+  // Grünes W hinter dem Namen für Spieler auf der Watchlist (Matti 2026-11-15)
+  const watchlistPlayerIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [playerId, entry] of beraterStatusMap) if (entry.onWatchlist || entry.status === 'watchlist') ids.add(playerId);
+    return ids;
+  }, [beraterStatusMap]);
+
   // OPTIMIERTE Transfermarkt-Suche: Findet Spieler UND holt Berater + Geburtsdatum in EINEM Durchgang
   const searchTransfermarktForLineup = async (matchId: string, homeTeam: string, awayTeam: string) => {
     // Alle Spieler aus Supabase laden
@@ -3954,6 +3961,7 @@ export function MatchListScreen({ navigation, route }: any) {
                           emptyMessage="Keine Spieler vorhanden"
                           evaluatedPlayerIds={evaluatedPlayerIds}
                           evalColors={evalColors}
+                          watchlistPlayerIds={watchlistPlayerIds}
                           reportCounts={reportCounts}
                         />
                       </View>
@@ -3991,6 +3999,7 @@ export function MatchListScreen({ navigation, route }: any) {
                           emptyMessage="Keine Spieler vorhanden"
                           evaluatedPlayerIds={evaluatedPlayerIds}
                           evalColors={evalColors}
+                          watchlistPlayerIds={watchlistPlayerIds}
                           reportCounts={reportCounts}
                         />
                       </View>

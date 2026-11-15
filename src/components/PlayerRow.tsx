@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StyleSheet,
 } from 'react-native';
+import { WatchlistBadge } from './WatchlistBadge';
 import { useTheme } from '../contexts/ThemeContext';
 
 // Hilfsfunktion: Alter aus Geburtsdatum berechnen (Format: "DD.MM.YYYY")
@@ -79,6 +80,8 @@ export interface PlayerRowProps {
   evalColor?: { bg: string; border: string } | null;
   /** Anzahl Berichte zu diesem Spieler über alle Spiele ("schon gesehen") */
   reportCount?: number;
+  /** Auf der Watchlist: grünes W hinter dem Namen */
+  onWatchlist?: boolean;
 }
 
 export const PlayerRow = memo<PlayerRowProps>(({
@@ -90,6 +93,7 @@ export const PlayerRow = memo<PlayerRowProps>(({
   isEvaluated = false,
   evalColor,
   reportCount = 0,
+  onWatchlist = false,
 }) => {
   const { colors } = useTheme();
 
@@ -193,6 +197,7 @@ export const PlayerRow = memo<PlayerRowProps>(({
               <Text style={[styles.playerName, { color: colors.text }]}>
                 {player.name}, {player.vorname}
               </Text>
+              {onWatchlist && <WatchlistBadge />}
               {ageDisplay && (
                 <Text style={[styles.playerJahrgang, { color: colors.textSecondary }]}>
                   ({ageDisplay})

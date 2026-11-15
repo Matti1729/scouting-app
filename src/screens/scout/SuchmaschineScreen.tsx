@@ -47,6 +47,7 @@ import { ColumnDef } from '../../types/tableColumns';
 import { useTableColumns } from '../../hooks/useTableColumns';
 import { TableHeader } from '../../components/table/TableHeader';
 import { TableRow } from '../../components/table/TableRow';
+import { WatchlistBadge } from '../../components/WatchlistBadge';
 
 // Ergebnistabelle: Spalten sind per Drag tauschbar und per Klick sortierbar
 const RESULT_COLUMNS: ColumnDef[] = [
@@ -1514,7 +1515,7 @@ export function SuchmaschineScreen() {
             <View style={mc.nameRow}>
               <Text style={mc.name} numberOfLines={1}>{first ? `${last}, ${first}` : last}</Text>
               {item.age != null ? <Text style={mc.meta}>{`(${item.age} J.)`}</Text> : null}
-              {onWatchlist && <Ionicons name="bookmark" size={12} color={RETRO.textMuted} />}
+              {onWatchlist && <WatchlistBadge />}
             </View>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               {rating != null && rating >= 8 ? (
@@ -1592,9 +1593,12 @@ export function SuchmaschineScreen() {
             switch (key) {
               case 'name':
                 return (
-                  <Text style={[styles.tableCellBold, { color: RETRO.text }]} numberOfLines={1}>
-                    {first ? `${last}, ${first}` : last}
-                  </Text>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0, alignSelf: 'stretch' }}>
+                    <Text style={[styles.tableCellBold, { color: RETRO.text, flexShrink: 1 }]} numberOfLines={1}>
+                      {first ? `${last}, ${first}` : last}
+                    </Text>
+                    {watchlistIds.has(item.id) && <WatchlistBadge />}
+                  </View>
                 );
               case 'pos':
                 return (
@@ -1674,7 +1678,7 @@ export function SuchmaschineScreen() {
         />
       );
     },
-    [addedTmIds, addingId, colors, table.columnOrder, table.getColumnWidth, ratingsMap, statusMap]
+    [addedTmIds, addingId, colors, table.columnOrder, table.getColumnWidth, ratingsMap, statusMap, watchlistIds]
   );
 
   const renderEmpty = (text: string, hint: string) => (
@@ -1999,6 +2003,7 @@ export function SuchmaschineScreen() {
           isMobile={isMobile}
           onStandChange={setTopscorerStand}
           clubLogoMap={clubLogoMap}
+          watchlistIds={watchlistIds}
           onOpenPlayer={async (tmId, name) => {
             const p = await fetchSearchPlayer(tmId, name);
             if (p) setDetailPlayer(p);
