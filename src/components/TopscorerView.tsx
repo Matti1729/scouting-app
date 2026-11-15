@@ -71,7 +71,7 @@ interface ScorerEntry {
 const PAGE = 60;
 
 // Spalten am Desktop: Breite ziehen und Reihenfolge per Drag tauschen wie in der KMH-App (Matti 2026-11-15),
-// der Stand bleibt gespeichert
+// der Stand bleibt gespeichert. Spiele, Tore und Vorlagen sind ein Block und wandern zusammen (Matti 2026-11-15).
 const COLUMNS: ColumnDef[] = [
   { key: 'rank', label: '#', defaultFlex: 0.25, minWidth: 30 },
   { key: 'name', label: 'Name', defaultFlex: 1.6, minWidth: 150 },
@@ -79,9 +79,8 @@ const COLUMNS: ColumnDef[] = [
   { key: 'pos', label: 'Position', defaultFlex: 1, minWidth: 90 },
   { key: 'verein', label: 'Verein', defaultFlex: 1.4, minWidth: 120 },
   { key: 'liga', label: 'Liga', defaultFlex: 0.9, minWidth: 80 },
-  { key: 'sp', label: 'SP', defaultFlex: 0.35, minWidth: 40 },
-  { key: 'tore', label: 'Tore', defaultFlex: 0.4, minWidth: 44 },
-  { key: 'vorl', label: 'Vorl.', defaultFlex: 0.4, minWidth: 44 },
+  // Beschriftung kommt über renderHeaderExtra (drei Unterspalten); das unsichtbare Zeichen hält den Ziehstrich davor
+  { key: 'stats', label: '\u200b', defaultFlex: 1.15, minWidth: 132 },
   { key: 'berater', label: 'Berater', defaultFlex: 1.1, minWidth: 90 },
 ];
 const HEADER_COLORS = {
@@ -106,7 +105,7 @@ export function TopscorerView({
   const [sort, setSort] = useState<Sort>('goals');
   const [visible, setVisible] = useState(PAGE);
   const [tableWidth, setTableWidth] = useState(0);
-  const table = useTableColumns(COLUMNS, tableWidth, 'topscorer_v1');
+  const table = useTableColumns(COLUMNS, tableWidth, 'topscorer_v2');
 
   useEffect(() => {
     loadTopscorers().then(setRows).catch(() => setRows([]));
@@ -298,6 +297,13 @@ export function TopscorerView({
               style={s.thead}
               textStyle={s.th}
               lineColor="rgba(255,255,255,0.5)"
+              renderHeaderExtra={(key) =>
+                key === 'stats' ? (
+                  <View style={s.statsRow}>
+                    {['SP', 'TORE', 'VORL.'].map((l) => <Text key={l} style={[s.th, s.statsHead]} numberOfLines={1}>{l}</Text>)}
+                  </View>
+                ) : null
+              }
             />
           )}
         </View>
@@ -328,9 +334,14 @@ export function TopscorerView({
                       </View>
                     );
                   case 'liga': return <Text style={[s.cell, s.muted]} numberOfLines={1}>{e.leagues.map(leagueLabel).join(' / ')}</Text>;
-                  case 'sp': return <Text style={[s.numCell, s.muted]}>{num(e.games)}</Text>;
-                  case 'tore': return <Text style={[s.numCell, sort !== 'assists' && s.hi, e.goals == null && s.muted]}>{num(e.goals)}</Text>;
-                  case 'vorl': return <Text style={[s.numCell, sort !== 'goals' && s.hi, e.assists == null && s.muted]}>{num(e.assists)}</Text>;
+                  case 'stats':
+                    return (
+                      <View style={s.statsRow}>
+                        <Text style={[s.numCell, s.statsCell, s.muted]}>{num(e.games)}</Text>
+                        <Text style={[s.numCell, s.statsCell, sort !== 'assists' && s.hi, e.goals == null && s.muted]}>{num(e.goals)}</Text>
+                        <Text style={[s.numCell, s.statsCell, sort !== 'goals' && s.hi, e.assists == null && s.muted]}>{num(e.assists)}</Text>
+                      </View>
+                    );
                   case 'berater': return <Text style={s.agent} numberOfLines={1}>{e.agent_name || ''}</Text>;
                   default: return null;
                 }
@@ -362,6 +373,9 @@ const s = StyleSheet.create({
   th: { fontFamily: MONO, fontSize: 11, fontWeight: '700', letterSpacing: 1.5, color: RETRO.headerText },
   tr: { minHeight: 48, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder },
   full: { alignSelf: 'stretch', minWidth: 0 },
+  statsRow: { flex: 1, alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', gap: 4 },
+  statsHead: { flex: 1, textAlign: 'center' },
+  statsCell: { flex: 1, alignSelf: 'auto' },
   clubCell: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   rank: { fontFamily: MONO, fontWeight: '700', color: RETRO.textMuted },
   name: { fontSize: 14, fontWeight: '800', color: RETRO.text, lineHeight: 18 },
