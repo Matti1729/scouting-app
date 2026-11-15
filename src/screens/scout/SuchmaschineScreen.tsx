@@ -2004,6 +2004,7 @@ export function SuchmaschineScreen() {
           onStandChange={setTopscorerStand}
           clubLogoMap={clubLogoMap}
           watchlistIds={watchlistIds}
+          ratingsMap={ratingsMap}
           onOpenPlayer={async (tmId, name) => {
             const p = await fetchSearchPlayer(tmId, name);
             if (p) setDetailPlayer(p);

@@ -11,6 +11,7 @@ import { TableHeader } from './table/TableHeader';
 import { TableRow } from './table/TableRow';
 import { WatchlistBadge } from './WatchlistBadge';
 import { formatAlter } from '../utils/formatAlter';
+import { potentialColor } from '../utils/potentialColor';
 
 /**
  * Topscorer-Liste (Matti 2026-11-13): Tore und Vorlagen pro Liga und Jahrgang, nur für Berater.
@@ -86,6 +87,7 @@ const COLUMNS: ColumnDef[] = [
   // Beschriftung kommt über renderHeaderExtra (drei Unterspalten); das unsichtbare Zeichen hält den Ziehstrich davor
   { key: 'stats', label: '\u200b', defaultFlex: 1.15, minWidth: 132 },
   { key: 'berater', label: 'Berater', defaultFlex: 1.1, minWidth: 90 },
+  { key: 'pot', label: 'Pot.', defaultFlex: 0.4, minWidth: 48 },
 ];
 const HEADER_COLORS = {
   surfaceSecondary: RETRO.headerBg, border: RETRO.headerBg, text: RETRO.yellow,
@@ -96,6 +98,7 @@ export function TopscorerView({
   isMobile,
   clubLogoMap,
   watchlistIds,
+  ratingsMap,
   onOpenPlayer,
   onStandChange,
 }: {
@@ -103,6 +106,8 @@ export function TopscorerView({
   clubLogoMap: Map<string, string>;
   /** berater_players-IDs auf der Watchlist: grünes W hinter dem Namen */
   watchlistIds: Set<string>;
+  /** Potential (1-10) je berater_players-ID, aus Bewertung oder Watchlist wie in der Suche */
+  ratingsMap: Map<string, number>;
   onOpenPlayer: (tmPlayerId: string, name: string) => void;
   /** Stand der Daten ("Sa, 14.11."), steht im gelben Kopf der Suchmaschine (Matti 2026-11-14) */
   onStandChange?: (stand: string | null) => void;
@@ -112,7 +117,7 @@ export function TopscorerView({
   const [sort, setSort] = useState<Sort>('goals');
   const [visible, setVisible] = useState(PAGE);
   const [tableWidth, setTableWidth] = useState(0);
-  const table = useTableColumns(COLUMNS, tableWidth, 'topscorer_v3');
+  const table = useTableColumns(COLUMNS, tableWidth, 'topscorer_v4');
 
   useEffect(() => {
     loadTopscorers().then(setRows).catch(() => setRows([]));
@@ -244,6 +249,17 @@ export function TopscorerView({
     );
   };
 
+  // Potential wie in Suche und Watchlist: farbiges Kästchen, leer ohne Bewertung (Matti 2026-11-15)
+  const potBadge = (e: ScorerEntry) => {
+    const rating = e.player_id ? ratingsMap.get(e.player_id) : undefined;
+    if (rating == null) return null;
+    return (
+      <View style={[s.potBadge, { backgroundColor: potentialColor(rating) }]}>
+        <Text style={s.potBadgeText}>{rating}</Text>
+      </View>
+    );
+  };
+
   if (isMobile) {
     return (
       <View style={{ flex: 1 }}>
@@ -264,6 +280,7 @@ export function TopscorerView({
                   <TouchableOpacity onPress={() => onOpenPlayer(e.tm_player_id, e.player_name)} activeOpacity={0.7} style={s.nameRow}>
                     {nameText(e, true)}
                     {!!ageOnly(e.birth_date) && <Text style={s.ageMeta}>{`(${ageOnly(e.birth_date)})`}</Text>}
+                    <View style={{ marginLeft: 'auto' }}>{potBadge(e)}</View>
                   </TouchableOpacity>
                   {!!e.position && <Text style={s.meta} numberOfLines={1}>{e.position}</Text>}
                   <Text style={s.club} numberOfLines={1}>
@@ -352,6 +369,7 @@ export function TopscorerView({
                       </View>
                     );
                   case 'berater': return <Text style={s.agent} numberOfLines={1}>{e.agent_name || ''}</Text>;
+                  case 'pot': return potBadge(e);
                   default: return null;
                 }
               }}
@@ -383,6 +401,8 @@ const s = StyleSheet.create({
   tr: { minHeight: 48, paddingHorizontal: 12, borderBottomWidth: 1, borderBottomColor: RETRO.rowBorder },
   full: { alignSelf: 'stretch', minWidth: 0 },
   nameRow: { flexDirection: 'row', alignItems: 'center', gap: 6, minWidth: 0 },
+  potBadge: { minWidth: 26, height: 22, paddingHorizontal: 5, borderRadius: 2, alignItems: 'center', justifyContent: 'center' },
+  potBadgeText: { fontSize: 13, fontWeight: '800', color: '#ffffff' },
   statsRow: { flex: 1, alignSelf: 'stretch', flexDirection: 'row', alignItems: 'center', gap: 4 },
   statsHead: { flex: 1, textAlign: 'center' },
   statsCell: { flex: 1, alignSelf: 'auto' },
