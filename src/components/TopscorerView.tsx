@@ -5,6 +5,7 @@ import { TeamLogo } from './ClubLogo';
 import { RETRO, MONO, HARD_SHADOW } from '../theme/retro';
 import { SAFE_BOTTOM } from '../utils/safeArea';
 import { loadTopscorers, TopscorerRow } from '../services/beraterService';
+import { positionCode, POSITION_FULL } from '../services/stipendiumService';
 import { ColumnDef } from '../types/tableColumns';
 import { useTableColumns } from '../hooks/useTableColumns';
 import { TableHeader } from './table/TableHeader';
@@ -44,8 +45,8 @@ const birthYear = (d: string | null): string | null => d?.match(/(\d{4})$/)?.[1]
 const alterLabel = (d: string | null): string => (d && /^\d{2}\.\d{2}\.\d{4}$/.test(d) ? formatAlter(d) : birthYear(d) || '–');
 // Nur das Alter für die Handy-Karte: "16 J."
 const ageOnly = (d: string | null): string | null => alterLabel(d).match(/^\d+ J\./)?.[0] ?? null;
-// "Sturm - Mittelstürmer" -> "Mittelstürmer"
-const shortPosition = (p: string | null): string | null => (p ? p.split(' - ').pop() || p : null);
+// Position als Kürzel wie in Suche und Watchlist: "Sturm - Mittelstürmer" -> "ST" (Matti 2026-11-15)
+const shortPosition = (p: string | null): string | null => positionCode(p);
 
 interface ScorerEntry {
   tm_player_id: string;
@@ -74,7 +75,7 @@ const COLUMNS: ColumnDef[] = [
   { key: 'rank', label: '#', defaultFlex: 0.25, minWidth: 30 },
   { key: 'name', label: 'Name', defaultFlex: 1.6, minWidth: 150 },
   { key: 'alter', label: 'Alter', defaultFlex: 0.8, minWidth: 95 },
-  { key: 'pos', label: 'Position', defaultFlex: 1, minWidth: 90 },
+  { key: 'pos', label: 'Pos', defaultFlex: 0.4, minWidth: 44 },
   { key: 'verein', label: 'Verein', defaultFlex: 1.4, minWidth: 120 },
   { key: 'liga', label: 'Liga', defaultFlex: 0.9, minWidth: 80 },
   // Beschriftung kommt über renderHeaderExtra (drei Unterspalten); das unsichtbare Zeichen hält den Ziehstrich davor
@@ -106,7 +107,7 @@ export function TopscorerView({
   const [sort, setSort] = useState<Sort>('goals');
   const [visible, setVisible] = useState(PAGE);
   const [tableWidth, setTableWidth] = useState(0);
-  const table = useTableColumns(COLUMNS, tableWidth, 'topscorer_v4');
+  const table = useTableColumns(COLUMNS, tableWidth, 'topscorer_v5');
 
   useEffect(() => {
     loadTopscorers().then(setRows).catch(() => setRows([]));
@@ -267,7 +268,7 @@ export function TopscorerView({
                     {!!ageOnly(e.birth_date) && <Text style={s.ageMeta}>{`(${ageOnly(e.birth_date)})`}</Text>}
                     <View style={{ marginLeft: 'auto' }}>{potBadge(e)}</View>
                   </TouchableOpacity>
-                  {!!e.position && <Text style={s.meta} numberOfLines={1}>{e.position}</Text>}
+                  {!!e.position && <Text style={s.meta} numberOfLines={1}>{POSITION_FULL[e.position] || e.position}</Text>}
                   <Text style={s.club} numberOfLines={1}>
                     {[e.club_name, e.leagues.map(leagueLabel).join(' / ')].filter(Boolean).join(' · ')}
                   </Text>
