@@ -1778,6 +1778,32 @@ export async function loadReportCountsByPlayerIds(
 }
 
 /**
+ * Potential aus dem jüngsten Spielbericht je Spieler (player_evaluations.overall_rating).
+ * Gleiche Regel wie in der Watchlist: der neueste Bericht schlägt Bewertung und Watchlist-Eintrag
+ * (Denton Snoh hatte nur im Bericht eine 8 und fehlte deshalb in Suche und Topscorer, 2026-11-15).
+ */
+export async function loadLatestReportRatings(): Promise<Map<string, number>> {
+  const latest = new Map<string, { ts: number; rating: number | null }>();
+  try {
+    const { data, error } = await supabase
+      .from('player_evaluations')
+      .select('berater_player_id, match_date, overall_rating')
+      .not('berater_player_id', 'is', null);
+    if (error) throw error;
+    for (const e of (data || []) as any[]) {
+      const ts = reportDateTs(e.match_date);
+      const cur = latest.get(e.berater_player_id);
+      if (!cur || ts >= cur.ts) latest.set(e.berater_player_id, { ts, rating: e.overall_rating ?? null });
+    }
+  } catch (err) {
+    console.warn('loadLatestReportRatings fehlgeschlagen:', err);
+  }
+  const out = new Map<string, number>();
+  for (const [id, v] of latest) if (v.rating != null && v.rating > 0) out.set(id, v.rating);
+  return out;
+}
+
+/**
  * "Beobachtet": alle Spieler mit mindestens einem Bericht,
  * zuletzt gesehene zuerst. Grundlage ist die feste Verknüpfung
  * player_evaluations.berater_player_id (Migration 20260826090000).

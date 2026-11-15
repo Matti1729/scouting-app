@@ -40,7 +40,7 @@ import { RatingBar } from '../../components/evaluation/RatingBar';
 import { RetroHeader } from '../../components/RetroHeader';
 import { TeamLogo } from '../../components/ClubLogo';
 import { loadClubLogoMap } from '../../services/areaGamesService';
-import { loadLeagues, loadWatchlist, addToWatchlist, loadAllEvaluations, loadAlertSubscriptionIds } from '../../services/beraterService';
+import { loadLeagues, loadWatchlist, addToWatchlist, loadAllEvaluations, loadAlertSubscriptionIds, loadLatestReportRatings } from '../../services/beraterService';
 import { MONO, RETRO_CHIP, RETRO_CHIP_TEXT } from '../../theme/retro';
 import { placeDropdown } from '../../utils/dropdownPlacement';
 import { ColumnDef } from '../../types/tableColumns';
@@ -1138,9 +1138,9 @@ export function SuchmaschineScreen() {
     loadAllClubs().then(setClubOptions).catch(() => {});
     loadReportTeams().then(setReportTeamLabels).catch(() => {});
     loadAlertSubscriptionIds().then(setAlertIds).catch(() => {});
-    Promise.all([loadWatchlist(), loadAllEvaluations()]).then(([wl, evals]) => {
+    Promise.all([loadWatchlist(), loadAllEvaluations(), loadLatestReportRatings()]).then(([wl, evals, reportRatings]) => {
       setWatchlistIds(new Set(wl.map((w) => w.player_id).filter(Boolean) as string[]));
-      // Rating aus Bewertung, sonst aus Watchlist-Eintrag
+      // Wie in der Watchlist: neuester Spielbericht, sonst Bewertung, sonst Watchlist-Eintrag
       const map = new Map<string, number>();
       for (const w of wl) {
         if (w.player_id && w.rating != null) map.set(w.player_id, w.rating);
@@ -1150,6 +1150,7 @@ export function SuchmaschineScreen() {
         if (ev.rating != null) map.set(pid, ev.rating);
         statuses.set(pid, ev.status);
       }
+      for (const [pid, rating] of reportRatings) map.set(pid, rating);
       setRatingsMap(map);
       setStatusMap(statuses);
     });
