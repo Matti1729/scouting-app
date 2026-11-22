@@ -2,7 +2,9 @@
 // Umgeht CORS-Einschränkungen im Browser durch serverseitigen Fetch
 
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { denyUnlessAccess } from '../_shared/access.ts';
+import { agencyOf, agencyIdOf, resolveAgencyNames } from '../_shared/tmAgency.ts';
 
 // User-Agent Rotation (wie in berater-scan)
 const USER_AGENTS = [
@@ -355,26 +357,56 @@ function findBestPlayerMatch(
 /**
  * Holt Berater-Informationen und Geburtsdatum von einer Spieler-Profilseite.
  */
-/** Versteckten U16-Berater über die TM-API holen (consultantAgency) */
+/** Versteckten U16-Berater über die TM-API holen (Agentur-Nummer) */
 async function resolveHiddenU16Agent(
   tmPlayerId: string
 ): Promise<{ name: string; company: string; url: string | null } | null> {
+  const api = await agentFromApi(tmPlayerId)
+  return api && api.agentCompany ? { name: api.agentName!, company: api.agentCompany, url: api.agentUrl } : null
+}
+
+let serviceClient: any = null
+const db = () => serviceClient ||= createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
+
+/**
+ * Berater und Geburtsdatum über die TM-Schnittstelle: Agentur-Nummer + Name aus unseren Daten
+ * (seit ca. 17.11.2026 fehlt der Name in der Schnittstelle, siehe _shared/tmAgency.ts).
+ * null = Schnittstelle nicht erreichbar oder Feld fehlt, dann zählt die Profilseite.
+ */
+async function agentFromApi(tmPlayerId: string): Promise<AgentInfo | null> {
   try {
     const r = await fetch(`https://tmapi.transfermarkt.technology/player/${tmPlayerId}?locale=de`, {
       headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36', Accept: 'application/json' },
     })
     if (!r.ok) return null
-    const j = await r.json()
-    const ag = j?.data?.attributes?.consultantAgency
-    const name = (ag?.shortName || ag?.name || '').trim()
-    if (!name) return null
-    return { name, company: name, url: ag?.relativeUrl ? `https://www.transfermarkt.de${ag.relativeUrl}` : null }
-  } catch {
+    const p = (await r.json())?.data
+    const attrs = p?.attributes || {}
+    if (!('consultantAgencyId' in attrs) && !('consultantAgency' in attrs)) return null
+    const id = agencyIdOf(p)
+    if (id) await resolveAgencyNames(db(), [id])
+    const ag = agencyOf(p)
+    const dob = (p?.lifeDates?.dateOfBirth || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    return {
+      agentName: ag.name,
+      agentCompany: ag.agencyId ? ag.name : null,
+      agentUrl: ag.url,
+      birthDate: dob ? `${dob[3]}.${dob[2]}.${dob[1]}` : null,
+    }
+  } catch (err) {
+    console.error('agentFromApi failed:', err)
     return null
   }
 }
 
+/** Berater aus der TM-Schnittstelle, Geburtsdatum von der Profilseite (Fallback Schnittstelle). */
 async function fetchAgentFromProfile(profileUrl: string): Promise<AgentInfo> {
+  const pid = profileUrl.match(/\/spieler\/(\d+)/)?.[1]
+  const [page, api] = await Promise.all([fetchAgentFromProfilePage(profileUrl), pid ? agentFromApi(pid) : Promise.resolve(null)])
+  if (!api) return page
+  return { agentName: api.agentName, agentCompany: api.agentCompany, agentUrl: api.agentUrl, birthDate: page.birthDate || api.birthDate }
+}
+
+async function fetchAgentFromProfilePage(profileUrl: string): Promise<AgentInfo> {
   try {
     // Stelle sicher, dass die URL vollständig ist
     const fullUrl = profileUrl.startsWith('http') ? profileUrl : `https://www.transfermarkt.de${profileUrl}`

@@ -7,6 +7,7 @@
 import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { denyUnlessAccess } from '../_shared/access.ts';
+import { agencyOf, agencyIdOf, resolveAgencyNames } from '../_shared/tmAgency.ts';
 
 // ============================================================================
 // KONFIGURATION
@@ -244,16 +245,18 @@ function formatMarketValue(value: number | null | undefined): string | null {
 }
 
 function toAgentInfo(p: any): AgentInfo {
-  const ag = p.attributes?.consultantAgency
-  // Sonderfälle (Familienangehörige, ohne Berater) tragen den deutschen Text im shortName
-  const agentName = (ag?.isSpecialConsultantAgency ? ag?.shortName : ag?.name)?.trim() || null
+  // Berater über die Agentur-Nummer (tmapi liefert seit ca. 17.11.2026 keinen Namen mehr, siehe _shared/tmAgency.ts).
+  // Fehlt das Feld ganz, ist die Antwort unbrauchbar: agentName null = Spieler überspringen, nichts überschreiben.
+  const attrs = p.attributes || {}
+  const hasAgencyField = 'consultantAgencyId' in attrs || 'consultantAgency' in attrs
+  const ag = agencyOf(p)
   const clubId = (p.clubAssignments || []).find((c: any) => c.type === 'current')?.clubId?.toString() ?? null
   const dob = (p.lifeDates?.dateOfBirth || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
   return {
     fullName: p.name || null,
-    agentName: agentName || 'kein Beratereintrag',
-    agentCompany: agentName,
-    agentUrl: ag?.relativeUrl ? `https://www.transfermarkt.de${ag.relativeUrl}` : null,
+    agentName: hasAgencyField ? ag.name : null,
+    agentCompany: ag.agencyId ? ag.name : null,
+    agentUrl: ag.url,
     birthDate: dob ? `${dob[3]}.${dob[2]}.${dob[1]}` : null,
     isRetired: clubId === CLUB_KARRIEREENDE,
     currentClubId: clubId && clubId !== CLUB_VEREINSLOS && clubId !== CLUB_KARRIEREENDE ? clubId : null,
@@ -343,8 +346,9 @@ function normalizeAgentName(name: string | null | undefined): string | null {
 }
 
 /** "Berater bekannt - Spieler unter 16": TM versteckt den Berater auf der
- *  Profilseite, die TM-API liefert ihn aber trotzdem (consultantAgency). */
+ *  Profilseite, die TM-API liefert die Agentur-Nummer aber trotzdem. */
 async function resolveHiddenU16Agent(
+  supabase: any,
   tmPlayerId: string
 ): Promise<{ name: string; company: string; url: string | null } | null> {
   try {
@@ -353,15 +357,11 @@ async function resolveHiddenU16Agent(
     })
     if (!r.ok) return null
     const j = await r.json()
-    const ag = j?.data?.attributes?.consultantAgency
-    // shortName bevorzugen: bei Sonderfällen deutsch ("Familienangehörige" statt "Relatives")
-    const name = (ag?.shortName || ag?.name || '').trim()
-    if (!name) return null
-    return {
-      name,
-      company: name,
-      url: ag?.relativeUrl ? `https://www.transfermarkt.de${ag.relativeUrl}` : null,
-    }
+    const id = agencyIdOf(j?.data)
+    if (!id) return null
+    await resolveAgencyNames(supabase, [id])
+    const ag = agencyOf(j?.data)
+    return { name: ag.name, company: ag.name, url: ag.url }
   } catch {
     return null
   }
@@ -546,6 +546,7 @@ async function scanClub(supabase: ReturnType<typeof createClient>, clubId: strin
   }
 
   const apiPlayers = await fetchPlayers(squadIds)
+  await resolveAgencyNames(supabase, [...apiPlayers.values()].map(agencyIdOf).filter(Boolean) as string[])
   const squadPlayers: SquadPlayer[] = squadIds.map((id) => {
     const p = apiPlayers.get(id)
     return {
@@ -802,6 +803,7 @@ async function cleanupVereinslose(supabase: ReturnType<typeof createClient>, bat
 
   console.log(`Checking ${vereinslose.length} vereinslose players...`)
   const apiPlayers = await fetchPlayers(vereinslose.map((p: any) => String(p.tm_player_id)).filter((id: string) => id !== 'null'))
+  await resolveAgencyNames(supabase, [...apiPlayers.values()].map(agencyIdOf).filter(Boolean) as string[])
 
   let reactivated = 0
   let retired = 0
@@ -1172,7 +1174,7 @@ serve(async (req) => {
         let failed = 0
         for (const p of (hiddenPlayers || []) as any[]) {
           if (!p.tm_player_id) { failed++; continue }
-          const hidden = await resolveHiddenU16Agent(p.tm_player_id)
+          const hidden = await resolveHiddenU16Agent(supabase, p.tm_player_id)
           if (hidden) {
             await supabase.from('berater_players').update({
               current_agent_name: hidden.name,
