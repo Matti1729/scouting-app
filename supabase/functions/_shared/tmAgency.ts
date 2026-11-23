@@ -1,11 +1,14 @@
 // Berater (Agentur) zu einem Transfermarkt-Spieler.
 // Seit ca. 17.11.2026 liefert tmapi nur noch attributes.consultantAgencyId statt des Objekts consultantAgency
-// (Name, Link). 0 = kein Berater, 1207 = Familienangehörige. Den Namen zur Nummer kennen wir aus unseren
+// (Name, Link). 0 = kein Berater, 96 = „ohne Berater“ (keine eigene Seite), 1207 = Familienangehörige. Den Namen zur Nummer kennen wir aus unseren
 // eigenen Daten (berater_players.agent_url / berater_changes enden auf /berater/<Nummer>).
 
 export const NO_AGENT = 'kein Beratereintrag'
 
 // Sonderfälle ohne eigene Beraterseite: TM zeigt nur den Text
+// Nummern, die Transfermarkt für „kein Berater“ benutzt
+const NO_AGENT_IDS = new Set(['0', '96'])
+
 const SPECIAL_AGENCIES: Record<string, string> = {
   '1207': 'Familienangehörige',
 }
@@ -23,7 +26,7 @@ export function agencyIdOf(p: any): string | null {
   const a = p?.attributes
   const raw = a?.consultantAgencyId ?? a?.consultantAgency?.id ?? null
   const id = raw == null ? null : String(raw)
-  return id && id !== '0' ? id : null
+  return id && !NO_AGENT_IDS.has(id) ? id : null
 }
 
 /** Namen für Agentur-Nummern aus der Datenbank holen (mit Zwischenspeicher). */
